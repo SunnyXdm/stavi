@@ -54,7 +54,7 @@ export class ProviderRegistry {
     this.adapters.set('codex', codex);
     this.initialized = true;
 
-    console.log(`[Registry] Providers: Claude=${claude.isReady() ? 'ready' : 'no key'}, Codex=${codex.isReady() ? 'ready' : 'not found'}`);
+    console.log(`[Registry] Providers: Claude=${claude.isReady() ? 'ready' : 'not found'}, Codex=${codex.isReady() ? 'ready' : 'not found'}`);
   }
 
   // ----------------------------------------------------------

@@ -19,7 +19,6 @@ import {
   Sparkles,
   Zap,
   Brain,
-  ChevronRight,
 } from 'lucide-react-native';
 import { colors, typography, spacing, radii } from '../../../theme';
 
@@ -60,7 +59,6 @@ interface ConfigSheetProps {
   providers: ProviderInfo[];
   selection: ConfigSelection;
   onSelect: (selection: ConfigSelection) => void;
-  onSetupApiKey?: () => void;
 }
 
 // ----------------------------------------------------------
@@ -84,7 +82,6 @@ export const ConfigSheet = memo(function ConfigSheet({
   providers,
   selection,
   onSelect,
-  onSetupApiKey,
 }: ConfigSheetProps) {
   const handleModelSelect = useCallback(
     (provider: string, model: ModelInfo) => {
@@ -149,15 +146,12 @@ export const ConfigSheet = memo(function ConfigSheet({
                       <Text style={styles.statusText}>Connected</Text>
                     </View>
                   ) : (
-                    <Pressable
-                      style={styles.setupButton}
-                      onPress={provider.provider === 'claude' ? onSetupApiKey : undefined}
-                    >
-                      <Text style={styles.setupButtonText}>
-                        {provider.provider === 'claude' ? 'Add API Key' : 'Install CLI'}
+                    <View style={styles.statusBadge}>
+                      <View style={[styles.statusDot, { backgroundColor: colors.semantic.error }]} />
+                      <Text style={styles.statusText}>
+                        {provider.provider === 'claude' ? 'Run: claude auth login' : 'Install CLI'}
                       </Text>
-                      <ChevronRight size={12} color={colors.accent.primary} />
-                    </Pressable>
+                    </View>
                   )}
                 </View>
 

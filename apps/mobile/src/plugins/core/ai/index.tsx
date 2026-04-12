@@ -43,7 +43,6 @@ import { MessageBubble } from './MessageBubble';
 import { ApprovalCard } from './ApprovalCard';
 import { Composer, type InteractionMode, type AccessLevel, type ModelChipInfo } from './Composer';
 import { ConfigSheet, type ConfigSelection, type ProviderInfo } from './ConfigSheet';
-import { ApiKeySetup } from './ApiKeySetup';
 import type { AIMessage, AIPart } from './types';
 import { buildToolGroupLabel } from './streaming';
 
@@ -256,18 +255,15 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
     activeThreadId,
     loading,
     providers,
-    serverCwd,
     sendMessage,
     interruptTurn,
     respondToApproval,
     setActiveThread,
     ensureActiveThread,
-    updateSettings,
   } = useOrchestration();
 
-  // Config sheet / API key setup visibility
+  // Config sheet visibility
   const [configVisible, setConfigVisible] = useState(false);
-  const [apiKeyVisible, setApiKeyVisible] = useState(false);
 
   // Model/mode/access state
   const [configSelection, setConfigSelection] = useState<ConfigSelection>({
@@ -367,9 +363,21 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
       }
     }
 
-    // Thinking indicator when streaming
+    // Pending approvals
+    // (already added above)
+
+    // Only show thinking indicator when the AI is working but hasn't started
+    // producing any text yet (once text arrives, the streaming cursor shows instead)
     if (isWorking) {
-      items.push({ type: 'thinking', key: 'thinking' });
+      const lastMsg = activeAIMessages[activeAIMessages.length - 1];
+      const hasContent = lastMsg?.parts?.some(
+        (p) => (p.type === 'text' && (p as any).text?.length > 0) ||
+               p.type === 'reasoning' ||
+               p.type === 'tool-call',
+      );
+      if (!hasContent) {
+        items.push({ type: 'thinking', key: 'thinking' });
+      }
     }
 
     return items;
@@ -530,19 +538,6 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
         providers={providers as ProviderInfo[]}
         selection={configSelection}
         onSelect={setConfigSelection}
-        onSetupApiKey={() => {
-          setConfigVisible(false);
-          setApiKeyVisible(true);
-        }}
-      />
-
-      {/* API key setup */}
-      <ApiKeySetup
-        visible={apiKeyVisible}
-        onClose={() => setApiKeyVisible(false)}
-        onSave={async (apiKey) => {
-          await updateSettings({ anthropicApiKey: apiKey });
-        }}
       />
     </KeyboardAvoidingView>
   );

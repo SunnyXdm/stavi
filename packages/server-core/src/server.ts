@@ -418,6 +418,21 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
   // Track which provider adapter is running each thread's active turn
   const activeTurnAdapters = new Map<string, string>(); // threadId → providerKind
   await providerRegistry.initialize();
+
+  // Wire Claude adapter's approval emitter to broadcast via orchestration events
+  {
+    const claudeAdapter = providerRegistry.getAdapter('claude');
+    if (claudeAdapter && 'onApprovalRequired' in claudeAdapter) {
+      (claudeAdapter as any).onApprovalRequired((threadId: string, requestId: string, toolName: string, toolInput: unknown, turnId: string) => {
+        broadcastOrchestrationEvent({
+          type: 'thread.approval-response-requested',
+          occurredAt: nowIso(),
+          payload: { threadId, turnId, requestId, toolName, toolInput },
+        });
+      });
+    }
+  }
+
   const broadcastGitStatus = async () => {
     if (gitSubscriptions.size === 0) return;
     const status = await getGitStatus(workspaceRoot);
@@ -1050,6 +1065,8 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
               const adapter = providerKind
                 ? providerRegistry.getAdapter(providerKind)
                 : providerRegistry.getDefaultAdapter();
+
+              console.log(`[Server] thread.turn.start: provider=${providerKind ?? 'default'}, adapter=${adapter ? 'found' : 'null'}, isReady=${adapter?.isReady() ?? 'N/A'}, subscribers=${orchestrationSubscriptions.size}`);
 
               if (type === 'thread.turn.start') {
                 if (command.runtimeMode) {
