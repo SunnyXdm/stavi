@@ -88,10 +88,12 @@ export class ProviderRegistry {
     const infos: ProviderInfo[] = [];
 
     for (const [kind, adapter] of this.adapters) {
+      // For Claude: always "installed" (SDK bundled). For Codex: installed only if binary found.
+      const installed = kind === 'claude' ? true : adapter.isReady();
       infos.push({
         provider: kind,
         name: kind === 'claude' ? 'Claude (Anthropic)' : 'Codex (OpenAI)',
-        installed: true,
+        installed,
         authenticated: adapter.isReady(),
         models: adapter.getModels(),
       });

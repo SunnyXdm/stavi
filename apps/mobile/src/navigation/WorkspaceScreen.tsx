@@ -36,7 +36,7 @@ export function WorkspaceScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" backgroundColor={colors.bg.base} />
 
       {/* Plugin panels */}
@@ -48,7 +48,7 @@ export function WorkspaceScreen() {
       <View style={styles.bottomBar}>
         <PluginBottomBar onHeightChange={handleBarHeightChange} />
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 

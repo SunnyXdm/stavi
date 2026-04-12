@@ -204,7 +204,7 @@ export function useOrchestration() {
     const providers = serverConfigRef.current?.providers;
     if (Array.isArray(providers)) {
       for (const provider of providers) {
-        if (!provider?.enabled || !provider?.installed) {
+        if (!provider?.authenticated || !provider?.installed) {
           continue;
         }
         const firstModel = Array.isArray(provider.models) ? provider.models[0] : null;
@@ -218,8 +218,8 @@ export function useOrchestration() {
     }
 
     return {
-      provider: 'codex',
-      modelId: 'gpt-5',
+      provider: 'claude',
+      modelId: 'claude-sonnet-4-20250514',
     };
   }, []);
 
@@ -717,6 +717,7 @@ export function useOrchestration() {
     interruptTurn,
     respondToApproval,
     setActiveThread,
+    ensureActiveThread,
     updateSettings,
     refreshProviders,
   };

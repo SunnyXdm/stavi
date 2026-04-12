@@ -51,7 +51,7 @@ export interface ConfigSelection {
   modelId: string;
   modelName: string;
   thinking: boolean;
-  effort: 'low' | 'medium' | 'high';
+  effort: 'low' | 'medium' | 'high' | 'max';
 }
 
 interface ConfigSheetProps {
@@ -67,10 +67,11 @@ interface ConfigSheetProps {
 // Effort options
 // ----------------------------------------------------------
 
-const EFFORT_OPTIONS: Array<{ value: 'low' | 'medium' | 'high'; label: string; icon: typeof Zap }> = [
+const EFFORT_OPTIONS: Array<{ value: 'low' | 'medium' | 'high' | 'max'; label: string; icon: typeof Zap }> = [
   { value: 'low', label: 'Low', icon: Zap },
   { value: 'medium', label: 'Medium', icon: Zap },
   { value: 'high', label: 'High', icon: Sparkles },
+  { value: 'max', label: 'Max', icon: Sparkles },
 ];
 
 // ----------------------------------------------------------
@@ -99,7 +100,7 @@ export const ConfigSheet = memo(function ConfigSheet({
   );
 
   const handleEffortChange = useCallback(
-    (effort: 'low' | 'medium' | 'high') => {
+    (effort: 'low' | 'medium' | 'high' | 'max') => {
       onSelect({ ...selection, effort });
     },
     [selection, onSelect],

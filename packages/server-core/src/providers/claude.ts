@@ -150,8 +150,23 @@ export class ClaudeAdapter implements ProviderAdapter {
     // Resolve model
     const modelId = input.modelSelection?.modelId ?? 'claude-sonnet-4-20250514';
     const modelInfo = CLAUDE_MODELS.find((m) => m.id === modelId);
-    const useThinking = input.modelSelection?.thinking !== false && (modelInfo?.supportsThinking ?? false);
-    const thinkingBudget = input.modelSelection?.thinkingBudget ?? 10000;
+    const effort = input.modelSelection?.effort ?? 'high';
+
+    // Map effort to thinking behavior
+    // low = thinking disabled, medium = 5K budget, high = 10K, max = 100K
+    const effortThinkingEnabled = effort !== 'low';
+    const effortBudgetMap: Record<string, number> = {
+      'low': 0,
+      'medium': 5000,
+      'high': 10000,
+      'max': 100000,
+    };
+    const useThinking = effortThinkingEnabled
+      && input.modelSelection?.thinking !== false
+      && (modelInfo?.supportsThinking ?? false);
+    const thinkingBudget = input.modelSelection?.thinkingBudget
+      ?? effortBudgetMap[effort]
+      ?? 10000;
 
     try {
       // Build request params

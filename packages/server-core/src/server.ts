@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { networkInterfaces } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -354,12 +354,30 @@ async function searchEntries(cwd: string, query: string, limit: number) {
     .slice(0, normalizedLimit);
 }
 
-function createAssistantReply(input: string) {
+function createAssistantReply(input: string, providerInfos?: Array<{ provider: string; name: string; authenticated: boolean }>) {
   const trimmed = input.trim();
   if (!trimmed) {
     return 'Local Stavi server is running.';
   }
-  return `Local Stavi server received: ${trimmed}\n\nNo AI provider is configured. Set your ANTHROPIC_API_KEY or install the Codex CLI to enable AI responses.`;
+
+  const lines: string[] = [`No AI provider is currently available.\n`];
+  if (providerInfos && providerInfos.length > 0) {
+    for (const p of providerInfos) {
+      if (p.provider === 'claude') {
+        lines.push(p.authenticated
+          ? `- **${p.name}**: Connected`
+          : `- **${p.name}**: No API key. Set \`ANTHROPIC_API_KEY\` env var or add key in the app settings.`);
+      } else if (p.provider === 'codex') {
+        lines.push(p.authenticated
+          ? `- **${p.name}**: Connected`
+          : `- **${p.name}**: CLI not found. Install with \`npm install -g @openai/codex\` and run \`codex auth login\`.`);
+      }
+    }
+  } else {
+    lines.push('Set your `ANTHROPIC_API_KEY` or install the Codex CLI to enable AI responses.');
+  }
+
+  return lines.join('\n');
 }
 
 export async function startStaviServer(options: StartServerOptions): Promise<StaviServer> {
@@ -396,6 +414,9 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
 
   // Provider registry — manages AI providers (Claude, Codex)
   const providerRegistry = new ProviderRegistry(baseDir);
+
+  // Track which provider adapter is running each thread's active turn
+  const activeTurnAdapters = new Map<string, string>(); // threadId → providerKind
   await providerRegistry.initialize();
   const broadcastGitStatus = async () => {
     if (gitSubscriptions.size === 0) return;
@@ -722,6 +743,63 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
             break;
           }
 
+          case 'fs.list': {
+            const HIDDEN_DIRS = new Set(['.git', 'node_modules', '.turbo', 'dist', 'build', '.next', '.cache', 'Pods', '.gradle']);
+            const relPath = String(payload.path ?? '.');
+            const targetPath = resolveWorkspacePath(workspaceRoot, relPath);
+
+            if (!existsSync(targetPath)) {
+              sendJson(ws, makeFailure(id, `Directory not found: ${relPath}`));
+              break;
+            }
+
+            try {
+              const dirents = readdirSync(targetPath, { withFileTypes: true });
+              const entries: Array<{
+                name: string;
+                type: 'file' | 'directory';
+                size?: number;
+              }> = [];
+
+              for (const dirent of dirents) {
+                // Skip hidden system dirs
+                if (HIDDEN_DIRS.has(dirent.name)) continue;
+                // Skip dotfiles starting with . except common config files
+                if (dirent.name.startsWith('.') && dirent.name !== '.env' && dirent.name !== '.env.local') continue;
+
+                const entryType = dirent.isDirectory() ? 'directory' : 'file';
+                const entry: { name: string; type: 'file' | 'directory'; size?: number } = {
+                  name: dirent.name,
+                  type: entryType,
+                };
+
+                // Get file size for files (skip for directories to avoid overhead)
+                if (entryType === 'file') {
+                  try {
+                    const stat = statSync(join(targetPath, dirent.name));
+                    entry.size = stat.size;
+                  } catch {
+                    // Ignore stat errors
+                  }
+                }
+
+                entries.push(entry);
+              }
+
+              // Sort: directories first, then files, both alphabetically
+              entries.sort((a, b) => {
+                if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+                return a.name.localeCompare(b.name);
+              });
+
+              sendJson(ws, makeSuccess(id, { path: relPath, entries }));
+            } catch (err) {
+              const errMsg = err instanceof Error ? err.message : 'Failed to list directory';
+              sendJson(ws, makeFailure(id, errMsg));
+            }
+            break;
+          }
+
           case 'git.refreshStatus':
           case 'git.status': {
             const status = await getGitStatus(workspaceRoot);
@@ -983,6 +1061,10 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
               }
 
               if (adapter && adapter.isReady()) {
+                // Track which adapter is running this turn
+                if (providerKind) {
+                  activeTurnAdapters.set(threadId, providerKind);
+                }
                 // Real AI provider streaming
                 (async () => {
                   try {
@@ -1081,6 +1163,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
                         }
 
                         case 'turn-complete': {
+                          activeTurnAdapters.delete(threadId);
                           // Final message
                           const finalMessage: OrchestrationMessage = {
                             ...assistantStart,
@@ -1113,6 +1196,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
                         }
 
                         case 'turn-error': {
+                          activeTurnAdapters.delete(threadId);
                           const errorText = fullText
                             ? `${fullText}\n\n---\n\n_Error: ${event.data.error}_`
                             : `_Error: ${event.data.error}_`;
@@ -1135,6 +1219,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
                       }
                     }
                   } catch (err) {
+                    activeTurnAdapters.delete(threadId);
                     const errMsg = err instanceof Error ? err.message : 'Unknown provider error';
                     const errorMessage: OrchestrationMessage = {
                       ...assistantStart,
@@ -1157,7 +1242,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
                 setTimeout(() => {
                   const finalMessage: OrchestrationMessage = {
                     ...assistantStart,
-                    text: createAssistantReply(userMessage.text),
+                    text: createAssistantReply(userMessage.text, providerRegistry.getProviderInfos()),
                     streaming: false,
                   };
                   const next = (messages.get(threadId) ?? []).map((item) =>
@@ -1174,7 +1259,10 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
             }
 
             if (type === 'thread.turn.interrupt') {
-              const adapter = providerRegistry.getDefaultAdapter();
+              const activeKind = activeTurnAdapters.get(threadId);
+              const adapter = activeKind
+                ? providerRegistry.getAdapter(activeKind as any)
+                : providerRegistry.getDefaultAdapter();
               if (adapter) {
                 void adapter.interruptTurn(threadId);
               }
@@ -1183,7 +1271,8 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
             if (type === 'thread.approval.respond') {
               const requestId = String(command.requestId ?? '');
               const decision = String(command.decision ?? 'accept') as 'accept' | 'reject' | 'always-allow';
-              const providerKind = command.provider as string | undefined;
+              const providerKind = (command.provider as string | undefined)
+                ?? activeTurnAdapters.get(threadId);
               const adapter = providerKind
                 ? providerRegistry.getAdapter(providerKind as any)
                 : providerRegistry.getDefaultAdapter();

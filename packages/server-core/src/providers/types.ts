@@ -42,7 +42,7 @@ export interface ModelSelection {
   modelId: string;
   thinking?: boolean;
   thinkingBudget?: number;
-  effort?: 'low' | 'medium' | 'high';
+  effort?: 'low' | 'medium' | 'high' | 'max';
 }
 
 // ----------------------------------------------------------
