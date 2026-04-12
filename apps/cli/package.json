@@ -1,0 +1,28 @@
+{
+  "name": "stavi",
+  "version": "0.1.0",
+  "description": "Mobile IDE for AI coding agents — server CLI",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "stavi": "./dist/index.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build src/index.ts --outfile dist/index.mjs --target node --format esm",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@stavi/server-core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">= 22.11.0"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["bun-types"],
+    "paths": {
+      "@stavi/shared": ["../../packages/shared/src"],
+      "@stavi/shared/*": ["../../packages/shared/src/*"],
+      "@stavi/protocol": ["../../packages/protocol/src"],
+      "@stavi/protocol/*": ["../../packages/protocol/src/*"]
+    }
+  },
+  "include": ["src"]
+}

@@ -1,0 +1,35 @@
+{
+  "name": "stavi",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "apps/*",
+      "packages/*"
+    ],
+    "nohoist": [
+      "**/react-native",
+      "**/react-native/**"
+    ]
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:turbo": "turbo dev",
+    "dev:cli": "turbo dev --filter=stavi",
+    "dev:relay": "turbo dev --filter=@stavi/relay",
+    "dev:mobile": "turbo dev --filter=@stavi/mobile",
+    "build": "turbo build",
+    "typecheck": "turbo typecheck",
+    "lint": "turbo lint",
+    "clean": "turbo clean"
+  },
+  "resolutions": {
+    "react": "19.2.3",
+    "react-native": "0.85.0"
+  },
+  "devDependencies": {
+    "turbo": "^2.5",
+    "typescript": "^5.7",
+    "zx": "^8.8.5"
+  },
+  "packageManager": "yarn@1.22.22"
+}

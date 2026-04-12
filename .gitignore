@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# React Native
+apps/mobile/android/app/build/
+apps/mobile/android/.gradle/
+apps/mobile/ios/build/
+apps/mobile/ios/Pods/
+apps/mobile/*.xcworkspace
+apps/mobile/.metro-health-check*
+
+# Turborepo
+.turbo/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Bun
+bun.lockb
+
+# Internal / private docs (not for public repo)
+docs/HANDOFF.md
+docs/INTERNALS.md
+docs/COMPETITORS.md
+docs/GAP-ANALYSIS.md
+docs/PRODUCT-PLAN.md

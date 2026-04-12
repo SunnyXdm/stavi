@@ -1,0 +1,16 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "types": ["react-native"],
+    "paths": {
+      "@stavi/shared": ["../../packages/shared/src"],
+      "@stavi/shared/*": ["../../packages/shared/src/*"],
+      "@stavi/protocol": ["../../packages/protocol/src"],
+      "@stavi/protocol/*": ["../../packages/protocol/src/*"],
+      "@stavi/crypto": ["../../packages/crypto/src"],
+      "@stavi/crypto/*": ["../../packages/crypto/src/*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules", "ios", "android", "build", "**/Pods"]
+}
