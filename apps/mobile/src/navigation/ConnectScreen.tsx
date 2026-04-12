@@ -3,8 +3,9 @@
 // ============================================================
 // Initial screen shown on app launch. Lists saved connections,
 // allows adding new servers, and connects to Stavi servers.
+// Pings all saved servers on load to show online/offline status.
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -26,6 +27,30 @@ import { AddServerModal } from '../components/AddServerModal';
 import { devConnectionConfig } from '../generated/dev-config';
 
 // ----------------------------------------------------------
+// Server ping helper
+// ----------------------------------------------------------
+
+type PingStatus = 'checking' | 'online' | 'offline';
+
+async function pingServer(host: string, port: number, tls?: boolean): Promise<boolean> {
+  const protocol = tls ? 'https' : 'http';
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+
+  try {
+    const response = await fetch(`${protocol}://${host}:${port}/api/health`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return response.ok;
+  } catch {
+    clearTimeout(timeout);
+    return false;
+  }
+}
+
+// ----------------------------------------------------------
 // ConnectScreen
 // ----------------------------------------------------------
 
@@ -40,6 +65,37 @@ export function ConnectScreen() {
   const connect = useConnectionStore((s) => s.connect);
   const saveConnection = useConnectionStore((s) => s.saveConnection);
   const removeSavedConnection = useConnectionStore((s) => s.removeSavedConnection);
+
+  // Server online/offline status
+  const [pingStatuses, setPingStatuses] = useState<Record<string, PingStatus>>({});
+
+  // Ping all servers on mount and when savedConnections changes
+  useEffect(() => {
+    if (savedConnections.length === 0) return;
+
+    // Set all to 'checking'
+    const initial: Record<string, PingStatus> = {};
+    for (const conn of savedConnections) {
+      initial[conn.id] = 'checking';
+    }
+    setPingStatuses(initial);
+
+    // Ping all in parallel
+    const promises = savedConnections.map(async (conn) => {
+      const online = await pingServer(conn.host, conn.port, conn.tls);
+      return { id: conn.id, status: online ? 'online' as const : 'offline' as const };
+    });
+
+    Promise.allSettled(promises).then((results) => {
+      const updates: Record<string, PingStatus> = {};
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          updates[result.value.id] = result.value.status;
+        }
+      }
+      setPingStatuses((prev) => ({ ...prev, ...updates }));
+    });
+  }, [savedConnections]);
 
   const generatedDevConnection = useMemo(() => {
     if (!__DEV__ || !devConnectionConfig) {
@@ -150,6 +206,7 @@ export function ConnectScreen() {
                 key={conn.id}
                 connection={conn}
                 isConnecting={connectingId === conn.id}
+                pingStatus={pingStatuses[conn.id]}
                 onConnect={handleConnect}
                 onDelete={handleDelete}
               />
@@ -228,14 +285,28 @@ export function ConnectScreen() {
 interface ConnectionCardProps {
   connection: SavedConnection;
   isConnecting: boolean;
+  pingStatus?: PingStatus;
   onConnect: (conn: SavedConnection) => void;
   onDelete: (conn: SavedConnection) => void;
 }
 
-function ConnectionCard({ connection, isConnecting, onConnect, onDelete }: ConnectionCardProps) {
+function ConnectionCard({
+  connection,
+  isConnecting,
+  pingStatus,
+  onConnect,
+  onDelete,
+}: ConnectionCardProps) {
   const lastConnected = connection.lastConnectedAt
     ? formatTimeAgo(connection.lastConnectedAt)
     : 'Never connected';
+
+  const dotColor =
+    pingStatus === 'online'
+      ? colors.semantic.success
+      : pingStatus === 'offline'
+        ? colors.fg.muted
+        : undefined;
 
   return (
     <Pressable
@@ -252,11 +323,13 @@ function ConnectionCard({ connection, isConnecting, onConnect, onDelete }: Conne
           <View style={styles.statusDot}>
             {isConnecting ? (
               <ActivityIndicator size="small" color={colors.accent.primary} />
+            ) : pingStatus === 'checking' ? (
+              <ActivityIndicator size={10} color={colors.fg.muted} />
             ) : (
               <View
                 style={[
                   styles.dot,
-                  { backgroundColor: colors.fg.muted },
+                  { backgroundColor: dotColor ?? colors.fg.muted },
                 ]}
               />
             )}
@@ -267,6 +340,7 @@ function ConnectionCard({ connection, isConnecting, onConnect, onDelete }: Conne
             </Text>
             <Text style={styles.cardHost} numberOfLines={1}>
               {connection.host}:{connection.port} · {lastConnected}
+              {pingStatus === 'online' ? ' · Online' : ''}
             </Text>
           </View>
         </View>

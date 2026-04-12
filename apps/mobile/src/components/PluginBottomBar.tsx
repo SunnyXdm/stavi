@@ -19,9 +19,11 @@ import { LayoutGrid } from 'lucide-react-native';
 
 interface PluginBottomBarProps {
   onHeightChange?: (height: number) => void;
+  /** Called when tapping a multi-instance plugin with no existing instances */
+  onCreateInstance?: (pluginId: string) => void;
 }
 
-export function PluginBottomBar({ onHeightChange }: PluginBottomBarProps) {
+export function PluginBottomBar({ onHeightChange, onCreateInstance }: PluginBottomBarProps) {
   const insets = useSafeAreaInsets();
   const [showTabsSheet, setShowTabsSheet] = useState(false);
 
@@ -52,9 +54,20 @@ export function PluginBottomBar({ onHeightChange }: PluginBottomBarProps) {
 
   const handleNavPress = useCallback(
     (pluginId: string) => {
-      openTab(pluginId);
+      const def = definitions[pluginId];
+      // For multi-instance plugins: switch to existing, or trigger create flow
+      if (def?.allowMultipleInstances) {
+        const existingTab = openTabs.find((t) => t.pluginId === pluginId);
+        if (existingTab) {
+          setActiveTab(existingTab.id);
+        } else {
+          onCreateInstance?.(pluginId);
+        }
+      } else {
+        openTab(pluginId);
+      }
     },
-    [openTab],
+    [openTab, setActiveTab, definitions, openTabs, onCreateInstance],
   );
 
   const handleExtraPress = useCallback(
@@ -110,7 +123,7 @@ export function PluginBottomBar({ onHeightChange }: PluginBottomBarProps) {
             onPress={() => setShowTabsSheet(true)}
           >
             <LayoutGrid size={22} color={colors.fg.tertiary} />
-            <Text style={styles.navLabel}>Tabs</Text>
+            <Text style={styles.navLabel}>Tools</Text>
           </Pressable>
         )}
       </View>

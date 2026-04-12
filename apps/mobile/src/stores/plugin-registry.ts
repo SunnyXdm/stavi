@@ -146,21 +146,13 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
           return '';
         }
 
-        // For core plugins (single instance), reuse existing tab
-        if (definition.kind === 'core') {
+        // Reuse existing singleton plugins only when multiple instances are disabled
+        if (!definition.allowMultipleInstances) {
           const existing = state.openTabs.find((t) => t.pluginId === pluginId);
           if (existing) {
             set({ activeTabId: existing.id });
             return existing.id;
           }
-        }
-
-        // For extra plugins, check if one already exists and reuse it
-        // (multi-instance support can be added later by removing this check)
-        const existingExtra = state.openTabs.find((t) => t.pluginId === pluginId);
-        if (existingExtra) {
-          set({ activeTabId: existingExtra.id });
-          return existingExtra.id;
         }
 
         // Create new instance
@@ -188,9 +180,9 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
         const tab = state.openTabs.find((t) => t.id === instanceId);
         if (!tab) return;
 
-        // Core plugins cannot be closed
+        // Singleton core plugins cannot be closed; multi-instance core tabs can be
         const definition = state.definitions[tab.pluginId];
-        if (definition?.kind === 'core') return;
+        if (definition?.kind === 'core' && !definition.allowMultipleInstances) return;
 
         // Fire lifecycle hook
         definition?.onDeactivate?.(instanceId);
@@ -234,11 +226,14 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
           .filter((d) => d.kind === 'core')
           .sort((a, b) => (a.navOrder ?? 99) - (b.navOrder ?? 99));
 
-        // Ensure all core plugins have exactly one tab
+        // Ensure singleton core plugins have one tab; multi-instance plugins start empty
         let tabs = [...state.openTabs];
         const existingPluginIds = new Set(tabs.map((t) => t.pluginId));
 
         for (const def of corePlugins) {
+          if (def.allowMultipleInstances) {
+            continue;
+          }
           if (!existingPluginIds.has(def.id)) {
             tabs.push({
               id: createInstanceId(),
@@ -276,7 +271,11 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
         const tab = get().openTabs.find((t) => t.id === instanceId);
         if (!tab) return false;
         const def = get().definitions[tab.pluginId];
-        return def?.kind !== 'core';
+        if (!def) return false;
+        // Extra plugins: always closeable
+        // Multi-instance core plugins: closeable
+        // Singleton core plugins: not closeable
+        return def.kind !== 'core' || (def.allowMultipleInstances ?? false);
       },
     }),
     {

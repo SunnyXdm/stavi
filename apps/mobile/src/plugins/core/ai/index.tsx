@@ -4,6 +4,9 @@
 // Orchestration chat UI — FlashList, AIPart-based messages,
 // CommandPartsDropdown grouping, streaming, approval cards,
 // animated thinking indicator, and improved composer.
+//
+// Sessions (threads) are registered with SessionRegistry for
+// PluginHeader and DrawerContent to display.
 
 import React, { useRef, useCallback, useEffect, useMemo, memo, useState } from 'react';
 import {
@@ -24,8 +27,6 @@ import {
   ChevronDown,
   ChevronRight,
   Layers,
-  Plus,
-  FolderOpen,
 } from 'lucide-react-native';
 import type { PluginDefinition, PluginPanelProps } from '@stavi/shared';
 import type { AIPluginAPI } from '@stavi/shared';
@@ -33,6 +34,7 @@ import { colors, typography, spacing, radii } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
 import { useConnectionStore } from '../../../stores/connection';
 import { staviClient } from '../../../stores/stavi-client';
+import { useSessionRegistry } from '../../../stores/session-registry';
 import {
   useOrchestration,
   type ApprovalRequest,
@@ -42,7 +44,6 @@ import { ApprovalCard } from './ApprovalCard';
 import { Composer, type InteractionMode, type AccessLevel, type ModelChipInfo } from './Composer';
 import { ConfigSheet, type ConfigSelection, type ProviderInfo } from './ConfigSheet';
 import { ApiKeySetup } from './ApiKeySetup';
-import { DirectoryPicker } from '../../../components/DirectoryPicker';
 import type { AIMessage, AIPart } from './types';
 import { buildToolGroupLabel } from './streaming';
 
@@ -246,6 +247,7 @@ const thinkingStyles = StyleSheet.create({
 function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
   const connectionState = useConnectionStore((s) => s.state);
   const listRef = useRef<any>(null);
+  const registerSessions = useSessionRegistry((s) => s.register);
 
   const {
     threads,
@@ -266,8 +268,6 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
   // Config sheet / API key setup visibility
   const [configVisible, setConfigVisible] = useState(false);
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
-  const [dirPickerVisible, setDirPickerVisible] = useState(false);
-  const [workspacePath, setWorkspacePath] = useState<string>('.');
 
   // Model/mode/access state
   const [configSelection, setConfigSelection] = useState<ConfigSelection>({
@@ -303,6 +303,32 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
       }
     }
   }, [providers]);
+
+  // Register AI threads as sessions for PluginHeader / DrawerContent
+  const visibleThreads = useMemo(() => threads.filter((t) => !t.archived), [threads]);
+
+  useEffect(() => {
+    registerSessions('ai', {
+      sessions: visibleThreads.map((t) => ({
+        id: t.threadId,
+        title: t.title || 'Thread',
+        subtitle: t.interactionMode === 'plan' ? 'Plan mode' : undefined,
+        isActive: t.threadId === activeThreadId,
+      })),
+      activeSessionId: activeThreadId ?? undefined,
+      onSelectSession: (sessionId: string) => {
+        setActiveThread(sessionId);
+      },
+      onCreateSession: async () => {
+        try {
+          await ensureActiveThread();
+        } catch (err) {
+          console.error('[AI] Failed to create thread:', err);
+        }
+      },
+      createLabel: 'New Thread',
+    });
+  }, [visibleThreads, activeThreadId, registerSessions, setActiveThread, ensureActiveThread]);
 
   // Get active thread data
   const activeAIMessages = activeThreadId
@@ -453,81 +479,12 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
     );
   }
 
-  // Visible (non-archived) threads for tab bar
-  const visibleThreads = threads.filter((t) => !t.archived);
-
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={bottomBarHeight + 44}
     >
-      {/* Thread tabs */}
-      <View style={styles.tabBar}>
-        {/* Workspace path chip */}
-        <Pressable
-          style={styles.workspaceChip}
-          onPress={() => setDirPickerVisible(true)}
-          hitSlop={4}
-        >
-          <FolderOpen size={14} color={colors.accent.primary} />
-          <Text style={styles.workspaceLabel} numberOfLines={1}>
-            {workspacePath === '.' ? serverCwd || 'Project' : workspacePath.split('/').pop() || workspacePath}
-          </Text>
-        </Pressable>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tabScroll}
-          style={styles.tabScrollContainer}
-        >
-          {visibleThreads.map((thread) => {
-            const isSelected = thread.threadId === activeThreadId;
-            return (
-              <Pressable
-                key={thread.threadId}
-                style={[styles.tab, isSelected && styles.tabActive]}
-                onPress={() => setActiveThread(thread.threadId)}
-              >
-                <MessageSquare
-                  size={14}
-                  color={
-                    isSelected
-                      ? colors.accent.primary
-                      : colors.fg.muted
-                  }
-                />
-                <Text
-                  style={[
-                    styles.tabText,
-                    isSelected && styles.tabTextActive,
-                  ]}
-                  numberOfLines={1}
-                >
-                  {thread.title || 'Thread'}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        {/* New thread button */}
-        <Pressable
-          style={styles.newThreadButton}
-          onPress={async () => {
-            try {
-              await ensureActiveThread();
-            } catch (err) {
-              console.error('[AI] Failed to create thread:', err);
-            }
-          }}
-          hitSlop={6}
-        >
-          <Plus size={18} color={colors.fg.secondary} />
-        </Pressable>
-      </View>
-
       {/* Messages */}
       {activeAIMessages.length === 0 ? (
         <View style={styles.emptyChat}>
@@ -586,14 +543,6 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
         onSave={async (apiKey) => {
           await updateSettings({ anthropicApiKey: apiKey });
         }}
-      />
-
-      {/* Directory picker */}
-      <DirectoryPicker
-        visible={dirPickerVisible}
-        onClose={() => setDirPickerVisible(false)}
-        onSelect={(path) => setWorkspacePath(path)}
-        initialPath={workspacePath}
       />
     </KeyboardAvoidingView>
   );
@@ -694,6 +643,7 @@ export const aiPlugin: PluginDefinition<AIPluginAPI> = {
   icon: Sparkles,
   component: AIPanel,
   navOrder: 0,
+  allowMultipleInstances: true,
   api: aiApi,
 };
 
@@ -713,69 +663,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: spacing[3],
     padding: spacing[6],
-  },
-
-  // Tab bar
-  tabBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.bg.raised,
-    height: 40,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  workspaceChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: spacing[3],
-    height: 40,
-    borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: colors.divider,
-  },
-  workspaceLabel: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.accent.primary,
-    maxWidth: 80,
-  },
-  tabScrollContainer: {
-    flex: 1,
-  },
-  tabScroll: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[2],
-    gap: spacing[1],
-  },
-  tab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[1],
-    borderRadius: radii.sm,
-    height: 28,
-    maxWidth: 160,
-  },
-  tabActive: {
-    backgroundColor: colors.bg.active,
-  },
-  tabText: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.muted,
-  },
-  tabTextActive: {
-    color: colors.fg.primary,
-  },
-  newThreadButton: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderLeftWidth: StyleSheet.hairlineWidth,
-    borderLeftColor: colors.divider,
   },
 
   // Empty chat

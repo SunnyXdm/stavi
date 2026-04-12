@@ -35,6 +35,9 @@ export interface PluginDefinition<T extends PluginAPI = PluginAPI> {
   /** Override label in bottom nav (defaults to `name`) */
   navLabel?: string;
 
+  /** Whether this plugin can have multiple open instances */
+  allowMultipleInstances?: boolean;
+
   /** Which permissions this plugin needs (for third-party sandboxing) */
   permissions?: PluginPermission[];
 

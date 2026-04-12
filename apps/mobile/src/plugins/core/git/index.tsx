@@ -820,7 +820,7 @@ export const gitPlugin: PluginDefinition<GitPluginAPI> = {
   kind: 'core',
   icon: GitBranch,
   component: GitPanel,
-  navOrder: 4,
+  navOrder: 3,
   api: gitApi,
 };
 

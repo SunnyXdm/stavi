@@ -7,10 +7,13 @@
 // Data flow:
 //   Server output → subscribeTerminalEvents → write() → native emulator
 //   User input → onTerminalInput → terminal.write RPC → server
+//
+// Sessions are registered with SessionRegistry for PluginHeader
+// and DrawerContent to display per-instance tabs.
 
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
-import { SquareTerminal, Plus, X } from 'lucide-react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { SquareTerminal } from 'lucide-react-native';
 import type { PluginDefinition, PluginPanelProps } from '@stavi/shared';
 import type { TerminalPluginAPI } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
@@ -18,6 +21,7 @@ import { textStyles } from '../../../theme/styles';
 import NativeTerminal, { type NativeTerminalRef } from '../../../components/NativeTerminal';
 import { staviClient } from '../../../stores/stavi-client';
 import { useConnectionStore } from '../../../stores/connection';
+import { useSessionRegistry } from '../../../stores/session-registry';
 
 // ----------------------------------------------------------
 // Types
@@ -47,6 +51,7 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const connectionState = useConnectionStore((s) => s.state);
+  const registerSessions = useSessionRegistry((s) => s.register);
 
   // Get or create a ref for a session
   const getTerminalRef = useCallback((sessionKey: string) => {
@@ -248,6 +253,26 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
     }
   }, [connectionState, sessions.length, createSession]);
 
+  // Register sessions with SessionRegistry for PluginHeader / DrawerContent
+  useEffect(() => {
+    registerSessions('terminal', {
+      sessions: sessions.map((s) => ({
+        id: `${s.threadId}:${s.terminalId}`,
+        title: s.label,
+        subtitle: s.status === 'exited' ? 'Exited' : undefined,
+        isActive: `${s.threadId}:${s.terminalId}` === activeSessionId,
+      })),
+      activeSessionId: activeSessionId ?? undefined,
+      onSelectSession: (sessionId: string) => {
+        setActiveSessionId(sessionId);
+      },
+      onCreateSession: () => {
+        createSession();
+      },
+      createLabel: 'New Terminal',
+    });
+  }, [sessions, activeSessionId, registerSessions, createSession]);
+
   // Not connected state
   if (connectionState !== 'connected') {
     return (
@@ -274,56 +299,6 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
 
   return (
     <View style={styles.container}>
-      {/* Session tabs */}
-      <View style={styles.tabBar}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tabScroll}
-        >
-          {sessions.map((session) => {
-            const key = `${session.threadId}:${session.terminalId}`;
-            const isActive = key === activeSessionId;
-            return (
-              <Pressable
-                key={key}
-                style={[styles.tab, isActive && styles.tabActive]}
-                onPress={() => setActiveSessionId(key)}
-                onLongPress={() => closeSession(session.threadId, session.terminalId)}
-              >
-                <SquareTerminal
-                  size={14}
-                  color={isActive ? colors.accent.primary : colors.fg.muted}
-                />
-                <Text
-                  style={[
-                    styles.tabText,
-                    isActive && styles.tabTextActive,
-                  ]}
-                  numberOfLines={1}
-                >
-                  {session.label}
-                </Text>
-                {session.status === 'connecting' && (
-                  <ActivityIndicator size={10} color={colors.accent.primary} />
-                )}
-                {session.status === 'exited' && (
-                  <View style={styles.exitedDot} />
-                )}
-              </Pressable>
-            );
-          })}
-
-          {/* New tab button */}
-          <Pressable
-            style={styles.newTabButton}
-            onPress={() => createSession()}
-          >
-            <Plus size={16} color={colors.fg.muted} />
-          </Pressable>
-        </ScrollView>
-      </View>
-
       {/* Terminal views — opacity swap (never unmount) */}
       <View style={styles.terminalArea}>
         {sessions.map((session) => {
@@ -409,7 +384,7 @@ export const terminalPlugin: PluginDefinition<TerminalPluginAPI> = {
   kind: 'core',
   icon: SquareTerminal,
   component: TerminalPanel,
-  navOrder: 3,
+  navOrder: 2,
   navLabel: 'Term',
   api: terminalApi,
 };
@@ -430,51 +405,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: spacing[3],
     padding: spacing[6],
-  },
-
-  // Tab bar
-  tabBar: {
-    backgroundColor: colors.bg.raised,
-    height: 36,
-  },
-  tabScroll: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[2],
-    gap: spacing[1],
-  },
-  tab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[1],
-    borderRadius: radii.sm,
-    height: 28,
-  },
-  tabActive: {
-    backgroundColor: colors.bg.active,
-  },
-  tabText: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.muted,
-  },
-  tabTextActive: {
-    color: colors.fg.primary,
-  },
-  exitedDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.semantic.error,
-  },
-  newTabButton: {
-    width: 28,
-    height: 28,
-    borderRadius: radii.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 
   // Terminal

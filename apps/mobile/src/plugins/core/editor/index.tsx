@@ -4,6 +4,8 @@
 // Code viewer with file tabs. Opens files via GPI from Explorer
 // or AI file changes. Uses ScrollView with monospace text for
 // code display (WebView + CodeMirror planned for v2).
+//
+// Each plugin instance has its own file state keyed by instanceId.
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
@@ -33,14 +35,35 @@ interface OpenFile {
   error: string | null;
 }
 
-// Module-level state (persists across opacity swap)
-let openFiles: OpenFile[] = [];
-let activeFilePath: string | null = null;
-const fileChangeListeners = new Set<() => void>();
+interface InstanceState {
+  openFiles: OpenFile[];
+  activeFilePath: string | null;
+  listeners: Set<() => void>;
+}
 
-function notifyListeners() {
-  for (const listener of fileChangeListeners) {
-    listener();
+// ----------------------------------------------------------
+// Per-instance state (outside React, persists across renders)
+// ----------------------------------------------------------
+
+const instanceStateMap = new Map<string, InstanceState>();
+
+function getInstanceState(instanceId: string): InstanceState {
+  if (!instanceStateMap.has(instanceId)) {
+    instanceStateMap.set(instanceId, {
+      openFiles: [],
+      activeFilePath: null,
+      listeners: new Set(),
+    });
+  }
+  return instanceStateMap.get(instanceId)!;
+}
+
+function notifyListeners(instanceId: string) {
+  const state = instanceStateMap.get(instanceId);
+  if (state) {
+    for (const listener of state.listeners) {
+      listener();
+    }
   }
 }
 
@@ -52,29 +75,35 @@ function EditorPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps
   const connectionState = useConnectionStore((s) => s.state);
   const [, forceUpdate] = useState(0);
 
-  // Subscribe to file changes
+  // Get or create per-instance state
+  const iState = getInstanceState(instanceId);
+
+  // Subscribe to file changes for this instance
   useEffect(() => {
     const listener = () => forceUpdate((n) => n + 1);
-    fileChangeListeners.add(listener);
+    iState.listeners.add(listener);
     return () => {
-      fileChangeListeners.delete(listener);
+      iState.listeners.delete(listener);
     };
-  }, []);
+  }, [iState]);
 
+  const { openFiles, activeFilePath } = iState;
   const activeFile = openFiles.find((f) => f.path === activeFilePath);
 
   const handleCloseFile = useCallback((path: string) => {
-    openFiles = openFiles.filter((f) => f.path !== path);
-    if (activeFilePath === path) {
-      activeFilePath = openFiles[openFiles.length - 1]?.path ?? null;
+    const s = getInstanceState(instanceId);
+    s.openFiles = s.openFiles.filter((f) => f.path !== path);
+    if (s.activeFilePath === path) {
+      s.activeFilePath = s.openFiles[s.openFiles.length - 1]?.path ?? null;
     }
-    notifyListeners();
-  }, []);
+    notifyListeners(instanceId);
+  }, [instanceId]);
 
   const handleSelectFile = useCallback((path: string) => {
-    activeFilePath = path;
-    notifyListeners();
-  }, []);
+    const s = getInstanceState(instanceId);
+    s.activeFilePath = path;
+    notifyListeners(instanceId);
+  }, [instanceId]);
 
   // Not connected
   if (connectionState !== 'connected') {
@@ -182,40 +211,46 @@ function EditorPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps
 function editorApi(): EditorPluginAPI {
   return {
     openFile: async (path, line) => {
+      // Find first editor instance, or use a global fallback
+      const [firstInstanceId] = instanceStateMap.keys();
+      if (!firstInstanceId) return;
+
+      const s = getInstanceState(firstInstanceId);
+
       // Check if already open
-      const existing = openFiles.find((f) => f.path === path);
-      if (existing) {
-        activeFilePath = path;
-        notifyListeners();
+      if (s.openFiles.find((f) => f.path === path)) {
+        s.activeFilePath = path;
+        notifyListeners(firstInstanceId);
         return;
       }
 
       // Add as loading
       const file: OpenFile = { path, content: '', loading: true, error: null };
-      openFiles = [...openFiles, file];
-      activeFilePath = path;
-      notifyListeners();
+      s.openFiles = [...s.openFiles, file];
+      s.activeFilePath = path;
+      notifyListeners(firstInstanceId);
 
       try {
-        // Read file content via Stavi RPC
         const result = await staviClient.request<{ content: string }>('fs.read', { path });
         const content = result.content || '(unable to read file)';
-        openFiles = openFiles.map((f) =>
+        s.openFiles = s.openFiles.map((f) =>
           f.path === path ? { ...f, content, loading: false } : f,
         );
       } catch (err) {
-        openFiles = openFiles.map((f) =>
+        s.openFiles = s.openFiles.map((f) =>
           f.path === path
             ? { ...f, loading: false, error: err instanceof Error ? err.message : 'Failed to load' }
             : f,
         );
       }
-      notifyListeners();
+      notifyListeners(firstInstanceId);
     },
 
     saveFile: async (path) => {
-      // Write via Stavi RPC
-      const file = openFiles.find((f) => f.path === path);
+      const [firstInstanceId] = instanceStateMap.keys();
+      if (!firstInstanceId) return;
+      const s = getInstanceState(firstInstanceId);
+      const file = s.openFiles.find((f) => f.path === path);
       if (!file) return;
       await staviClient.request('fs.write', {
         path,
@@ -223,7 +258,11 @@ function editorApi(): EditorPluginAPI {
       });
     },
 
-    getCurrentFile: () => activeFilePath,
+    getCurrentFile: () => {
+      const [firstInstanceId] = instanceStateMap.keys();
+      if (!firstInstanceId) return null;
+      return getInstanceState(firstInstanceId).activeFilePath;
+    },
   };
 }
 
@@ -238,7 +277,8 @@ export const editorPlugin: PluginDefinition<EditorPluginAPI> = {
   kind: 'core',
   icon: Code2,
   component: EditorPanel,
-  navOrder: 2,
+  navOrder: 1,
+  allowMultipleInstances: true,
   api: editorApi,
 };
 
