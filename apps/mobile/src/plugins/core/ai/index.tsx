@@ -43,6 +43,7 @@ import { MessageBubble } from './MessageBubble';
 import { ApprovalCard } from './ApprovalCard';
 import { Composer, type InteractionMode, type AccessLevel, type ModelChipInfo } from './Composer';
 import { ConfigSheet, type ConfigSelection, type ProviderInfo } from './ConfigSheet';
+import { ModelPopover, type PopoverSection } from './ModelPopover';
 import type { AIMessage, AIPart } from './types';
 import { buildToolGroupLabel } from './streaming';
 
@@ -262,8 +263,14 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
     ensureActiveThread,
   } = useOrchestration();
 
-  // Config sheet visibility
-  const [configVisible, setConfigVisible] = useState(false);
+  const [popoverSection, setPopoverSection] = useState<PopoverSection>('providers');
+  const [popoverVisible, setPopoverVisible] = useState(false);
+  const [providerLocked, setProviderLocked] = useState(false);
+
+  const openPopover = useCallback((section: PopoverSection) => {
+    setPopoverSection(section);
+    setPopoverVisible(true);
+  }, []);
 
   // Model/mode/access state
   const [configSelection, setConfigSelection] = useState<ConfigSelection>({
@@ -296,6 +303,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
           modelName: defaultModel.name,
           thinking: defaultModel.supportsThinking ?? prev.thinking,
         }));
+        setProviderLocked(true);
       }
     }
   }, [providers]);
@@ -520,24 +528,33 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
       <Composer
         onSend={handleSend}
         onInterrupt={handleInterrupt}
-        onOpenConfig={() => setConfigVisible(true)}
+        onProviderPress={() => openPopover(providerLocked ? 'models' : 'providers')}
+        onModelPress={() => openPopover('models')}
+        onEffortPress={() => openPopover('effort')}
+        onModePress={() => setInteractionMode((m) => m === 'default' ? 'plan' : 'default')}
+        onAccessPress={() => openPopover('access')}
         isWorking={isWorking}
         selectedModel={selectedModel}
+        mode={interactionMode}
+        accessLevel={accessLevel}
+        effort={configSelection.effort}
+      />
+
+      {/* Contextual popover */}
+      <ModelPopover
+        visible={popoverVisible}
+        section={popoverSection}
+        onClose={() => setPopoverVisible(false)}
+        providers={providers as ProviderInfo[]}
+        selection={configSelection}
+        onSelect={(s) => {
+          setConfigSelection(s);
+          setProviderLocked(true);
+        }}
         mode={interactionMode}
         onModeChange={setInteractionMode}
         accessLevel={accessLevel}
         onAccessChange={setAccessLevel}
-        effort={configSelection.effort}
-        onEffortChange={(effort) => setConfigSelection((prev) => ({ ...prev, effort }))}
-      />
-
-      {/* Config sheet */}
-      <ConfigSheet
-        visible={configVisible}
-        onClose={() => setConfigVisible(false)}
-        providers={providers as ProviderInfo[]}
-        selection={configSelection}
-        onSelect={setConfigSelection}
       />
     </KeyboardAvoidingView>
   );

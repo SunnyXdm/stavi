@@ -1024,6 +1024,16 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
             threads.set(threadId, thread);
             if (!messages.has(threadId)) messages.set(threadId, []);
 
+            if (type === 'thread.create') {
+              broadcastOrchestrationEvent({
+                type: 'thread.created',
+                occurredAt: nowIso(),
+                payload: thread,
+              });
+              sendJson(ws, makeSuccess(id, { thread }));
+              break;
+            }
+
             if (type === 'thread.turn.start') {
               const msg = command.message as Record<string, unknown>;
               const userMessage: OrchestrationMessage = {
@@ -1089,6 +1099,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
                     const stream = adapter.sendTurn({
                       threadId,
                       text: userMessage.text,
+                      cwd: thread.worktreePath ?? workspaceRoot,
                       modelSelection,
                       interactionMode: command.interactionMode as 'default' | 'plan' | undefined,
                     });

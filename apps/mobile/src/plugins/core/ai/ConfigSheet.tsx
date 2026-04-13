@@ -69,8 +69,13 @@ const EFFORT_OPTIONS: Array<{ value: 'low' | 'medium' | 'high' | 'max'; label: s
   { value: 'low', label: 'Low', icon: Zap },
   { value: 'medium', label: 'Medium', icon: Zap },
   { value: 'high', label: 'High', icon: Sparkles },
-  { value: 'max', label: 'Max', icon: Sparkles },
+  { value: 'max', label: 'Extra High', icon: Sparkles },
 ];
+
+const PROVIDER_ACCENT: Record<string, string> = {
+  claude: '#7C3AED',
+  codex: '#10B981',
+};
 
 // ----------------------------------------------------------
 // Main component
@@ -139,7 +144,17 @@ export const ConfigSheet = memo(function ConfigSheet({
             {providers.map((provider) => (
               <View key={provider.provider} style={styles.providerSection}>
                 <View style={styles.providerHeader}>
-                  <Text style={styles.providerName}>{provider.name}</Text>
+                  <View style={styles.providerNameRow}>
+                    {PROVIDER_ACCENT[provider.provider] && (
+                      <View
+                        style={[
+                          styles.providerAccentDot,
+                          { backgroundColor: PROVIDER_ACCENT[provider.provider] },
+                        ]}
+                      />
+                    )}
+                    <Text style={styles.providerName}>{provider.name}</Text>
+                  </View>
                   {provider.authenticated ? (
                     <View style={styles.statusBadge}>
                       <View style={[styles.statusDot, { backgroundColor: colors.semantic.success }]} />
@@ -186,6 +201,19 @@ export const ConfigSheet = memo(function ConfigSheet({
                 )}
               </View>
             ))}
+
+            {/* Coming soon providers */}
+            <View style={styles.providerSection}>
+              <View style={styles.providerHeader}>
+                <View style={styles.providerNameRow}>
+                  <View style={[styles.providerAccentDot, { backgroundColor: '#F97316' }]} />
+                  <Text style={[styles.providerName, styles.providerNameMuted]}>OpenCode</Text>
+                </View>
+                <View style={styles.comingSoonBadge}>
+                  <Text style={styles.comingSoonText}>COMING SOON</Text>
+                </View>
+              </View>
+            </View>
 
             {/* Effort slider */}
             <View style={styles.settingSection}>
@@ -294,11 +322,36 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing[2],
   },
+  providerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+  },
+  providerAccentDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
   providerName: {
     fontSize: typography.fontSize.sm,
     fontWeight: typography.fontWeight.semibold,
     color: colors.fg.secondary,
     textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  providerNameMuted: {
+    color: colors.fg.muted,
+  },
+  comingSoonBadge: {
+    paddingHorizontal: spacing[2],
+    paddingVertical: 2,
+    borderRadius: radii.sm,
+    backgroundColor: colors.bg.active,
+  },
+  comingSoonText: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.fg.muted,
     letterSpacing: 0.5,
   },
   statusBadge: {

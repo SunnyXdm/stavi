@@ -228,8 +228,11 @@ export class ClaudeAdapter implements ProviderAdapter {
   async *sendTurn(input: SendTurnInput): AsyncGenerator<ProviderEvent> {
     let session = this.sessions.get(input.threadId);
     if (!session) {
-      await this.startSession(input.threadId, '.');
+      await this.startSession(input.threadId, input.cwd ?? '.');
       session = this.sessions.get(input.threadId)!;
+    } else if (input.cwd && session.cwd === '.') {
+      // Backfill cwd if it wasn't set at session creation time
+      session.cwd = input.cwd;
     }
 
     const turnId = `turn-${Date.now()}`;
@@ -248,8 +251,9 @@ export class ClaudeAdapter implements ProviderAdapter {
     // Push user message into the prompt queue
     const userMessage: SDKUserMessage = {
       type: 'user',
-      content: input.text,
-    } as any;
+      message: { role: 'user', content: input.text },
+      parent_tool_use_id: null,
+    };
 
     // If no query running, start one
     if (!session.queryRuntime) {
@@ -314,6 +318,11 @@ export class ClaudeAdapter implements ProviderAdapter {
         });
 
         session.queryRuntime = q;
+        // Get the iterator ONCE and store it — reused across all turns.
+        // We must NOT use for-await-of on queryRuntime directly because returning
+        // from inside for-await calls .return() on the iterator, which closes the
+        // underlying query subprocess and breaks multi-turn conversations.
+        session.streamIterator = (q as any)[Symbol.asyncIterator]();
         session.interruptFn = (q as any).interrupt?.bind(q) ?? null;
         session.closeFn = (q as any).close?.bind(q) ?? null;
       } catch (err) {
@@ -327,15 +336,18 @@ export class ClaudeAdapter implements ProviderAdapter {
     // Push the user message
     session.promptQueue.push(userMessage);
 
-    // Stream events from the query
+    // Stream events from the stored iterator using manual .next() calls.
+    // This avoids for-await-of which would call .return() and close the iterator
+    // when we return from this generator at the end of each turn.
     let fullText = '';
     let thinkingText = '';
 
     try {
-      for await (const message of session.queryRuntime as AsyncIterable<SDKMessage>) {
-        if (session.aborted) break;
+      while (true) {
+        const { value: message, done } = await session.streamIterator!.next();
+        if (done || session.aborted) break;
 
-        switch (message.type) {
+        switch ((message as SDKMessage).type) {
           case 'stream_event': {
             const event = (message as any).event;
             if (!event) break;
@@ -424,8 +436,9 @@ export class ClaudeAdapter implements ProviderAdapter {
               session.sessionId = (message as any).session_id;
             }
 
-            // This turn is done — break out of the for-await loop
-            // The query stays alive for the next turn
+            // Return from this generator WITHOUT touching session.streamIterator.
+            // The stored iterator stays alive — the next sendTurn() call will
+            // continue pulling from it after the next message is pushed to promptQueue.
             return;
           }
 
@@ -450,6 +463,9 @@ export class ClaudeAdapter implements ProviderAdapter {
         yield textDone(input.threadId, fullText, turnId);
       }
       yield turnComplete(input.threadId, turnId);
+      // Stream closed — reset so next turn starts a fresh query
+      session.queryRuntime = null;
+      session.streamIterator = null;
     } catch (error: unknown) {
       if (session.aborted) {
         yield turnError(input.threadId, 'Turn interrupted by user', turnId);

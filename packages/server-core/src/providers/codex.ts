@@ -251,8 +251,10 @@ export class CodexAdapter implements ProviderAdapter {
   async *sendTurn(input: SendTurnInput): AsyncGenerator<ProviderEvent> {
     let session = this.sessions.get(input.threadId);
     if (!session) {
-      await this.startSession(input.threadId, '.');
+      await this.startSession(input.threadId, input.cwd ?? '.');
       session = this.sessions.get(input.threadId)!;
+    } else if (input.cwd && session.cwd === '.') {
+      session.cwd = input.cwd;
     }
 
     if (session.status !== 'ready') {
@@ -287,21 +289,18 @@ export class CodexAdapter implements ProviderAdapter {
       });
       session.activeTurnId = (turnResult as any)?.turn?.id ?? `turn-${Date.now()}`;
 
-      // Now yield events as they arrive from the event buffer
-      // The process stdout handler pushes events into eventBuffer
-      // We consume them here with an async iteration pattern
+      // Drain the event buffer — process stdout handler pushes events in,
+      // we yield them out. Use a promise-based wait when the buffer is empty.
       while (session.status === 'running') {
         if (session.eventBuffer.length > 0) {
           const event = session.eventBuffer.shift()!;
           yield event;
 
-          // Check if this is a terminal event
           if (event.type === 'turn-complete' || event.type === 'turn-error') {
             session.status = 'ready';
             break;
           }
         } else {
-          // Wait for new events
           await new Promise<void>((resolve) => {
             session!.eventResolve = () => {
               session!.eventResolve = null;
@@ -316,6 +315,12 @@ export class CodexAdapter implements ProviderAdapter {
             }, 30_000);
           });
         }
+      }
+
+      // If the process exited unexpectedly (status 'closed'), emit an error so
+      // the server marks the assistant message as failed instead of hanging.
+      if ((session.status as string) === 'closed') {
+        yield turnError(input.threadId, 'Codex process exited unexpectedly');
       }
     } catch (err) {
       session.status = 'ready';

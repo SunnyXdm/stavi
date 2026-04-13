@@ -21,15 +21,11 @@ import {
   Send,
   StopCircle,
   ChevronDown,
-  Shield,
-  ShieldOff,
-  ShieldCheck,
-  MessageSquare,
-  ClipboardList,
   Zap,
   Sparkles,
 } from 'lucide-react-native';
 import { colors, typography, spacing, radii } from '../../../theme';
+import { ProviderIcon } from './ModelPopover';
 
 // ----------------------------------------------------------
 // Types
@@ -48,17 +44,17 @@ export interface ModelChipInfo {
 interface ComposerProps {
   onSend: (text: string) => void;
   onInterrupt?: () => void;
-  onOpenConfig?: () => void;
+  onProviderPress?: () => void;
+  onModelPress?: () => void;
+  onEffortPress?: () => void;
+  onModePress?: () => void;
+  onAccessPress?: () => void;
   isWorking?: boolean;
   placeholder?: string;
-  // Model/mode/access state
   selectedModel?: ModelChipInfo | null;
   mode?: InteractionMode;
-  onModeChange?: (mode: InteractionMode) => void;
   accessLevel?: AccessLevel;
-  onAccessChange?: (level: AccessLevel) => void;
   effort?: EffortLevel;
-  onEffortChange?: (effort: EffortLevel) => void;
 }
 
 // ----------------------------------------------------------
@@ -121,43 +117,24 @@ const chipStyles = StyleSheet.create({
 // Access level helpers
 // ----------------------------------------------------------
 
-const ACCESS_LEVELS: AccessLevel[] = ['supervised', 'auto-accept', 'full-access'];
 const ACCESS_LABELS: Record<AccessLevel, string> = {
   'supervised': 'Supervised',
   'auto-accept': 'Auto',
-  'full-access': 'Full',
+  'full-access': 'Full access',
 };
 
-const EFFORT_LEVELS: EffortLevel[] = ['low', 'medium', 'high', 'max'];
 const EFFORT_LABELS: Record<EffortLevel, string> = {
   'low': 'Low',
   'medium': 'Med',
   'high': 'High',
-  'max': 'Max',
+  'max': 'Extra High',
 };
-
-function getAccessIcon(level: AccessLevel) {
-  switch (level) {
-    case 'supervised':
-      return <Shield size={12} color={colors.semantic.success} />;
-    case 'auto-accept':
-      return <ShieldCheck size={12} color={colors.semantic.warning} />;
-    case 'full-access':
-      return <ShieldOff size={12} color={colors.semantic.error} />;
-  }
-}
 
 function getEffortIcon(effort: EffortLevel) {
   if (effort === 'high' || effort === 'max') {
     return <Sparkles size={12} color={colors.accent.primary} />;
   }
   return <Zap size={12} color={colors.fg.tertiary} />;
-}
-
-function getProviderDotColor(provider?: string) {
-  if (provider === 'claude') return '#e8654a'; // Anthropic red-orange
-  if (provider === 'codex') return '#74aa9c'; // OpenAI green
-  return colors.fg.muted;
 }
 
 // ----------------------------------------------------------
@@ -167,16 +144,17 @@ function getProviderDotColor(provider?: string) {
 export const Composer = memo(function Composer({
   onSend,
   onInterrupt,
-  onOpenConfig,
+  onProviderPress,
+  onModelPress,
+  onEffortPress,
+  onModePress,
+  onAccessPress,
   isWorking = false,
   placeholder = 'Ask anything...',
   selectedModel,
   mode = 'default',
-  onModeChange,
   accessLevel = 'supervised',
-  onAccessChange,
   effort = 'high',
-  onEffortChange,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const inputRef = useRef<TextInput>(null);
@@ -191,23 +169,6 @@ export const Composer = memo(function Composer({
   const handleInterrupt = useCallback(() => {
     onInterrupt?.();
   }, [onInterrupt]);
-
-  const toggleMode = useCallback(() => {
-    const next = mode === 'default' ? 'plan' : 'default';
-    onModeChange?.(next);
-  }, [mode, onModeChange]);
-
-  const cycleAccess = useCallback(() => {
-    const idx = ACCESS_LEVELS.indexOf(accessLevel);
-    const next = ACCESS_LEVELS[(idx + 1) % ACCESS_LEVELS.length];
-    onAccessChange?.(next);
-  }, [accessLevel, onAccessChange]);
-
-  const cycleEffort = useCallback(() => {
-    const idx = EFFORT_LEVELS.indexOf(effort);
-    const next = EFFORT_LEVELS[(idx + 1) % EFFORT_LEVELS.length];
-    onEffortChange?.(next);
-  }, [effort, onEffortChange]);
 
   const hasText = text.trim().length > 0;
   const modelLabel = selectedModel?.modelName ?? 'No model';
@@ -256,16 +217,26 @@ export const Composer = memo(function Composer({
         )}
       </View>
 
-      {/* Toolbar row — scrollable for narrow screens */}
+      {/* Toolbar row */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.toolbar}
         bounces={false}
       >
-        {/* Model chip with provider dot */}
-        <Pressable style={styles.modelChip} onPress={onOpenConfig} hitSlop={4}>
-          <View style={[styles.providerDot, { backgroundColor: getProviderDotColor(selectedModel?.provider) }]} />
+        {/* Provider chip — icon + name, opens provider list or model list */}
+        <Pressable style={styles.providerChip} onPress={onProviderPress} hitSlop={4}>
+          {selectedModel?.provider && (
+            <ProviderIcon provider={selectedModel.provider} size={16} />
+          )}
+          <Text style={styles.providerChipLabel} numberOfLines={1}>
+            {selectedModel?.provider === 'claude' ? 'Claude' : selectedModel?.provider === 'codex' ? 'Codex' : (selectedModel?.provider ?? 'Model')}
+          </Text>
+          <ChevronDown size={10} color={colors.fg.muted} />
+        </Pressable>
+
+        {/* Model name chip — opens settings */}
+        <Pressable style={styles.modelChip} onPress={onModelPress} hitSlop={4}>
           <Text style={styles.modelLabel} numberOfLines={1}>
             {modelLabel}
           </Text>
@@ -276,29 +247,23 @@ export const Composer = memo(function Composer({
         <ToolbarChip
           label={EFFORT_LABELS[effort]}
           icon={getEffortIcon(effort)}
-          onPress={cycleEffort}
+          onPress={onEffortPress}
           active={effort === 'high' || effort === 'max'}
         />
-
-        <View style={styles.toolbarSpacer} />
 
         {/* Mode chip */}
         <ToolbarChip
           label={mode === 'default' ? 'Chat' : 'Plan'}
-          icon={
-            mode === 'default'
-              ? <MessageSquare size={12} color={colors.fg.tertiary} />
-              : <ClipboardList size={12} color={colors.accent.primary} />
-          }
-          onPress={toggleMode}
+          icon={<Sparkles size={12} color={mode === 'plan' ? colors.accent.primary : colors.fg.tertiary} />}
+          onPress={onModePress}
           active={mode === 'plan'}
         />
 
         {/* Access chip */}
         <ToolbarChip
           label={ACCESS_LABELS[accessLevel]}
-          icon={getAccessIcon(accessLevel)}
-          onPress={cycleAccess}
+          icon={null}
+          onPress={onAccessPress}
         />
       </ScrollView>
     </View>
@@ -353,25 +318,34 @@ const styles = StyleSheet.create({
     marginTop: spacing[2],
     paddingHorizontal: spacing[1],
   },
+  providerChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: spacing[2],
+    paddingVertical: 5,
+    borderRadius: radii.sm,
+    backgroundColor: colors.bg.input,
+  },
+  providerChipLabel: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.fg.secondary,
+  },
   modelChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     paddingHorizontal: spacing[2],
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: radii.sm,
     backgroundColor: colors.bg.input,
-  },
-  providerDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
   },
   modelLabel: {
     fontSize: typography.fontSize.xs,
     fontWeight: typography.fontWeight.medium,
     color: colors.fg.secondary,
-    maxWidth: 120,
+    maxWidth: 110,
   },
   toolbarSpacer: {
     flex: 1,

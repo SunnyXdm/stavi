@@ -151,6 +151,7 @@ export type ApprovalDecision = 'accept' | 'reject' | 'always-allow';
 export interface SendTurnInput {
   threadId: string;
   text: string;
+  cwd?: string;
   modelSelection?: ModelSelection;
   interactionMode?: 'default' | 'plan';
   attachments?: Array<{ type: string; data: string }>;
