@@ -52,6 +52,12 @@ export function PluginBottomBar({ onHeightChange, onCreateInstance }: PluginBott
     return activeTab?.pluginId ?? null;
   }, [openTabs, activeTabId]);
 
+  // True when an extra plugin (not in the nav bar) is currently active
+  const isExtraPluginActive = useMemo(() => {
+    if (!activePluginId) return false;
+    return definitions[activePluginId]?.kind === 'extra';
+  }, [activePluginId, definitions]);
+
   const handleNavPress = useCallback(
     (pluginId: string) => {
       const def = definitions[pluginId];
@@ -122,8 +128,13 @@ export function PluginBottomBar({ onHeightChange, onCreateInstance }: PluginBott
             style={styles.navItem}
             onPress={() => setShowTabsSheet(true)}
           >
-            <LayoutGrid size={22} color={colors.fg.tertiary} />
-            <Text style={styles.navLabel}>Tools</Text>
+            <LayoutGrid
+              size={22}
+              color={isExtraPluginActive ? colors.accent.primary : colors.fg.tertiary}
+            />
+            <Text style={[styles.navLabel, isExtraPluginActive && styles.navLabelActive]}>
+              Tools
+            </Text>
           </Pressable>
         )}
       </View>

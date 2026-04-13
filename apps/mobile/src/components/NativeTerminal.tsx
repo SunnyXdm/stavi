@@ -5,30 +5,25 @@
 // TerminalView). Imperative write/resize/reset commands are
 // forwarded via codegen Commands to the native view.
 //
-// On iOS: falls back to a ScrollView + TextInput surface while
-// the SwiftTerm integration is in development.
+// On iOS: renders an xterm.js terminal inside a WebView.
+// Messages are passed via postMessage / onMessage bridge.
 //
 // The plugin layer always sees the same NativeTerminalRef API.
 
 import React, {
   useRef,
-  useState,
-  useEffect,
   useCallback,
   useImperativeHandle,
   forwardRef,
 } from 'react';
 import {
   Platform,
-  ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
-  View,
   type ViewStyle,
   type StyleProp,
 } from 'react-native';
-import { colors, spacing, typography } from '../theme';
+import WebView from 'react-native-webview';
+import { XTERM_CSS, XTERM_JS, XTERM_FIT_JS } from './xtermBundle';
 import NativeTerminalViewComponent, {
   Commands,
   type NativeTerminalViewProps,
@@ -113,94 +108,175 @@ const AndroidTerminal = forwardRef<NativeTerminalRef, NativeTerminalProps>(
 AndroidTerminal.displayName = 'AndroidTerminal';
 
 // ----------------------------------------------------------
-// iOS fallback — ScrollView + TextInput
-// (SwiftTerm integration pending)
+// iOS — xterm.js terminal via WebView
 // ----------------------------------------------------------
+// Architecture:
+//   RN → WebView: postMessage({ type: 'write'|'reset', data })
+//   WebView → RN: onMessage with { type: 'input'|'resize'|'ready', ... }
 
-// Strip ANSI escape sequences so raw PTY output is readable as plain text.
-// Handles: CSI sequences (\x1b[...m), OSC sequences (\x1b]...ST), simple \x1b X.
-const ANSI_RE = /\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_][0-9;]*[A-Za-z]?|[A-Za-z])/g;
-function stripAnsi(data: string): string {
-  return data.replace(ANSI_RE, '');
+// Build HTML with inlined scripts/styles — no CDN dependency, works offline
+function buildXtermHtml(): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #161616; overflow: hidden; }
+  #terminal { width: 100%; height: 100%; }
+  .xterm { padding: 4px; }
+  ${XTERM_CSS}
+</style>
+</head>
+<body>
+<div id="terminal"></div>
+<script>${XTERM_JS}</script>
+<script>${XTERM_FIT_JS}</script>
+<script>
+const term = new Terminal({
+  theme: {
+    background: '#161616',
+    foreground: '#e0e0e0',
+    cursor: '#e0e0e0',
+    black: '#1e1e1e', red: '#f44747', green: '#6a9955',
+    yellow: '#d7ba7d', blue: '#569cd6', magenta: '#c586c0',
+    cyan: '#4ec9b0', white: '#d4d4d4',
+    brightBlack: '#808080', brightRed: '#f44747', brightGreen: '#b5cea8',
+    brightYellow: '#d7ba7d', brightBlue: '#9cdcfe', brightMagenta: '#c586c0',
+    brightCyan: '#4ec9b0', brightWhite: '#ffffff',
+  },
+  fontFamily: 'Menlo, Monaco, monospace',
+  fontSize: 13,
+  lineHeight: 1.2,
+  cursorBlink: true,
+  scrollback: 5000,
+  convertEol: false,
+});
+const fitAddon = new FitAddon.FitAddon();
+term.loadAddon(fitAddon);
+term.open(document.getElementById('terminal'));
+fitAddon.fit();
+
+// Send input from terminal to RN
+term.onData(function(data) {
+  window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'input', data: data }));
+});
+
+// Send resize events to RN
+term.onResize(function(size) {
+  window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
+});
+
+// Handle resize when window changes
+window.addEventListener('resize', function() {
+  fitAddon.fit();
+});
+
+// Signal ready with initial dimensions
+setTimeout(function() {
+  fitAddon.fit();
+  window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready', cols: term.cols, rows: term.rows }));
+}, 100);
+
+// Handle messages from RN
+document.addEventListener('message', handleMessage);
+window.addEventListener('message', handleMessage);
+function handleMessage(event) {
+  try {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'write') {
+      term.write(msg.data);
+    } else if (msg.type === 'reset') {
+      term.reset();
+    } else if (msg.type === 'fit') {
+      fitAddon.fit();
+    }
+  } catch(e) {}
+}
+</script>
+</body>
+</html>`;
 }
 
-const IOSTerminalFallback = forwardRef<NativeTerminalRef, NativeTerminalProps>(
-  ({ style, onTerminalInput, onTerminalResize, onTerminalReady, onTerminalBell }, ref) => {
-    const [buffer, setBuffer] = useState('');
-    const [input, setInput] = useState('');
-    const scrollRef = useRef<ScrollView>(null);
+const XTERM_HTML = buildXtermHtml();
 
-    const append = useCallback((data: string) => {
-      // Strip ANSI codes — iOS fallback renders plain Text, not a real terminal
-      setBuffer((prev) => prev + stripAnsi(data));
-    }, []);
+const IOSXtermTerminal = forwardRef<NativeTerminalRef, NativeTerminalProps>(
+  ({ style, onTerminalInput, onTerminalResize, onTerminalReady, onTerminalBell }, ref) => {
+    const webviewRef = useRef<WebView>(null);
+    const readyRef = useRef(false);
+    const pendingRef = useRef<string[]>([]);
 
     useImperativeHandle(
       ref,
       () => ({
         write: (data: string) => {
-          append(data);
-          if (data.includes('\u0007')) {
-            onTerminalBell?.();
+          const msg = JSON.stringify({ type: 'write', data });
+          if (readyRef.current) {
+            webviewRef.current?.postMessage(msg);
+          } else {
+            // Buffer until ready
+            pendingRef.current.push(msg);
           }
         },
-        resize: (cols: number, rows: number) => {
-          onTerminalResize?.(cols, rows);
+        resize: (_cols: number, _rows: number) => {
+          // xterm.js handles its own sizing via FitAddon
+          webviewRef.current?.postMessage(JSON.stringify({ type: 'fit' }));
         },
         reset: () => {
-          setBuffer('');
+          webviewRef.current?.postMessage(JSON.stringify({ type: 'reset' }));
         },
       }),
-      [append, onTerminalBell, onTerminalResize],
+      [],
     );
 
-    useEffect(() => {
-      onTerminalReady?.(80, 24);
-    }, [onTerminalReady]);
-
-    useEffect(() => {
-      scrollRef.current?.scrollToEnd({ animated: false });
-    }, [buffer]);
-
-    const handleSubmit = useCallback(() => {
-      if (!input) return;
-      onTerminalInput?.(`${input}\r`);
-      setInput('');
-    }, [input, onTerminalInput]);
+    const handleMessage = useCallback(
+      (event: { nativeEvent: { data: string } }) => {
+        try {
+          const msg = JSON.parse(event.nativeEvent.data);
+          if (msg.type === 'ready') {
+            readyRef.current = true;
+            // Flush pending writes
+            for (const pending of pendingRef.current) {
+              webviewRef.current?.postMessage(pending);
+            }
+            pendingRef.current = [];
+            onTerminalReady?.(msg.cols ?? 80, msg.rows ?? 24);
+          } else if (msg.type === 'input') {
+            onTerminalInput?.(msg.data);
+          } else if (msg.type === 'resize') {
+            onTerminalResize?.(msg.cols, msg.rows);
+          }
+        } catch { /* ignore malformed */ }
+      },
+      [onTerminalInput, onTerminalResize, onTerminalReady],
+    );
 
     return (
-      <View style={[styles.fallbackContainer, style]}>
-        <ScrollView
-          ref={scrollRef}
-          style={styles.fallbackOutput}
-          contentContainerStyle={styles.fallbackOutputBody}
-        >
-          <Text style={styles.fallbackText}>{buffer || 'Terminal ready.\n'}</Text>
-        </ScrollView>
-        <TextInput
-          style={styles.fallbackInput}
-          value={input}
-          onChangeText={setInput}
-          onSubmitEditing={handleSubmit}
-          placeholder="Type a command and press return"
-          placeholderTextColor={colors.fg.muted}
-          autoCapitalize="none"
-          autoCorrect={false}
-          blurOnSubmit={false}
-          returnKeyType="send"
-        />
-      </View>
+      <WebView
+        ref={webviewRef}
+        style={[styles.iosTerminal, style]}
+        source={{ html: XTERM_HTML }}
+        onMessage={handleMessage}
+        originWhitelist={['*']}
+        javaScriptEnabled
+        scrollEnabled={false}
+        keyboardDisplayRequiresUserAction={false}
+        allowsInlineMediaPlayback
+        mediaPlaybackRequiresUserAction={false}
+        mixedContentMode="compatibility"
+        cacheEnabled={false}
+      />
     );
   },
 );
 
-IOSTerminalFallback.displayName = 'IOSTerminalFallback';
+IOSXtermTerminal.displayName = 'IOSXtermTerminal';
 
 // ----------------------------------------------------------
 // Platform-switched export
 // ----------------------------------------------------------
 
-const NativeTerminal = Platform.OS === 'android' ? AndroidTerminal : IOSTerminalFallback;
+const NativeTerminal = Platform.OS === 'android' ? AndroidTerminal : IOSXtermTerminal;
 
 export default NativeTerminal;
 export type { NativeTerminalProps };
@@ -214,31 +290,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#161616', // bg.base — must match Kotlin initSession background
   },
-
-  // iOS fallback
-  fallbackContainer: {
+  iosTerminal: {
     flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-  fallbackOutput: {
-    flex: 1,
-  },
-  fallbackOutputBody: {
-    padding: spacing[3],
-  },
-  fallbackText: {
-    color: colors.fg.primary,
-    fontFamily: typography.fontFamily.mono,
-    fontSize: typography.fontSize.xs,
-    lineHeight: 18,
-  },
-  fallbackInput: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.divider,
-    color: colors.fg.primary,
-    fontFamily: typography.fontFamily.mono,
-    fontSize: typography.fontSize.sm,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[3],
+    backgroundColor: '#161616',
   },
 });

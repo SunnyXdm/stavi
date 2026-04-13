@@ -52,6 +52,18 @@ interface TerminalSession {
   status: 'running' | 'exited';
 }
 
+interface ManagedProcess {
+  id: string;
+  command: string;
+  args: string[];
+  cwd: string;
+  pid: number;
+  status: 'running' | 'exited' | 'killed';
+  startTime: number;
+  output: string; // accumulated stdout+stderr
+  proc: any; // Bun.Subprocess
+}
+
 interface GitStatusPayload {
   branch: string;
   ahead: number;
@@ -393,6 +405,9 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
   const terminalSubscriptions = new Map<string, Subscription>();
   const gitSubscriptions = new Map<string, Subscription>();
   const orchestrationSubscriptions = new Map<string, Subscription>();
+  const managedProcesses = new Map<string, ManagedProcess>();
+  const processSubscriptions = new Map<string, Subscription>();
+  let managedProcessCounter = 0;
   const connectionSubscriptions = new Map<WebSocket, Set<string>>();
   let gitPollTimer: ReturnType<typeof setInterval> | null = null;
   let lastGitStatusJson = '';
@@ -529,6 +544,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
     terminalSubscriptions.delete(requestId);
     gitSubscriptions.delete(requestId);
     orchestrationSubscriptions.delete(requestId);
+    processSubscriptions.delete(requestId);
   };
 
   const cleanupSocket = (ws: WebSocket) => {
@@ -547,6 +563,92 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
       sendJson(sub.ws, makeChunk(sub.requestId, [event]));
     }
   };
+
+  const emitProcessEvent = (event: Record<string, unknown>) => {
+    for (const sub of processSubscriptions.values()) {
+      sendJson(sub.ws, makeChunk(sub.requestId, [event]));
+    }
+  };
+
+  const spawnManagedProcess = (command: string, args: string[], cwd: string): ManagedProcess => {
+    const id = `proc-${++managedProcessCounter}`;
+    const parts = command.trim().split(/\s+/);
+    const cmd = parts[0];
+    const cmdArgs = [...parts.slice(1), ...args].filter(Boolean);
+    const resolvedCwd = resolveWorkspacePath(workspaceRoot, cwd || '.');
+
+    const managed: ManagedProcess = {
+      id,
+      command,
+      args: cmdArgs,
+      cwd: resolvedCwd,
+      pid: 0,
+      status: 'running',
+      startTime: Date.now(),
+      output: '',
+      proc: null as any,
+    };
+    managedProcesses.set(id, managed);
+
+    const proc = Bun.spawn([cmd, ...cmdArgs], {
+      cwd: resolvedCwd,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      stdin: 'ignore',
+      env: { ...process.env },
+    });
+
+    managed.proc = proc;
+    managed.pid = proc.pid;
+
+    const appendOutput = (text: string) => {
+      managed.output = managed.output.length > 200_000
+        ? managed.output.slice(-100_000) + text
+        : managed.output + text;
+      emitProcessEvent({ type: 'output', id, data: text });
+    };
+
+    // Stream stdout
+    (async () => {
+      try {
+        for await (const chunk of proc.stdout as AsyncIterable<Uint8Array>) {
+          appendOutput(new TextDecoder().decode(chunk));
+        }
+      } catch { /* process ended */ }
+    })();
+
+    // Stream stderr
+    (async () => {
+      try {
+        for await (const chunk of (proc.stderr as AsyncIterable<Uint8Array>)) {
+          appendOutput(new TextDecoder().decode(chunk));
+        }
+      } catch { /* process ended */ }
+    })();
+
+    // Watch for exit
+    (async () => {
+      try {
+        const exitCode = await proc.exited;
+        managed.status = 'exited';
+        emitProcessEvent({ type: 'exited', id, exitCode });
+      } catch { /* ignore */ }
+    })();
+
+    emitProcessEvent({ type: 'started', id, process: serializeManagedProcess(managed) });
+    return managed;
+  };
+
+  const serializeManagedProcess = (p: ManagedProcess) => ({
+    id: p.id,
+    command: p.command,
+    args: p.args,
+    cwd: p.cwd,
+    pid: p.pid,
+    status: p.status,
+    startTime: p.startTime,
+    output: p.output,
+  });
 
   const createTerminalSession = (
     threadId: string,
@@ -1447,6 +1549,236 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
             sendJson(ws, makeSuccess(id, {
               providers: providerRegistry.getProviderInfos(),
             }));
+            break;
+          }
+
+          case 'system.processes': {
+            try {
+              // Try Linux-style first, fall back to BSD/macOS
+              let stdout = '';
+              try {
+                ({ stdout } = await execFileAsync(
+                  'ps', ['-eo', 'pid,ppid,user,%cpu,%mem,stat,comm', '--sort=-%cpu', '--no-headers'],
+                  { timeout: 5000 },
+                ));
+              } catch {
+                ({ stdout } = await execFileAsync(
+                  'ps', ['aux'],
+                  { timeout: 5000 },
+                ));
+              }
+              const lines = stdout.trim().split('\n').filter(Boolean).slice(0, 60);
+              const processes = lines.map((line) => {
+                const parts = line.trim().split(/\s+/);
+                return {
+                  pid: parts[0] ?? '',
+                  user: parts[2] ?? '',
+                  cpu: parts[3] ?? '',
+                  mem: parts[4] ?? '',
+                  name: parts.slice(10).join(' ') || parts[parts.length - 1] || '',
+                };
+              });
+              sendJson(ws, makeSuccess(id, { processes }));
+            } catch (err) {
+              sendJson(ws, makeFailure(id, 'Failed to list processes'));
+            }
+            break;
+          }
+
+          case 'system.ports': {
+            try {
+              let stdout = '';
+              try {
+                // macOS / BSD
+                ({ stdout } = await execFileAsync(
+                  'lsof', ['-i', '-n', '-P', '-sTCP:LISTEN'],
+                  { timeout: 5000 },
+                ));
+              } catch {
+                try {
+                  // Linux
+                  ({ stdout } = await execFileAsync('ss', ['-tlnp'], { timeout: 5000 }));
+                } catch {
+                  ({ stdout } = await execFileAsync('netstat', ['-tlnp'], { timeout: 5000 }));
+                }
+              }
+              const lines = stdout.trim().split('\n').filter(Boolean).slice(1); // skip header
+              const ports: Array<{ port: string; pid: string; process: string; address: string }> = [];
+              for (const line of lines) {
+                // lsof format: COMMAND PID USER ... ADDRESS ...
+                const parts = line.trim().split(/\s+/);
+                if (parts.length < 9) continue;
+                const name = parts[0] ?? '';
+                const pid = parts[1] ?? '';
+                const addr = parts[8] ?? '';
+                const portMatch = addr.match(/:(\d+)$/);
+                if (!portMatch) continue;
+                ports.push({ port: portMatch[1], pid, process: name, address: addr });
+              }
+              sendJson(ws, makeSuccess(id, { ports }));
+            } catch (err) {
+              sendJson(ws, makeFailure(id, 'Failed to list ports'));
+            }
+            break;
+          }
+
+          case 'system.stats': {
+            try {
+              const [diskResult, memResult] = await Promise.allSettled([
+                execFileAsync('df', ['-h', workspaceRoot], { timeout: 5000 }),
+                // macOS: vm_stat, Linux: free -h
+                execFileAsync('vm_stat', [], { timeout: 5000 }).catch(() =>
+                  execFileAsync('free', ['-h'], { timeout: 5000 }),
+                ),
+              ]);
+              const disk = diskResult.status === 'fulfilled' ? diskResult.value.stdout : '';
+              const mem = memResult.status === 'fulfilled'
+                ? (memResult.value as { stdout: string }).stdout
+                : '';
+
+              // Parse df output (skip header)
+              const diskLines = disk.trim().split('\n').slice(1);
+              const diskInfo = diskLines[0]?.trim().split(/\s+/) ?? [];
+              const diskStats = {
+                filesystem: diskInfo[0] ?? '',
+                size: diskInfo[1] ?? '',
+                used: diskInfo[2] ?? '',
+                avail: diskInfo[3] ?? '',
+                usePercent: diskInfo[4] ?? '',
+              };
+
+              sendJson(ws, makeSuccess(id, { disk: diskStats, memRaw: mem }));
+            } catch (err) {
+              sendJson(ws, makeFailure(id, 'Failed to get system stats'));
+            }
+            break;
+          }
+
+          case 'fs.grep': {
+            const pattern = String(payload.pattern ?? '');
+            const fileGlob = String(payload.glob ?? '');
+            const maxResults = Math.min(Number(payload.limit ?? 100), 500);
+            if (!pattern) {
+              sendJson(ws, makeFailure(id, 'pattern is required'));
+              break;
+            }
+            try {
+              const args = [
+                '--json',
+                '-i',
+                '--max-count', '5',
+                '-g', '!node_modules',
+                '-g', '!.git',
+                '-g', '!dist',
+                '-g', '!build',
+              ];
+              if (fileGlob) args.push('-g', fileGlob);
+              args.push(pattern);
+              const { stdout } = await execFileAsync('rg', args, {
+                cwd: workspaceRoot,
+                maxBuffer: 5 * 1024 * 1024,
+                timeout: 10000,
+              });
+              const matches: Array<{ file: string; line: number; text: string }> = [];
+              for (const line of stdout.trim().split('\n').filter(Boolean)) {
+                try {
+                  const obj = JSON.parse(line);
+                  if (obj.type === 'match') {
+                    matches.push({
+                      file: obj.data.path.text,
+                      line: obj.data.line_number,
+                      text: obj.data.lines.text.trimEnd(),
+                    });
+                  }
+                } catch { /* skip malformed JSON lines */ }
+                if (matches.length >= maxResults) break;
+              }
+              sendJson(ws, makeSuccess(id, { matches }));
+            } catch (err: any) {
+              // rg exits 1 when no matches — that's fine
+              if (err.code === 1) {
+                sendJson(ws, makeSuccess(id, { matches: [] }));
+              } else {
+                sendJson(ws, makeFailure(id, 'Search failed'));
+              }
+            }
+            break;
+          }
+
+          case 'process.spawn': {
+            const command = String(payload.command ?? '').trim();
+            if (!command) {
+              sendJson(ws, makeFailure(id, 'command is required'));
+              break;
+            }
+            const args = Array.isArray(payload.args)
+              ? (payload.args as string[]).filter((a) => typeof a === 'string' && a.trim())
+              : typeof payload.args === 'string' && payload.args.trim()
+              ? payload.args.trim().split(/\s+/)
+              : [];
+            const cwd = String(payload.cwd ?? '.');
+            try {
+              const proc = spawnManagedProcess(command, args, cwd);
+              sendJson(ws, makeSuccess(id, serializeManagedProcess(proc)));
+            } catch (err: any) {
+              sendJson(ws, makeFailure(id, err?.message ?? 'Failed to spawn process'));
+            }
+            break;
+          }
+
+          case 'process.kill': {
+            const procId = String(payload.id ?? '');
+            const managed = managedProcesses.get(procId);
+            if (!managed) {
+              sendJson(ws, makeFailure(id, `Process not found: ${procId}`));
+              break;
+            }
+            try {
+              managed.proc?.kill('SIGTERM');
+              managedProcesses.delete(procId);
+              emitProcessEvent({ type: 'killed', id: procId });
+              sendJson(ws, makeSuccess(id, { ok: true }));
+            } catch (err: any) {
+              sendJson(ws, makeFailure(id, err?.message ?? 'Failed to kill process'));
+            }
+            break;
+          }
+
+          case 'process.list': {
+            const list = Array.from(managedProcesses.values()).map(serializeManagedProcess);
+            sendJson(ws, makeSuccess(id, { processes: list }));
+            break;
+          }
+
+          case 'process.clearOutput': {
+            const procId = String(payload.id ?? '');
+            const managed = managedProcesses.get(procId);
+            if (managed) {
+              managed.output = '';
+              emitProcessEvent({ type: 'outputCleared', id: procId });
+            }
+            sendJson(ws, makeSuccess(id, { ok: true }));
+            break;
+          }
+
+          case 'process.remove': {
+            const procId = String(payload.id ?? '');
+            const managed = managedProcesses.get(procId);
+            if (managed && managed.status === 'running') {
+              managed.proc?.kill('SIGTERM');
+            }
+            managedProcesses.delete(procId);
+            emitProcessEvent({ type: 'removed', id: procId });
+            sendJson(ws, makeSuccess(id, { ok: true }));
+            break;
+          }
+
+          case 'subscribeProcessEvents': {
+            processSubscriptions.set(id, { ws, requestId: id, tag });
+            addConnectionSubscription(ws, id);
+            // Send current state as initial chunk
+            const snapshot = Array.from(managedProcesses.values()).map(serializeManagedProcess);
+            sendJson(ws, makeChunk(id, snapshot.map((p) => ({ type: 'snapshot', process: p }))));
             break;
           }
 

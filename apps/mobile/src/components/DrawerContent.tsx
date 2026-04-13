@@ -2,8 +2,8 @@
 // DrawerContent — Left sidebar with session management
 // ============================================================
 // Reads sessions from SessionRegistry (populated by each plugin).
-// Shows sessions for the active plugin only — matching lunel's
-// pattern exactly:
+// Shows sessions for the active plugin only — lunel pattern:
+//   [Plugin name]
 //   [Search bar]  [Create button]
 //   [Session list — scrollable]
 //   [Home] [Settings] [Status dot]
@@ -30,9 +30,11 @@ import { useSessionRegistry } from '../stores/session-registry';
 import { useConnectionStore } from '../stores/connection';
 import { colors, typography, spacing, radii } from '../theme';
 
-// Plugins where sessions don't make sense in the sidebar
-// (show logo/branding instead of session list)
-const HIDE_SESSIONS_FOR = new Set(['git', 'browser', 'editor', 'explorer', 'search', 'monitor', 'ports', 'processes']);
+// Plugins where sessions don't make sense — show plugin icon + branding instead
+const HIDE_SESSIONS_FOR = new Set([
+  'git', 'browser', 'editor', 'explorer',
+  'search', 'monitor', 'ports', 'processes',
+]);
 
 // ----------------------------------------------------------
 // Props
@@ -57,7 +59,6 @@ export const DrawerContent = memo(function DrawerContent({
 }: DrawerContentProps) {
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState('');
-  const [searchFocused, setSearchFocused] = useState(false);
 
   const openTabs = usePluginRegistry((s) => s.openTabs);
   const activeTabId = usePluginRegistry((s) => s.activeTabId);
@@ -77,19 +78,23 @@ export const DrawerContent = memo(function DrawerContent({
   // Filter sessions by search query
   const allSessions = reg?.sessions ?? [];
   const filteredSessions = search
-    ? allSessions.filter((s) =>
-        s.title.toLowerCase().includes(search.toLowerCase()) ||
-        (s.subtitle?.toLowerCase().includes(search.toLowerCase()) ?? false)
+    ? allSessions.filter(
+        (s) =>
+          s.title.toLowerCase().includes(search.toLowerCase()) ||
+          (s.subtitle?.toLowerCase().includes(search.toLowerCase()) ?? false),
       )
     : allSessions;
 
   const activeSessionId = reg?.activeSessionId ?? null;
   const isConnected = connectionState === 'connected';
 
-  const handleSessionPress = useCallback((id: string) => {
-    reg?.onSelectSession(id);
-    onClose();
-  }, [reg, onClose]);
+  const handleSessionPress = useCallback(
+    (id: string) => {
+      reg?.onSelectSession(id);
+      onClose();
+    },
+    [reg, onClose],
+  );
 
   const handleCreate = useCallback(() => {
     if (reg?.onCreateSession) {
@@ -101,61 +106,50 @@ export const DrawerContent = memo(function DrawerContent({
     }
   }, [reg, activePluginId, onCreateInstance, onClose]);
 
-  const handleCancelSearch = useCallback(() => {
-    setSearch('');
-    setSearchFocused(false);
-  }, []);
-
-  const showCreateButton = !shouldHideSessions && (reg?.onCreateSession || onCreateInstance);
+  const canCreate = !shouldHideSessions && (reg?.onCreateSession || onCreateInstance);
+  const PluginIcon = activePluginDef?.icon;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
 
       {!shouldHideSessions ? (
         <>
-          {/* Search row + create button */}
+          {/* Plugin name header */}
+          {activePluginDef && (
+            <View style={styles.pluginHeader}>
+              {PluginIcon && (
+                <PluginIcon size={18} color={colors.fg.secondary} />
+              )}
+              <Text style={styles.pluginName}>{activePluginDef.name}</Text>
+            </View>
+          )}
+
+          {/* Search row */}
           <View style={styles.topRow}>
             <View style={styles.searchWrap}>
-              <Search size={16} color={colors.fg.muted} />
+              <Search size={14} color={colors.fg.muted} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search sessions..."
+                placeholder="Search..."
                 placeholderTextColor={colors.fg.muted}
                 value={search}
                 onChangeText={setSearch}
-                onFocus={() => setSearchFocused(true)}
-                onBlur={() => setSearchFocused(false)}
                 autoCapitalize="none"
                 autoCorrect={false}
               />
               {search.length > 0 && (
                 <Pressable onPress={() => setSearch('')} hitSlop={8}>
-                  <X size={14} color={colors.fg.muted} />
+                  <X size={12} color={colors.fg.muted} />
                 </Pressable>
               )}
             </View>
 
-            {/* Cancel (when search focused) or Create button */}
-            {(searchFocused || showCreateButton) && (
-              <Pressable
-                style={styles.createBtn}
-                onPress={searchFocused ? handleCancelSearch : handleCreate}
-                hitSlop={4}
-              >
-                {searchFocused
-                  ? <X size={18} color={colors.fg.secondary} />
-                  : <PenLine size={18} color={colors.fg.secondary} />
-                }
+            {canCreate && (
+              <Pressable style={styles.createBtn} onPress={handleCreate} hitSlop={4}>
+                <PenLine size={16} color={colors.fg.secondary} />
               </Pressable>
             )}
           </View>
-
-          {/* Sessions label */}
-          {activePluginDef && !searchFocused && (
-            <Text style={styles.sectionLabel}>
-              {activePluginDef.name} Sessions
-            </Text>
-          )}
 
           {/* Session list */}
           <ScrollView
@@ -165,9 +159,20 @@ export const DrawerContent = memo(function DrawerContent({
           >
             {filteredSessions.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>
-                  {search ? 'No results' : 'No sessions yet'}
+                {PluginIcon && (
+                  <PluginIcon size={28} color={colors.fg.muted} />
+                )}
+                <Text style={styles.emptyTitle}>
+                  {search ? 'No results' : `No ${activePluginDef?.name ?? ''} sessions`}
                 </Text>
+                {!search && canCreate && (
+                  <Pressable style={styles.emptyCreateBtn} onPress={handleCreate}>
+                    <PenLine size={14} color={colors.accent.primary} />
+                    <Text style={styles.emptyCreateText}>
+                      {reg?.createLabel ?? 'New session'}
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             ) : (
               filteredSessions.map((session) => {
@@ -175,21 +180,32 @@ export const DrawerContent = memo(function DrawerContent({
                 return (
                   <Pressable
                     key={session.id}
-                    style={[
+                    style={({ pressed }) => [
                       styles.sessionItem,
                       isActive && styles.sessionItemActive,
+                      pressed && !isActive && styles.sessionItemPressed,
                     ]}
                     onPress={() => handleSessionPress(session.id)}
                   >
-                    <Text
-                      style={[
-                        styles.sessionTitle,
-                        isActive && styles.sessionTitleActive,
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {session.title}
-                    </Text>
+                    {/* Left accent bar for active session */}
+                    {isActive && <View style={styles.activeBar} />}
+
+                    <View style={styles.sessionContent}>
+                      <Text
+                        style={[
+                          styles.sessionTitle,
+                          isActive && styles.sessionTitleActive,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {session.title}
+                      </Text>
+                      {session.subtitle ? (
+                        <Text style={styles.sessionSubtitle} numberOfLines={1}>
+                          {session.subtitle}
+                        </Text>
+                      ) : null}
+                    </View>
                   </Pressable>
                 );
               })
@@ -197,23 +213,28 @@ export const DrawerContent = memo(function DrawerContent({
           </ScrollView>
         </>
       ) : (
-        // For plugins like Git/Browser — show branding block
+        // For plugins like Git/Browser/Explorer — show plugin icon + name
         <View style={styles.brandBlock}>
-          <Text style={styles.brandName}>Stavi</Text>
-          <Text style={styles.brandTagline}>Mobile AI IDE</Text>
+          {PluginIcon && (
+            <PluginIcon size={32} color={colors.fg.muted} />
+          )}
+          <Text style={styles.brandName}>{activePluginDef?.name ?? 'Stavi'}</Text>
+          <Text style={styles.brandTagline}>
+            {activePluginDef?.description ?? 'Mobile AI IDE'}
+          </Text>
         </View>
       )}
 
       {/* Bottom navigation */}
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + spacing[2] }]}>
         <Pressable style={styles.bottomBtn} onPress={onNavigateHome}>
-          <Home size={20} color={colors.fg.muted} strokeWidth={1.6} />
+          <Home size={20} color={colors.fg.muted} />
           <Text style={styles.bottomBtnLabel}>Home</Text>
         </Pressable>
 
         {onNavigateSettings && (
           <Pressable style={styles.bottomBtn} onPress={onNavigateSettings}>
-            <Settings size={20} color={colors.fg.muted} strokeWidth={1.6} />
+            <Settings size={20} color={colors.fg.muted} />
             <Text style={styles.bottomBtnLabel}>Settings</Text>
           </Pressable>
         )}
@@ -242,13 +263,27 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.base,
   },
 
-  // Top search row
+  // Plugin name header (top of session section)
+  pluginHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+    paddingHorizontal: spacing[4],
+    paddingTop: spacing[5],
+    paddingBottom: spacing[2],
+  },
+  pluginName: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.fg.primary,
+  },
+
+  // Search row
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing[2],
     paddingHorizontal: spacing[3],
-    paddingTop: spacing[4],
     paddingBottom: spacing[3],
   },
   searchWrap: {
@@ -257,83 +292,115 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing[2],
     paddingHorizontal: spacing[3],
-    height: 40,
+    height: 36,
     backgroundColor: colors.bg.raised,
-    borderRadius: radii.lg,
+    borderRadius: radii.md,
   },
   searchInput: {
     flex: 1,
     fontSize: typography.fontSize.sm,
     color: colors.fg.primary,
     fontFamily: typography.fontFamily.sans,
-    height: 40,
+    height: 36,
     paddingVertical: 0,
   },
   createBtn: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.bg.raised,
-    borderRadius: radii.lg,
+    borderRadius: radii.md,
   },
 
-  // Section label
-  sectionLabel: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.muted,
-    paddingHorizontal: spacing[4],
-    paddingBottom: spacing[2],
-    opacity: 0.65,
-  },
-
-  // Sessions
+  // Session list
   sessionList: {
     flex: 1,
   },
   sessionItem: {
-    paddingVertical: spacing[2] + 1,
-    paddingHorizontal: spacing[5],
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 44,
   },
   sessionItemActive: {
     backgroundColor: colors.bg.raised,
+  },
+  sessionItemPressed: {
+    backgroundColor: colors.bg.active,
+  },
+  activeBar: {
+    width: 3,
+    alignSelf: 'stretch',
+    backgroundColor: colors.accent.primary,
+    borderTopRightRadius: 2,
+    borderBottomRightRadius: 2,
+  },
+  sessionContent: {
+    flex: 1,
+    paddingVertical: spacing[2] + 1,
+    paddingLeft: spacing[4],
+    paddingRight: spacing[4],
   },
   sessionTitle: {
     fontSize: typography.fontSize.sm,
     color: colors.fg.secondary,
     fontFamily: typography.fontFamily.sans,
-    opacity: 0.8,
   },
   sessionTitleActive: {
     color: colors.fg.primary,
-    opacity: 1,
+    fontWeight: typography.fontWeight.medium,
   },
+  sessionSubtitle: {
+    fontSize: typography.fontSize.xs,
+    color: colors.fg.muted,
+    marginTop: 2,
+    fontFamily: typography.fontFamily.mono,
+  },
+
+  // Empty state
   emptyState: {
-    paddingTop: spacing[5],
-    paddingHorizontal: spacing[4],
     alignItems: 'center',
+    paddingTop: spacing[10],
+    paddingHorizontal: spacing[4],
+    gap: spacing[3],
   },
-  emptyText: {
+  emptyTitle: {
     fontSize: typography.fontSize.sm,
     color: colors.fg.muted,
+    textAlign: 'center',
+  },
+  emptyCreateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+    paddingHorizontal: spacing[4],
+    paddingVertical: spacing[2],
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.accent.primary + '66',
+    marginTop: spacing[2],
+  },
+  emptyCreateText: {
+    fontSize: typography.fontSize.sm,
+    color: colors.accent.primary,
   },
 
   // Branding (for plugins that hide sessions)
   brandBlock: {
     flex: 1,
     paddingHorizontal: spacing[4],
-    paddingTop: spacing[4],
+    paddingTop: spacing[6],
+    gap: spacing[3],
   },
   brandName: {
-    fontSize: typography.fontSize.xl,
+    fontSize: typography.fontSize.lg,
     fontWeight: typography.fontWeight.bold,
     color: colors.fg.primary,
   },
   brandTagline: {
     fontSize: typography.fontSize.sm,
     color: colors.fg.muted,
-    marginTop: spacing[1],
+    lineHeight: 20,
   },
 
   // Bottom nav
