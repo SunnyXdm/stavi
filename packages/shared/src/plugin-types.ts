@@ -91,6 +91,12 @@ export interface PluginPanelProps {
 
   /** Initial state passed when the tab was opened */
   initialState?: Record<string, unknown>;
+
+  /**
+   * Called when the panel wants to create a new instance of itself
+   * (e.g. AI "New Session" button triggers directory picker in host).
+   */
+  onRequestNewSession?: () => void;
 }
 
 // ----------------------------------------------------------

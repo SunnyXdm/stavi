@@ -8,7 +8,7 @@
 // - MemoizedPanel: aggressive memoization, inactive panels never re-render
 // - No Reanimated ref.current=undefined bug (we never use display:none)
 
-import React, { useRef, useMemo, useCallback, memo } from 'react';
+import React, { useRef, useCallback, memo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { usePluginRegistry, getPluginComponent } from '../stores/plugin-registry';
 import { colors } from '../theme';
@@ -16,9 +16,10 @@ import type { PluginPanelProps, PluginInstance } from '@stavi/shared';
 
 interface PluginRendererProps {
   bottomBarHeight: number;
+  onRequestNewSession?: (pluginId: string) => void;
 }
 
-export function PluginRenderer({ bottomBarHeight }: PluginRendererProps) {
+export function PluginRenderer({ bottomBarHeight, onRequestNewSession }: PluginRendererProps) {
   const openTabs = usePluginRegistry((s) => s.openTabs);
   const activeTabId = usePluginRegistry((s) => s.activeTabId);
 
@@ -44,6 +45,7 @@ export function PluginRenderer({ bottomBarHeight }: PluginRendererProps) {
             tab={tab}
             isActive={isActive}
             bottomBarHeight={bottomBarHeight}
+            onRequestNewSession={onRequestNewSession}
           />
         );
       })}
@@ -59,11 +61,15 @@ interface PanelProps {
   tab: PluginInstance;
   isActive: boolean;
   bottomBarHeight: number;
+  onRequestNewSession?: (pluginId: string) => void;
 }
 
 const MemoizedPanel = memo(
-  function Panel({ tab, isActive, bottomBarHeight }: PanelProps) {
+  function Panel({ tab, isActive, bottomBarHeight, onRequestNewSession }: PanelProps) {
     const Component = getPluginComponent(tab.pluginId);
+    const handleRequestNewSession = useCallback(() => {
+      onRequestNewSession?.(tab.pluginId);
+    }, [onRequestNewSession, tab.pluginId]);
 
     if (!Component) {
       return (
@@ -86,11 +92,12 @@ const MemoizedPanel = memo(
           isActive={isActive}
           bottomBarHeight={bottomBarHeight}
           initialState={tab.initialState}
+          onRequestNewSession={handleRequestNewSession}
         />
       </View>
     );
   },
-  // Custom comparison: never re-render inactive panels
+  // Custom comparison: never re-render inactive panels for minor prop changes
   (prev, next) => {
     // Always re-render when activation state changes
     if (prev.isActive !== next.isActive) return false;
@@ -100,8 +107,10 @@ const MemoizedPanel = memo(
     if (prev.bottomBarHeight !== next.bottomBarHeight) return false;
     // Never re-render inactive panels for any other reason
     if (!next.isActive) return true;
-    // Active panel: re-render on state changes
-    return prev.tab.status === next.tab.status;
+    // Active panel: re-render on status or title changes
+    if (prev.tab.status !== next.tab.status) return false;
+    if (prev.tab.title !== next.tab.title) return false;
+    return true;
   },
 );
 

@@ -11,6 +11,7 @@ import { terminalPlugin } from './core/terminal';
 import { aiPlugin } from './core/ai';
 import { editorPlugin } from './core/editor';
 import { gitPlugin } from './core/git';
+import { browserPlugin } from './core/browser';
 
 // Extra plugins
 import { explorerPlugin } from './extra/explorer';
@@ -26,6 +27,7 @@ register(terminalPlugin, terminalPlugin.component);
 register(aiPlugin, aiPlugin.component);
 register(editorPlugin, editorPlugin.component);
 register(gitPlugin, gitPlugin.component);
+register(browserPlugin, browserPlugin.component);
 
 // Register extra plugins
 register(explorerPlugin, explorerPlugin.component);

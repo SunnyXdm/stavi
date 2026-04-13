@@ -173,8 +173,6 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     backgroundColor: colors.bg.raised,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.divider,
   },
   navItem: {
     flex: 1,

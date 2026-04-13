@@ -19,13 +19,19 @@ interface PluginHeaderProps {
 }
 
 function instanceDisplayTitle(instance: PluginInstance, index: number): string {
-  // Use directory name from initialState if available
+  // If the tab title has been updated by the plugin (e.g. "Claude", "myproject — Codex"), use it
+  // Fall back to directory name from initialState, or numbered default
   const dir = instance.initialState?.directory as string | undefined;
-  if (dir) {
-    const parts = dir.split('/').filter(Boolean);
-    return parts[parts.length - 1] || dir;
+  const dirBasename = dir ? dir.split('/').filter(Boolean).pop() || dir : null;
+
+  // If title is the plain plugin name ("AI", "Editor") — it hasn't been customized yet
+  const isDefaultTitle = instance.title === 'AI' || instance.title === 'Editor';
+  if (!isDefaultTitle) {
+    // Plugin has set a custom title — show it (truncated to dir basename for compact tabs)
+    return dirBasename ?? instance.title;
   }
-  return `${instance.title} ${index + 1}`;
+  // Default: directory name or numbered
+  return dirBasename ?? `${instance.title} ${index + 1}`;
 }
 
 export const PluginHeader = memo(function PluginHeader({

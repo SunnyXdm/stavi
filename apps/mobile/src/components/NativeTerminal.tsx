@@ -117,6 +117,13 @@ AndroidTerminal.displayName = 'AndroidTerminal';
 // (SwiftTerm integration pending)
 // ----------------------------------------------------------
 
+// Strip ANSI escape sequences so raw PTY output is readable as plain text.
+// Handles: CSI sequences (\x1b[...m), OSC sequences (\x1b]...ST), simple \x1b X.
+const ANSI_RE = /\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_][0-9;]*[A-Za-z]?|[A-Za-z])/g;
+function stripAnsi(data: string): string {
+  return data.replace(ANSI_RE, '');
+}
+
 const IOSTerminalFallback = forwardRef<NativeTerminalRef, NativeTerminalProps>(
   ({ style, onTerminalInput, onTerminalResize, onTerminalReady, onTerminalBell }, ref) => {
     const [buffer, setBuffer] = useState('');
@@ -124,7 +131,8 @@ const IOSTerminalFallback = forwardRef<NativeTerminalRef, NativeTerminalProps>(
     const scrollRef = useRef<ScrollView>(null);
 
     const append = useCallback((data: string) => {
-      setBuffer((prev) => prev + data);
+      // Strip ANSI codes — iOS fallback renders plain Text, not a real terminal
+      setBuffer((prev) => prev + stripAnsi(data));
     }, []);
 
     useImperativeHandle(

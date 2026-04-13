@@ -179,6 +179,7 @@ export class StaviClient {
     this.registeredSubscriptions.clear();
 
     if (this.ws) {
+      this.ws.onclose = null; // prevent stale onclose from firing after isIntentionalClose reset
       this.ws.close(1000, 'Client disconnect');
       this.ws = null;
     }
@@ -332,8 +333,11 @@ export class StaviClient {
       const protocol = config.tls ? 'wss' : 'ws';
       const url = `${protocol}://${config.host}:${config.port}/ws?wsToken=${this.wsToken}`;
 
-      // Close existing
+      // Close existing — nullify onclose BEFORE closing so the old
+      // socket's close event doesn't fire our handler after isIntentionalClose
+      // has been reset to false by a subsequent connect() call.
       if (this.ws) {
+        this.ws.onclose = null;
         this.ws.close();
         this.ws = null;
       }

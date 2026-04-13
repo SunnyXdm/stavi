@@ -19,6 +19,7 @@ import type { TerminalPluginAPI } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
 import NativeTerminal, { type NativeTerminalRef } from '../../../components/NativeTerminal';
+import { TerminalToolbar } from '../../../components/TerminalToolbar';
 import { staviClient } from '../../../stores/stavi-client';
 import { useConnectionStore } from '../../../stores/connection';
 import { useSessionRegistry } from '../../../stores/session-registry';
@@ -40,6 +41,8 @@ interface TerminalSession {
 
 const terminalRefs = new Map<string, React.RefObject<NativeTerminalRef | null>>();
 const sessionUnsubscribes = new Map<string, () => void>();
+// Pending history to write once terminal reports ready (onTerminalReady)
+const pendingHistory = new Map<string, string>();
 let sessionCounter = 0;
 let serverCwd = '.';
 
@@ -95,10 +98,10 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
           rows: 24,
         });
 
-        // Write initial history if any
-        const ref = getTerminalRef(sessionKey);
-        if (snapshot.history && ref.current) {
-          ref.current.write(snapshot.history);
+        // Store history to be written once onTerminalReady fires.
+        // Writing before the native view is sized causes ANSI parser breakage.
+        if (snapshot.history) {
+          pendingHistory.set(sessionKey, snapshot.history);
         }
 
         // Update session status
@@ -236,6 +239,21 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
     [],
   );
 
+  // Clear sessions on disconnect so reconnect gets a fresh terminal
+  useEffect(() => {
+    if (connectionState !== 'connected' && sessions.length > 0) {
+      // Tear down all subscriptions and module-level state
+      for (const unsub of sessionUnsubscribes.values()) {
+        unsub();
+      }
+      sessionUnsubscribes.clear();
+      terminalRefs.clear();
+      pendingHistory.clear();
+      setSessions([]);
+      setActiveSessionId(null);
+    }
+  }, [connectionState]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-create first session when connected
   useEffect(() => {
     if (connectionState === 'connected' && sessions.length === 0) {
@@ -321,8 +339,14 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
                 onTerminalInput={(data) => handleInput(session.threadId, data)}
                 onTerminalResize={(cols, rows) => handleResize(session.threadId, cols, rows)}
                 onTerminalReady={(cols, rows) => {
-                  // Resize on server to match
+                  // Resize server PTY to match actual terminal dimensions first
                   handleResize(session.threadId, cols, rows);
+                  // Now flush any buffered history — terminal is sized and ready
+                  const history = pendingHistory.get(key);
+                  if (history) {
+                    pendingHistory.delete(key);
+                    getTerminalRef(key).current?.write(history);
+                  }
                 }}
                 onTerminalBell={() => {
                   // Could trigger haptic feedback here
@@ -332,6 +356,18 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
           );
         })}
       </View>
+
+      {/* Keyboard toolbar — common terminal keys above the keyboard */}
+      {activeSessionId && (
+        <TerminalToolbar
+          onKey={(data) => {
+            const session = sessions.find(
+              (s) => `${s.threadId}:${s.terminalId}` === activeSessionId,
+            );
+            if (session) handleInput(session.threadId, data);
+          }}
+        />
+      )}
     </View>
   );
 }

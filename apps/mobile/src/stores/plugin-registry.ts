@@ -226,14 +226,25 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
           .filter((d) => d.kind === 'core')
           .sort((a, b) => (a.navOrder ?? 99) - (b.navOrder ?? 99));
 
-        // Ensure singleton core plugins have one tab; multi-instance plugins start empty
         let tabs = [...state.openTabs];
         const existingPluginIds = new Set(tabs.map((t) => t.pluginId));
 
         for (const def of corePlugins) {
           if (def.allowMultipleInstances) {
+            // Multi-instance core nav plugins (AI): ensure at least one default
+            // empty tab exists so the bottom bar always lands on them first.
+            if (!existingPluginIds.has(def.id)) {
+              tabs.push({
+                id: createInstanceId(),
+                pluginId: def.id,
+                title: def.name,
+                status: 'active',
+              });
+              existingPluginIds.add(def.id);
+            }
             continue;
           }
+          // Singleton core plugins: create a tab if none exists
           if (!existingPluginIds.has(def.id)) {
             tabs.push({
               id: createInstanceId(),
@@ -241,16 +252,22 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
               title: def.name,
               status: 'active',
             });
+            existingPluginIds.add(def.id);
           }
         }
 
         // Remove tabs for plugins that no longer exist
         tabs = tabs.filter((t) => t.pluginId in state.definitions);
 
-        // Set first core plugin as active if no active tab
+        // Prefer AI as the default active tab on first launch.
+        // On subsequent launches, restore the persisted activeTabId.
+        const aiTab = tabs.find((t) => {
+          const def = state.definitions[t.pluginId];
+          return def?.navOrder === 0;
+        });
         const activeTabId = state.activeTabId && tabs.some((t) => t.id === state.activeTabId)
           ? state.activeTabId
-          : tabs[0]?.id ?? null;
+          : (aiTab?.id ?? tabs[0]?.id ?? null);
 
         set({ openTabs: tabs, activeTabId, isReady: true });
       },

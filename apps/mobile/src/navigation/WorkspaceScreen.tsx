@@ -68,6 +68,11 @@ export function WorkspaceScreen() {
     navigation.navigate('Connect');
   }, [closeDrawer, disconnect, navigation]);
 
+  const handleNavigateSettings = useCallback(() => {
+    closeDrawer();
+    navigation.navigate('Settings');
+  }, [closeDrawer, navigation]);
+
   // Initialize plugin system on mount
   useEffect(() => {
     if (!isReady) {
@@ -160,6 +165,7 @@ export function WorkspaceScreen() {
           <DrawerContent
             onClose={closeDrawer}
             onNavigateHome={handleNavigateHome}
+            onNavigateSettings={handleNavigateSettings}
             onCreateInstance={handleCreateInstance}
           />
         </Animated.View>
@@ -178,7 +184,10 @@ export function WorkspaceScreen() {
 
           {/* Plugin panels */}
           <View style={[styles.content, { marginBottom: bottomBarHeight }]}>
-            <PluginRenderer bottomBarHeight={bottomBarHeight} />
+            <PluginRenderer
+              bottomBarHeight={bottomBarHeight}
+              onRequestNewSession={handleCreateInstance}
+            />
           </View>
 
           {/* Bottom navigation */}

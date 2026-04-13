@@ -23,16 +23,18 @@ import {
 import { FlashList } from '@shopify/flash-list';
 import {
   Sparkles,
-  MessageSquare,
   ChevronDown,
   ChevronRight,
   Layers,
+  Plus,
 } from 'lucide-react-native';
 import type { PluginDefinition, PluginPanelProps } from '@stavi/shared';
 import type { AIPluginAPI } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
 import { useConnectionStore } from '../../../stores/connection';
+import { usePluginRegistry } from '../../../stores/plugin-registry';
+import { useSessionRegistry } from '../../../stores/session-registry';
 import { staviClient } from '../../../stores/stavi-client';
 import {
   useOrchestration,
@@ -41,7 +43,7 @@ import {
 import { MessageBubble } from './MessageBubble';
 import { ApprovalCard } from './ApprovalCard';
 import { Composer, type InteractionMode, type AccessLevel, type ModelChipInfo } from './Composer';
-import { ConfigSheet, type ConfigSelection, type ProviderInfo } from './ConfigSheet';
+import { type ConfigSelection, type ProviderInfo } from './ConfigSheet';
 import { ModelPopover, type PopoverSection } from './ModelPopover';
 import type { AIMessage, AIPart } from './types';
 import { buildToolGroupLabel } from './streaming';
@@ -243,7 +245,7 @@ const thinkingStyles = StyleSheet.create({
 // Panel Component
 // ----------------------------------------------------------
 
-function AIPanel({ instanceId, isActive, bottomBarHeight, initialState }: PluginPanelProps) {
+function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, onRequestNewSession }: PluginPanelProps) {
   const connectionState = useConnectionStore((s) => s.state);
   const listRef = useRef<any>(null);
   const worktreePath = (initialState?.directory as string | undefined) ?? null;
@@ -258,7 +260,29 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState }: Plugin
     sendMessage,
     interruptTurn,
     respondToApproval,
+    setActiveThread,
   } = useOrchestration({ instanceId, worktreePath });
+
+  // Register AI threads with SessionRegistry so DrawerContent can show them
+  const registerSessions = useSessionRegistry((s) => s.register);
+  useEffect(() => {
+    registerSessions('ai', {
+      sessions: threads.map((t) => ({
+        id: t.threadId,
+        title: t.title || t.worktreePath?.split('/').filter(Boolean).pop() || 'Session',
+        subtitle: t.worktreePath ?? undefined,
+        isActive: t.threadId === activeThreadId,
+      })),
+      activeSessionId: activeThreadId ?? undefined,
+      onSelectSession: (sessionId) => {
+        setActiveThread(sessionId);
+      },
+      onCreateSession: () => {
+        onRequestNewSession?.();
+      },
+      createLabel: 'New AI Session',
+    });
+  }, [threads, activeThreadId, registerSessions, onRequestNewSession, setActiveThread]);
 
   const [popoverSection, setPopoverSection] = useState<PopoverSection>('providers');
   const [popoverVisible, setPopoverVisible] = useState(false);
@@ -351,6 +375,27 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState }: Plugin
       }
     }
   }, [activeThread, configSelection.modelId, configSelection.provider, providerLocked, providers, syncSelectionToModel]);
+
+  // Update tab title to show provider name (Claude / Codex)
+  const setTabTitle = useCallback((title: string) => {
+    usePluginRegistry.setState((s) => ({
+      openTabs: s.openTabs.map((t) =>
+        t.id === instanceId ? { ...t, title } : t,
+      ),
+    }));
+  }, [instanceId]);
+
+  useEffect(() => {
+    if (!configSelection.provider) return;
+    const providerLabel =
+      configSelection.provider === 'claude' ? 'Claude' :
+      configSelection.provider === 'codex' ? 'Codex' :
+      configSelection.provider;
+    const dirLabel = worktreePath
+      ? worktreePath.split('/').filter(Boolean).pop()
+      : null;
+    setTabTitle(dirLabel ? `${dirLabel} — ${providerLabel}` : providerLabel);
+  }, [configSelection.provider, worktreePath, setTabTitle]);
 
   // Get active thread data
   const activeAIMessages = activeThreadId
@@ -529,15 +574,36 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState }: Plugin
     >
       {/* Messages */}
       {activeAIMessages.length === 0 ? (
-        <View style={styles.emptyChat}>
-          <Sparkles size={40} color={colors.accent.subtle} />
-          <Text style={styles.emptyChatTitle}>
-            {worktreePath ? worktreePath.split('/').filter(Boolean).pop() : 'New AI tab'}
-          </Text>
-          <Text style={styles.emptyChatSubtitle}>
-            Pick a provider below, then send the first message to lock this tab to that provider.
-          </Text>
-        </View>
+        worktreePath ? (
+          // Has a directory — show ready state with dir name
+          <View style={styles.emptyChat}>
+            <Sparkles size={40} color={colors.accent.primary} style={{ opacity: 0.3 }} />
+            <Text style={styles.emptyChatTitle}>
+              {worktreePath.split('/').filter(Boolean).pop()}
+            </Text>
+            <Text style={styles.emptyChatSubtitle}>
+              Select a model below and send a message to start.
+            </Text>
+          </View>
+        ) : (
+          // No directory — default placeholder tab, show "New Session" CTA
+          <View style={styles.emptyChat}>
+            <View style={styles.emptyChatIcon}>
+              <Sparkles size={28} color={colors.accent.primary} />
+            </View>
+            <Text style={styles.emptyChatTitle}>No AI session open</Text>
+            <Text style={styles.emptyChatSubtitle}>
+              Start a new session in a project directory.
+            </Text>
+            <Pressable
+              style={styles.newSessionButton}
+              onPress={onRequestNewSession}
+            >
+              <Plus size={16} color={colors.fg.onAccent} />
+              <Text style={styles.newSessionButtonText}>New AI Session</Text>
+            </Pressable>
+          </View>
+        )
       ) : (
         <FlashList
           ref={listRef}
@@ -552,8 +618,8 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState }: Plugin
         />
       )}
 
-      {/* Composer */}
-      <Composer
+      {/* Composer — hidden on the placeholder "no session" tab */}
+      {worktreePath !== null && <Composer
         onSend={handleSend}
         onInterrupt={handleInterrupt}
         onProviderPress={() => openPopover(providerLocked ? 'models' : 'providers')}
@@ -580,7 +646,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState }: Plugin
               ?? null
             : null
         }
-      />
+      />}
 
       {/* Contextual popover */}
       <ModelPopover
@@ -729,6 +795,15 @@ const styles = StyleSheet.create({
     padding: spacing[8],
     gap: spacing[3],
   },
+  emptyChatIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: radii.xl,
+    backgroundColor: colors.accent.subtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing[2],
+  },
   emptyChatTitle: {
     fontSize: typography.fontSize.lg,
     fontWeight: typography.fontWeight.semibold,
@@ -739,6 +814,21 @@ const styles = StyleSheet.create({
     color: colors.fg.tertiary,
     textAlign: 'center',
     lineHeight: typography.fontSize.base * typography.lineHeight.normal,
+  },
+  newSessionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+    backgroundColor: colors.accent.primary,
+    paddingHorizontal: spacing[5],
+    paddingVertical: spacing[3],
+    borderRadius: radii.lg,
+    marginTop: spacing[2],
+  },
+  newSessionButtonText: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.fg.onAccent,
   },
 
   // Message list
