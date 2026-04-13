@@ -25,7 +25,7 @@ import {
   Sparkles,
 } from 'lucide-react-native';
 import { colors, typography, spacing, radii } from '../../../theme';
-import { ProviderIcon } from './ModelPopover';
+import { ProviderIcon } from './ProviderIcon';
 
 // ----------------------------------------------------------
 // Types
@@ -33,7 +33,7 @@ import { ProviderIcon } from './ModelPopover';
 
 export type InteractionMode = 'default' | 'plan';
 export type AccessLevel = 'supervised' | 'auto-accept' | 'full-access';
-export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
+export type EffortLevel = string;
 
 export interface ModelChipInfo {
   provider: string;
@@ -47,6 +47,9 @@ interface ComposerProps {
   onProviderPress?: () => void;
   onModelPress?: () => void;
   onEffortPress?: () => void;
+  onThinkingPress?: () => void;
+  onFastModePress?: () => void;
+  onContextWindowPress?: () => void;
   onModePress?: () => void;
   onAccessPress?: () => void;
   isWorking?: boolean;
@@ -55,6 +58,11 @@ interface ComposerProps {
   mode?: InteractionMode;
   accessLevel?: AccessLevel;
   effort?: EffortLevel;
+  thinkingEnabled?: boolean;
+  showThinkingToggle?: boolean;
+  fastMode?: boolean;
+  showFastModeToggle?: boolean;
+  contextWindowLabel?: string | null;
 }
 
 // ----------------------------------------------------------
@@ -128,6 +136,8 @@ const EFFORT_LABELS: Record<EffortLevel, string> = {
   'medium': 'Med',
   'high': 'High',
   'max': 'Extra High',
+  'ultrathink': 'Ultrathink',
+  'xhigh': 'Extra High',
 };
 
 function getEffortIcon(effort: EffortLevel) {
@@ -147,6 +157,9 @@ export const Composer = memo(function Composer({
   onProviderPress,
   onModelPress,
   onEffortPress,
+  onThinkingPress,
+  onFastModePress,
+  onContextWindowPress,
   onModePress,
   onAccessPress,
   isWorking = false,
@@ -155,6 +168,11 @@ export const Composer = memo(function Composer({
   mode = 'default',
   accessLevel = 'supervised',
   effort = 'high',
+  thinkingEnabled,
+  showThinkingToggle = false,
+  fastMode = false,
+  showFastModeToggle = false,
+  contextWindowLabel,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const inputRef = useRef<TextInput>(null);
@@ -171,7 +189,7 @@ export const Composer = memo(function Composer({
   }, [onInterrupt]);
 
   const hasText = text.trim().length > 0;
-  const modelLabel = selectedModel?.modelName ?? 'No model';
+  const modelLabel = selectedModel?.modelName || 'Choose model';
 
   return (
     <View style={styles.container}>
@@ -230,7 +248,11 @@ export const Composer = memo(function Composer({
             <ProviderIcon provider={selectedModel.provider} size={16} />
           )}
           <Text style={styles.providerChipLabel} numberOfLines={1}>
-            {selectedModel?.provider === 'claude' ? 'Claude' : selectedModel?.provider === 'codex' ? 'Codex' : (selectedModel?.provider ?? 'Model')}
+            {selectedModel?.provider === 'claude'
+              ? 'Claude'
+              : selectedModel?.provider === 'codex'
+                ? 'Codex'
+                : 'Provider'}
           </Text>
           <ChevronDown size={10} color={colors.fg.muted} />
         </Pressable>
@@ -244,12 +266,38 @@ export const Composer = memo(function Composer({
         </Pressable>
 
         {/* Effort chip */}
-        <ToolbarChip
-          label={EFFORT_LABELS[effort]}
-          icon={getEffortIcon(effort)}
-          onPress={onEffortPress}
-          active={effort === 'high' || effort === 'max'}
-        />
+        {showThinkingToggle ? (
+          <ToolbarChip
+            label={thinkingEnabled === false ? 'Think Off' : 'Think On'}
+            icon={<Sparkles size={12} color={thinkingEnabled === false ? colors.fg.tertiary : colors.accent.primary} />}
+            onPress={onThinkingPress}
+            active={thinkingEnabled !== false}
+          />
+        ) : onEffortPress ? (
+          <ToolbarChip
+            label={EFFORT_LABELS[effort] ?? effort}
+            icon={getEffortIcon(effort)}
+            onPress={onEffortPress}
+            active={effort === 'high' || effort === 'max' || effort === 'xhigh' || effort === 'ultrathink'}
+          />
+        ) : null}
+
+        {showFastModeToggle ? (
+          <ToolbarChip
+            label={fastMode ? 'Fast On' : 'Fast Off'}
+            icon={<Zap size={12} color={fastMode ? colors.accent.primary : colors.fg.tertiary} />}
+            onPress={onFastModePress}
+            active={fastMode}
+          />
+        ) : null}
+
+        {contextWindowLabel ? (
+          <ToolbarChip
+            label={contextWindowLabel}
+            icon={<ChevronDown size={12} color={colors.fg.tertiary} />}
+            onPress={onContextWindowPress}
+          />
+        ) : null}
 
         {/* Mode chip */}
         <ToolbarChip

@@ -10,6 +10,22 @@
 
 export type ProviderKind = 'claude' | 'codex';
 
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'max' | 'ultrathink' | 'xhigh';
+
+export interface CapabilityOption {
+  value: string;
+  label: string;
+  isDefault?: boolean;
+}
+
+export interface ModelCapabilities {
+  reasoningEffortLevels: CapabilityOption[];
+  supportsFastMode: boolean;
+  supportsThinkingToggle: boolean;
+  contextWindowOptions: CapabilityOption[];
+  promptInjectedEffortLevels: string[];
+}
+
 // ----------------------------------------------------------
 // Model information
 // ----------------------------------------------------------
@@ -22,6 +38,7 @@ export interface ModelInfo {
   maxTokens: number;
   contextWindow: number;
   isDefault?: boolean;
+  capabilities: ModelCapabilities;
 }
 
 export interface ProviderInfo {
@@ -42,7 +59,9 @@ export interface ModelSelection {
   modelId: string;
   thinking?: boolean;
   thinkingBudget?: number;
-  effort?: 'low' | 'medium' | 'high' | 'max';
+  effort?: ReasoningEffort;
+  fastMode?: boolean;
+  contextWindow?: string;
 }
 
 // ----------------------------------------------------------
@@ -142,7 +161,12 @@ export function approvalRequired(
 // Approval decisions
 // ----------------------------------------------------------
 
-export type ApprovalDecision = 'accept' | 'reject' | 'always-allow';
+export type ApprovalDecision =
+  | 'accept'
+  | 'reject'
+  | 'always-allow'
+  | 'acceptForSession'
+  | 'decline';
 
 // ----------------------------------------------------------
 // Provider adapter interface
@@ -154,6 +178,7 @@ export interface SendTurnInput {
   cwd?: string;
   modelSelection?: ModelSelection;
   interactionMode?: 'default' | 'plan';
+  runtimeMode?: 'approval-required' | 'auto-accept-edits' | 'full-access';
   attachments?: Array<{ type: string; data: string }>;
 }
 

@@ -43,14 +43,23 @@ export interface ModelInfo {
   maxTokens: number;
   contextWindow: number;
   isDefault?: boolean;
+  capabilities: {
+    reasoningEffortLevels: Array<{ value: string; label: string; isDefault?: boolean }>;
+    supportsFastMode: boolean;
+    supportsThinkingToggle: boolean;
+    contextWindowOptions: Array<{ value: string; label: string; isDefault?: boolean }>;
+    promptInjectedEffortLevels: string[];
+  };
 }
 
 export interface ConfigSelection {
   provider: string;
   modelId: string;
   modelName: string;
-  thinking: boolean;
-  effort: 'low' | 'medium' | 'high' | 'max';
+  thinking?: boolean;
+  effort?: string;
+  fastMode?: boolean;
+  contextWindow?: string;
 }
 
 interface ConfigSheetProps {

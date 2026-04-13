@@ -16,6 +16,8 @@ import { useConnectionStore } from '../../../stores/connection';
 import type { AIMessage, AIPart } from './types';
 import { applyMessageUpdate } from './streaming';
 
+const instanceThreadBindings = new Map<string, string>();
+
 // ----------------------------------------------------------
 // Types (derived from Stavi server's orchestration domain)
 // ----------------------------------------------------------
@@ -28,6 +30,14 @@ export interface Thread {
   interactionMode: 'default' | 'plan';
   branch: string;
   worktreePath: string | null;
+  modelSelection?: {
+    provider: string;
+    modelId: string;
+    thinking?: boolean;
+    effort?: string;
+    fastMode?: boolean;
+    contextWindow?: string;
+  };
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -276,7 +286,9 @@ function createCoalescingUpdater(
 // Hook
 // ----------------------------------------------------------
 
-export function useOrchestration() {
+export function useOrchestration(input?: { instanceId?: string; worktreePath?: string | null }) {
+  const instanceId = input?.instanceId;
+  const preferredWorktreePath = input?.worktreePath ?? null;
   const connectionState = useConnectionStore((s) => s.state);
   const projectsRef = useRef<any[]>([]);
   const serverConfigRef = useRef<any>(null);
@@ -313,8 +325,11 @@ export function useOrchestration() {
   useEffect(() => {
     return () => {
       coalescerRef.current?.destroy();
+      if (instanceId) {
+        instanceThreadBindings.delete(instanceId);
+      }
     };
-  }, []);
+  }, [instanceId]);
 
   const resolveThreadModelSelection = useCallback(() => {
     const project = projectsRef.current[0];
@@ -330,9 +345,15 @@ export function useOrchestration() {
         }
         const firstModel = Array.isArray(provider.models) ? provider.models[0] : null;
         if (provider.provider && (firstModel?.id || firstModel?.slug)) {
+          const defaultEffort = firstModel?.capabilities?.reasoningEffortLevels?.find((level: any) => level?.isDefault)?.value;
+          const defaultContextWindow = firstModel?.capabilities?.contextWindowOptions?.find((option: any) => option?.isDefault)?.value;
           return {
             provider: provider.provider,
             modelId: firstModel.id ?? firstModel.slug,
+            thinking: firstModel?.capabilities?.supportsThinkingToggle ? true : undefined,
+            effort: defaultEffort,
+            fastMode: firstModel?.capabilities?.supportsFastMode ? false : undefined,
+            contextWindow: defaultContextWindow,
           };
         }
       }
@@ -342,11 +363,13 @@ export function useOrchestration() {
       provider: 'claude',
       modelId: 'claude-sonnet-4-6',
     };
-  }, []);
+  }, [instanceId]);
 
   const ensureActiveThread = useCallback(async () => {
     // Use ref for current value — avoids stale closure
-    const currentId = activeThreadIdRef.current;
+    const currentId = instanceId
+      ? instanceThreadBindings.get(instanceId) ?? activeThreadIdRef.current
+      : activeThreadIdRef.current;
     if (currentId) {
       return currentId;
     }
@@ -358,7 +381,10 @@ export function useOrchestration() {
 
     const createdAt = new Date().toISOString();
     const threadId = `thread-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const title = 'Mobile Session';
+    const dirName = preferredWorktreePath
+      ? preferredWorktreePath.split('/').filter(Boolean).pop()
+      : null;
+    const title = dirName ? `${dirName} AI` : 'AI Session';
 
     await staviClient.request('orchestration.dispatchCommand', {
       command: {
@@ -367,39 +393,44 @@ export function useOrchestration() {
         threadId,
         projectId: project.id,
         title,
-        modelSelection: resolveThreadModelSelection(),
         runtimeMode: 'approval-required',
         interactionMode: 'default',
         branch: null,
-        worktreePath: null,
+        worktreePath: preferredWorktreePath,
         createdAt,
       },
     });
 
     // Update both ref and state immediately
+    if (instanceId) {
+      instanceThreadBindings.set(instanceId, threadId);
+    }
     activeThreadIdRef.current = threadId;
     setState((prev) => ({
       ...prev,
       activeThreadId: threadId,
-      threads: [
-        ...prev.threads,
-        {
-          threadId,
-          projectId: project.id,
-          title,
-          runtimeMode: 'approval-required',
-          interactionMode: 'default',
-          branch: '',
-          worktreePath: null,
-          archived: false,
-          createdAt,
-          updatedAt: createdAt,
-        },
-      ],
+      threads: prev.threads.some((thread) => thread.threadId === threadId)
+        ? prev.threads
+        : [
+            ...prev.threads,
+            {
+              threadId,
+              projectId: project.id,
+              title,
+              runtimeMode: 'approval-required',
+              interactionMode: 'default',
+              branch: '',
+              worktreePath: preferredWorktreePath,
+              modelSelection: undefined,
+              archived: false,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          ],
     }));
 
     return threadId;
-  }, [resolveThreadModelSelection]);
+  }, [instanceId, preferredWorktreePath]);
 
   // Inner event processor (pure function: prev state → next state)
   const processEventInner = useCallback((prev: OrchestrationState, event: any): OrchestrationState => {
@@ -416,13 +447,15 @@ export function useOrchestration() {
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch || '',
           worktreePath: event.payload.worktreePath,
+          modelSelection: event.payload.modelSelection,
           archived: false,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
         };
-        next.threads = [...prev.threads, thread];
-        // Auto-select first thread
-        if (!prev.activeThreadId) {
+        next.threads = prev.threads.some((item) => item.threadId === thread.threadId)
+          ? prev.threads.map((item) => (item.threadId === thread.threadId ? thread : item))
+          : [...prev.threads, thread];
+        if (instanceId && instanceThreadBindings.get(instanceId) === thread.threadId) {
           next.activeThreadId = thread.threadId;
           activeThreadIdRef.current = thread.threadId;
         }
@@ -649,6 +682,7 @@ export function useOrchestration() {
           interactionMode: t.interactionMode || 'default',
           branch: t.branch || '',
           worktreePath: t.worktreePath,
+          modelSelection: t.modelSelection,
           archived: t.archived || false,
           createdAt: t.createdAt,
           updatedAt: t.updatedAt,
@@ -692,7 +726,10 @@ export function useOrchestration() {
           }
         }
 
-        const activeThreadId = threads.find((t) => !t.archived)?.threadId ?? null;
+        const boundThreadId = instanceId ? instanceThreadBindings.get(instanceId) ?? null : null;
+        const activeThreadId = boundThreadId && threads.some((t) => t.threadId === boundThreadId)
+          ? boundThreadId
+          : null;
         activeThreadIdRef.current = activeThreadId;
 
         setState({
@@ -737,7 +774,7 @@ export function useOrchestration() {
       unsubRef.current?.();
       unsubRef.current = null;
     };
-  }, [connectionState, processEvent]);
+  }, [connectionState, instanceId, processEvent]);
 
   // ----------------------------------------------------------
   // Actions
@@ -745,7 +782,14 @@ export function useOrchestration() {
 
   const sendMessage = useCallback(
     async (text: string, threadId?: string, options?: {
-      modelSelection?: { provider: string; modelId: string; thinking?: boolean; effort?: string };
+      modelSelection?: {
+        provider: string;
+        modelId: string;
+        thinking?: boolean;
+        effort?: string;
+        fastMode?: boolean;
+        contextWindow?: string;
+      };
       interactionMode?: 'default' | 'plan';
       accessLevel?: string;
     }) => {
@@ -798,7 +842,19 @@ export function useOrchestration() {
           },
         ]);
 
-        return { ...prev, messages: updated, aiMessages: updatedAI };
+        const updatedThreads = prev.threads.map((thread) =>
+          thread.threadId === tid
+            ? {
+                ...thread,
+                runtimeMode: runtimeMode as Thread['runtimeMode'],
+                interactionMode: options?.interactionMode ?? 'default',
+                modelSelection: modelSel,
+                updatedAt: createdAt,
+              }
+            : thread,
+        );
+
+        return { ...prev, messages: updated, aiMessages: updatedAI, threads: updatedThreads };
       });
 
       await staviClient.request('orchestration.dispatchCommand', {
@@ -868,9 +924,9 @@ export function useOrchestration() {
           requestId,
           decision:
             decision === 'always-allow'
-              ? 'acceptForSession'
+              ? 'always-allow'
               : decision === 'reject'
-                ? 'decline'
+                ? 'reject'
                 : 'accept',
           createdAt: new Date().toISOString(),
         },
@@ -880,9 +936,12 @@ export function useOrchestration() {
   );
 
   const setActiveThread = useCallback((threadId: string) => {
+    if (instanceId) {
+      instanceThreadBindings.set(instanceId, threadId);
+    }
     activeThreadIdRef.current = threadId;
     setState((prev) => ({ ...prev, activeThreadId: threadId }));
-  }, []);
+  }, [instanceId]);
 
   const updateSettings = useCallback(
     async (settings: Record<string, unknown>) => {

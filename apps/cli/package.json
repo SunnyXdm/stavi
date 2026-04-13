@@ -11,7 +11,7 @@
     "dist"
   ],
   "scripts": {
-    "dev": "bun run src/index.ts",
+    "dev": "sh -c 'bun --watch src/index.ts serve --port ${STAVI_PORT:-3773} --host ${STAVI_HOST:-0.0.0.0} ${STAVI_PROJECT_ROOT:-.}'",
     "build": "bun build src/index.ts --outfile dist/index.mjs --target node --format esm",
     "typecheck": "tsc --noEmit"
   },

@@ -13,10 +13,10 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "dev:turbo": "turbo dev",
-    "dev:cli": "turbo dev --filter=stavi",
-    "dev:relay": "turbo dev --filter=@stavi/relay",
+    "dev:turbo": "turbo dev --filter=stavi --filter=@stavi/mobile",
+    "dev:server": "turbo dev --filter=stavi",
     "dev:mobile": "turbo dev --filter=@stavi/mobile",
+    "dev:relay": "turbo dev --filter=@stavi/relay",
     "build": "turbo build",
     "typecheck": "turbo typecheck",
     "lint": "turbo lint",

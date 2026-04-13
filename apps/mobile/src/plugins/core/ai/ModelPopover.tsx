@@ -17,12 +17,13 @@ import {
 import { Check, ChevronRight, ChevronLeft, Shield, ShieldCheck, ShieldOff } from 'lucide-react-native';
 import { colors, typography, spacing, radii } from '../../../theme';
 import type { ProviderInfo, ConfigSelection } from './ConfigSheet';
+import { ProviderIcon } from './ProviderIcon';
 
 // ----------------------------------------------------------
 // Types
 // ----------------------------------------------------------
 
-export type PopoverSection = 'providers' | 'models' | 'effort' | 'mode' | 'access';
+export type PopoverSection = 'providers' | 'models' | 'effort' | 'thinking' | 'fastMode' | 'contextWindow' | 'mode' | 'access';
 
 export type InteractionMode = 'default' | 'plan';
 export type AccessLevel = 'supervised' | 'auto-accept' | 'full-access';
@@ -34,6 +35,7 @@ export interface ModelPopoverProps {
   providers: ProviderInfo[];
   selection: ConfigSelection;
   onSelect: (s: ConfigSelection) => void;
+  providerLocked?: boolean;
   mode: InteractionMode;
   onModeChange: (m: InteractionMode) => void;
   accessLevel: AccessLevel;
@@ -41,13 +43,8 @@ export interface ModelPopoverProps {
 }
 
 // ----------------------------------------------------------
-// Provider metadata + icon
+// Provider metadata
 // ----------------------------------------------------------
-
-const PROVIDER_META: Record<string, { color: string; initial: string }> = {
-  claude: { color: '#c96442', initial: 'A' },
-  codex:  { color: '#10a37f', initial: 'O' },
-};
 
 const COMING_SOON_PROVIDERS = [
   { key: 'cursor',   name: 'Cursor',   color: '#6B6B6B' },
@@ -55,17 +52,29 @@ const COMING_SOON_PROVIDERS = [
   { key: 'gemini',   name: 'Gemini',   color: '#4285F4' },
 ];
 
-export function ProviderIcon({ provider, size = 20 }: { provider: string; size?: number }) {
-  const meta = PROVIDER_META[provider];
-  const bg = meta?.color ?? colors.bg.active;
-  const initial = meta?.initial ?? provider.charAt(0).toUpperCase();
-  return (
-    <View style={{ width: size, height: size, borderRadius: size * 0.28, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ fontSize: size * 0.58, fontWeight: '700', color: '#fff', lineHeight: size }}>
-        {initial}
-      </Text>
-    </View>
-  );
+function getCurrentModel(providers: ProviderInfo[], selection: ConfigSelection) {
+  return providers
+    .find((provider) => provider.provider === selection.provider)
+    ?.models.find((model) => model.id === selection.modelId);
+}
+
+function normalizeSelectionForModel(selection: ConfigSelection, model?: ProviderInfo['models'][number]) {
+  if (!model) return selection;
+  return {
+    ...selection,
+    modelId: model.id,
+    modelName: model.name,
+    thinking: model.capabilities.supportsThinkingToggle
+      ? (selection.thinking ?? true)
+      : undefined,
+    effort:
+      model.capabilities.reasoningEffortLevels.find((level) => level.value === selection.effort)?.value ??
+      model.capabilities.reasoningEffortLevels.find((level) => level.isDefault)?.value,
+    fastMode: model.capabilities.supportsFastMode ? (selection.fastMode ?? false) : undefined,
+    contextWindow:
+      model.capabilities.contextWindowOptions.find((option) => option.value === selection.contextWindow)?.value ??
+      model.capabilities.contextWindowOptions.find((option) => option.isDefault)?.value,
+  } satisfies ConfigSelection;
 }
 
 // ----------------------------------------------------------
@@ -106,22 +115,18 @@ function MenuRow({
 // Effort section content
 // ----------------------------------------------------------
 
-const EFFORT_OPTIONS: Array<{ value: ConfigSelection['effort']; label: string }> = [
-  { value: 'max',    label: 'Extra High' },
-  { value: 'high',   label: 'High (default)' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'low',    label: 'Low' },
-];
-
-function EffortContent({ selection, onSelect, onClose }: {
+function EffortContent({ selection, providers, onSelect, onClose }: {
   selection: ConfigSelection;
+  providers: ProviderInfo[];
   onSelect: (s: ConfigSelection) => void;
   onClose: () => void;
 }) {
+  const model = getCurrentModel(providers, selection);
+  const options = model?.capabilities.reasoningEffortLevels ?? [];
   return (
     <>
       <Text style={s.sectionHeader}>Effort</Text>
-      {EFFORT_OPTIONS.map((opt) => (
+      {options.map((opt) => (
         <MenuRow
           key={opt.value}
           label={opt.label}
@@ -129,14 +134,67 @@ function EffortContent({ selection, onSelect, onClose }: {
           onPress={() => { onSelect({ ...selection, effort: opt.value }); onClose(); }}
         />
       ))}
-      <View style={s.divider} />
+    </>
+  );
+}
+
+function ThinkingContent({ selection, onSelect, onClose }: {
+  selection: ConfigSelection;
+  onSelect: (s: ConfigSelection) => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      <Text style={s.sectionHeader}>Thinking</Text>
+      {([true, false] as const).map((val) => (
+        <MenuRow
+          key={String(val)}
+          label={val ? 'On' : 'Off'}
+          selected={selection.thinking === val}
+          onPress={() => { onSelect({ ...selection, thinking: val }); onClose(); }}
+        />
+      ))}
+    </>
+  );
+}
+
+function FastModeContent({ selection, onSelect, onClose }: {
+  selection: ConfigSelection;
+  onSelect: (s: ConfigSelection) => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
       <Text style={s.sectionHeader}>Fast Mode</Text>
       {([false, true] as const).map((val) => (
         <MenuRow
           key={String(val)}
-          label={val ? 'on' : 'off'}
-          selected={val === false ? !selection.thinking : selection.thinking}
-          onPress={() => { onSelect({ ...selection, thinking: val }); onClose(); }}
+          label={val ? 'On' : 'Off'}
+          selected={Boolean(selection.fastMode) === val}
+          onPress={() => { onSelect({ ...selection, fastMode: val }); onClose(); }}
+        />
+      ))}
+    </>
+  );
+}
+
+function ContextWindowContent({ selection, providers, onSelect, onClose }: {
+  selection: ConfigSelection;
+  providers: ProviderInfo[];
+  onSelect: (s: ConfigSelection) => void;
+  onClose: () => void;
+}) {
+  const model = getCurrentModel(providers, selection);
+  const options = model?.capabilities.contextWindowOptions ?? [];
+  return (
+    <>
+      <Text style={s.sectionHeader}>Context Window</Text>
+      {options.map((opt) => (
+        <MenuRow
+          key={opt.value}
+          label={opt.label}
+          selected={selection.contextWindow === opt.value}
+          onPress={() => { onSelect({ ...selection, contextWindow: opt.value }); onClose(); }}
         />
       ))}
     </>
@@ -228,7 +286,7 @@ function ProvidersContent({ providers, selection, onSelect, onShowModels }: {
             onPress={() => {
               if (!p.authenticated) return;
               const def = p.models.find((m) => m.isDefault) ?? p.models[0];
-              if (def) onSelect({ ...selection, provider: p.provider, modelId: def.id, modelName: def.name, thinking: def.supportsThinking ?? selection.thinking });
+              if (def) onSelect(normalizeSelectionForModel({ ...selection, provider: p.provider }, def));
               onShowModels();
             }}
           >
@@ -263,27 +321,36 @@ function ProvidersContent({ providers, selection, onSelect, onShowModels }: {
 // Models list content
 // ----------------------------------------------------------
 
-function ModelsContent({ providers, selection, onSelect, onBack }: {
+function ModelsContent({ providers, selection, onSelect, onBack, providerLocked }: {
   providers: ProviderInfo[];
   selection: ConfigSelection;
   onSelect: (s: ConfigSelection) => void;
   onBack: () => void;
+  providerLocked?: boolean;
 }) {
   const provider = providers.find((p) => p.provider === selection.provider);
   return (
     <>
-      <Pressable style={s.backRow} onPress={onBack}>
-        <ChevronLeft size={15} color={colors.fg.secondary} />
-        {provider && <ProviderIcon provider={provider.provider} size={18} />}
-        <Text style={s.backLabel}>{provider?.name ?? 'Provider'}</Text>
-      </Pressable>
+      {providerLocked ? (
+        <View style={s.backRow}>
+          {provider && <ProviderIcon provider={provider.provider} size={18} />}
+          <Text style={s.backLabel}>{provider?.name ?? 'Provider'}</Text>
+          <Text style={s.lockedBadge}>LOCKED</Text>
+        </View>
+      ) : (
+        <Pressable style={s.backRow} onPress={onBack}>
+          <ChevronLeft size={15} color={colors.fg.secondary} />
+          {provider && <ProviderIcon provider={provider.provider} size={18} />}
+          <Text style={s.backLabel}>{provider?.name ?? 'Provider'}</Text>
+        </Pressable>
+      )}
       <View style={s.divider} />
       {(provider?.models ?? []).map((model) => (
         <MenuRow
           key={model.id}
           label={model.name}
           selected={model.id === selection.modelId}
-          onPress={() => onSelect({ ...selection, modelId: model.id, modelName: model.name, thinking: model.supportsThinking ?? selection.thinking })}
+          onPress={() => onSelect(normalizeSelectionForModel(selection, model))}
         />
       ))}
       <View style={{ height: spacing[2] }} />
@@ -302,6 +369,7 @@ export function ModelPopover({
   providers,
   selection,
   onSelect,
+  providerLocked = false,
   mode,
   onModeChange,
   accessLevel,
@@ -317,8 +385,13 @@ export function ModelPopover({
 
   if (!visible) return null;
 
-  // Quick sections (effort/mode/access): small floating box above composer
-  const isQuick = section === 'effort' || section === 'mode' || section === 'access';
+  const isQuick =
+    section === 'effort' ||
+    section === 'thinking' ||
+    section === 'fastMode' ||
+    section === 'contextWindow' ||
+    section === 'mode' ||
+    section === 'access';
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
@@ -328,7 +401,16 @@ export function ModelPopover({
         <View style={isQuick ? s.quickBox : s.sheetBox}>
           <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
             {section === 'effort' && (
-              <EffortContent selection={selection} onSelect={onSelect} onClose={onClose} />
+              <EffortContent selection={selection} providers={providers} onSelect={onSelect} onClose={onClose} />
+            )}
+            {section === 'thinking' && (
+              <ThinkingContent selection={selection} onSelect={onSelect} onClose={onClose} />
+            )}
+            {section === 'fastMode' && (
+              <FastModeContent selection={selection} onSelect={onSelect} onClose={onClose} />
+            )}
+            {section === 'contextWindow' && (
+              <ContextWindowContent selection={selection} providers={providers} onSelect={onSelect} onClose={onClose} />
             )}
             {section === 'mode' && (
               <ModeContent mode={mode} onModeChange={onModeChange} onClose={onClose} />
@@ -349,6 +431,7 @@ export function ModelPopover({
                   providers={providers}
                   selection={selection}
                   onSelect={onSelect}
+                  providerLocked={providerLocked}
                   onBack={() => setView('providers')}
                 />
               )
@@ -474,6 +557,13 @@ const s = StyleSheet.create({
     fontSize: typography.fontSize.base,
     fontWeight: typography.fontWeight.semibold,
     color: colors.fg.primary,
+  },
+  lockedBadge: {
+    marginLeft: 'auto',
+    fontSize: 10,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.fg.muted,
+    letterSpacing: 0.5,
   },
 
   // Provider list

@@ -18,6 +18,7 @@ import type {
   ProviderEvent,
   SendTurnInput,
   ApprovalDecision,
+  ModelCapabilities,
 } from './types';
 import {
   textDelta,
@@ -37,73 +38,79 @@ import { randomUUID } from 'node:crypto';
 // Constants
 // ----------------------------------------------------------
 
+const CLAUDE_DEFAULT_CAPABILITIES: ModelCapabilities = {
+  reasoningEffortLevels: [],
+  supportsFastMode: false,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
+};
+
 const CLAUDE_MODELS: ModelInfo[] = [
   {
     id: 'claude-sonnet-4-6',
-    name: 'Claude Sonnet 4',
+    name: 'Claude Sonnet 4.6',
     provider: 'claude',
     supportsThinking: true,
     maxTokens: 16384,
     contextWindow: 200000,
     isDefault: true,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High', isDefault: true },
+        { value: 'ultrathink', label: 'Ultrathink' },
+      ],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [
+        { value: '200k', label: '200k', isDefault: true },
+        { value: '1m', label: '1M' },
+      ],
+      promptInjectedEffortLevels: ['ultrathink'],
+    },
   },
   {
     id: 'claude-opus-4-6',
-    name: 'Claude Opus 4',
+    name: 'Claude Opus 4.6',
     provider: 'claude',
     supportsThinking: true,
     maxTokens: 16384,
     contextWindow: 200000,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High', isDefault: true },
+        { value: 'max', label: 'Max' },
+        { value: 'ultrathink', label: 'Ultrathink' },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [
+        { value: '200k', label: '200k', isDefault: true },
+        { value: '1m', label: '1M' },
+      ],
+      promptInjectedEffortLevels: ['ultrathink'],
+    },
   },
   {
     id: 'claude-haiku-4-5',
     name: 'Claude Haiku 4.5',
     provider: 'claude',
-    supportsThinking: false,
+    supportsThinking: true,
     maxTokens: 8192,
     contextWindow: 200000,
+    capabilities: {
+      reasoningEffortLevels: [],
+      supportsFastMode: false,
+      supportsThinkingToggle: true,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
   },
 ];
-
-// ----------------------------------------------------------
-// Async iterable queue for multi-turn prompts
-// ----------------------------------------------------------
-
-class PromptQueue {
-  private queue: SDKUserMessage[] = [];
-  private resolve: (() => void) | null = null;
-  private done = false;
-
-  push(msg: SDKUserMessage) {
-    this.queue.push(msg);
-    if (this.resolve) {
-      this.resolve();
-      this.resolve = null;
-    }
-  }
-
-  close() {
-    this.done = true;
-    if (this.resolve) {
-      this.resolve();
-      this.resolve = null;
-    }
-  }
-
-  async *[Symbol.asyncIterator](): AsyncGenerator<SDKUserMessage> {
-    while (!this.done) {
-      if (this.queue.length > 0) {
-        yield this.queue.shift()!;
-      } else {
-        await new Promise<void>((r) => { this.resolve = r; });
-      }
-    }
-    // Drain remaining
-    while (this.queue.length > 0) {
-      yield this.queue.shift()!;
-    }
-  }
-}
 
 // ----------------------------------------------------------
 // Session state
@@ -113,9 +120,8 @@ interface ClaudeSession {
   threadId: string;
   cwd: string;
   sessionId: string;
-  promptQueue: PromptQueue;
+  hasStarted: boolean;
   queryRuntime: any; // The query() return value
-  streamIterator: AsyncIterableIterator<SDKMessage> | null;
   aborted: boolean;
   interruptFn: (() => Promise<void>) | null;
   closeFn: (() => void) | null;
@@ -125,6 +131,42 @@ interface ClaudeSession {
     toolName: string;
     toolInput: unknown;
   }>;
+}
+
+function normalizeApprovalDecision(decision: ApprovalDecision): 'accept' | 'reject' | 'always-allow' {
+  if (decision === 'acceptForSession') return 'always-allow';
+  if (decision === 'decline') return 'reject';
+  return decision;
+}
+
+function isAutoApprovedClaudeTool(
+  toolName: string,
+  runtimeMode: SendTurnInput['runtimeMode'],
+): boolean {
+  if (runtimeMode === 'full-access') return true;
+  if (runtimeMode !== 'auto-accept-edits') return false;
+
+  const normalized = toolName.toLowerCase();
+  return [
+    'edit',
+    'write',
+    'multiedit',
+    'replace',
+    'create',
+    'rename',
+    'delete',
+  ].some((token) => normalized.includes(token));
+}
+
+function getClaudeModelInfo(modelId: string | undefined): ModelInfo {
+  return CLAUDE_MODELS.find((model) => model.id === modelId) ?? CLAUDE_MODELS[0];
+}
+
+function resolveClaudeApiModelId(model: ModelInfo, contextWindow: string | undefined) {
+  if (contextWindow === '1m' && model.capabilities.contextWindowOptions.some((option) => option.value === '1m')) {
+    return `${model.id}[1m]`;
+  }
+  return model.id;
 }
 
 // ----------------------------------------------------------
@@ -213,9 +255,8 @@ export class ClaudeAdapter implements ProviderAdapter {
       threadId,
       cwd,
       sessionId: randomUUID(),
-      promptQueue: new PromptQueue(),
+      hasStarted: false,
       queryRuntime: null,
-      streamIterator: null,
       aborted: false,
       interruptFn: null,
       closeFn: null,
@@ -235,118 +276,153 @@ export class ClaudeAdapter implements ProviderAdapter {
       session.cwd = input.cwd;
     }
 
+    session.aborted = false;
+
     const turnId = `turn-${Date.now()}`;
-    const effort = input.modelSelection?.effort ?? 'high';
-    const modelId = input.modelSelection?.modelId ?? 'claude-sonnet-4-6';
+    const modelInfo = getClaudeModelInfo(input.modelSelection?.modelId);
+    const rawEffort = input.modelSelection?.effort;
+    const effort =
+      rawEffort &&
+      modelInfo.capabilities.reasoningEffortLevels.some((level) => level.value === rawEffort) &&
+      !modelInfo.capabilities.promptInjectedEffortLevels.includes(rawEffort)
+        ? rawEffort
+        : modelInfo.capabilities.reasoningEffortLevels.find((level) => level.isDefault)?.value;
+    const apiModelId = resolveClaudeApiModelId(modelInfo, input.modelSelection?.contextWindow);
+    const fastMode = modelInfo.capabilities.supportsFastMode && input.modelSelection?.fastMode === true;
+    const thinking =
+      modelInfo.capabilities.supportsThinkingToggle && typeof input.modelSelection?.thinking === 'boolean'
+        ? input.modelSelection.thinking
+        : undefined;
 
-    // Map effort to thinking budget
-    const effortBudgetMap: Record<string, number | null> = {
-      'low': null,
-      'medium': 5000,
-      'high': 10000,
-      'max': 100000,
+    const thinkingBudgetMap: Record<string, number | null> = {
+      low: null,
+      medium: 5000,
+      high: 10000,
+      max: 100000,
     };
-    const thinkingBudget = effortBudgetMap[effort] ?? 10000;
+    const thinkingConfig =
+      thinking === false
+        ? { type: 'disabled' as const }
+        : typeof effort === 'string' && effort in thinkingBudgetMap
+          ? thinkingBudgetMap[effort] == null
+            ? undefined
+            : modelInfo.id === 'claude-opus-4-6'
+              ? { type: 'adaptive' as const }
+              : { type: 'enabled' as const, budgetTokens: thinkingBudgetMap[effort]! }
+          : thinking === true
+            ? modelInfo.id === 'claude-opus-4-6'
+              ? { type: 'adaptive' as const }
+              : { type: 'enabled' as const, budgetTokens: 10000 }
+            : undefined;
 
-    // Push user message into the prompt queue
     const userMessage: SDKUserMessage = {
       type: 'user',
       message: { role: 'user', content: input.text },
       parent_tool_use_id: null,
     };
 
-    // If no query running, start one
-    if (!session.queryRuntime) {
-      try {
-        const queryOptions: ClaudeQueryOptions = {
-          sessionId: session.sessionId,
-          includePartialMessages: true,
-          env: process.env,
-          model: modelId,
-          effort: effort === 'low' ? null : effort as any,
-          permissionMode: input.interactionMode === 'plan' ? 'plan' as any : undefined,
-          canUseTool: async (toolName: string, toolInput: Record<string, unknown>, opts: any) => {
-            // Generate a request ID for this approval
-            const requestId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-
-            // Create a deferred promise
-            const deferred = {
-              resolve: null as any,
-              toolName,
-              toolInput,
+    try {
+      const queryOptions: ClaudeQueryOptions = {
+        includePartialMessages: true,
+        env: process.env,
+        model: apiModelId,
+        effort: effort && effort !== 'ultrathink' && effort !== 'xhigh' ? effort as any : undefined,
+        permissionMode:
+          input.interactionMode === 'plan'
+            ? 'plan'
+            : input.runtimeMode === 'full-access'
+              ? 'bypassPermissions'
+              : input.runtimeMode === 'auto-accept-edits'
+                ? 'acceptEdits'
+                : undefined,
+        canUseTool: async (toolName: string, toolInput: Record<string, unknown>, opts: any) => {
+          if (isAutoApprovedClaudeTool(toolName, input.runtimeMode)) {
+            return {
+              behavior: 'allow',
+              updatedInput: toolInput,
             };
-            const promise = new Promise<{ behavior: string; updatedInput?: unknown; message?: string }>((resolve) => {
-              deferred.resolve = resolve;
-            });
-            session!.pendingApprovals.set(requestId, deferred as any);
+          }
 
-            // Yield an approval-required event (we'll handle this via the event channel)
-            // The approval will be resolved externally via respondToApproval()
-            this._pendingApprovalEmitter?.(input.threadId, requestId, toolName, toolInput, turnId);
-
-            // Handle abort
-            if (opts?.signal) {
-              opts.signal.addEventListener('abort', () => {
-                session!.pendingApprovals.delete(requestId);
-                deferred.resolve({ behavior: 'deny', message: 'Turn interrupted' });
-              });
-            }
-
-            return promise;
-          },
-        } as any;
-
-        if (this.claudeBinaryPath) {
-          (queryOptions as any).pathToClaudeCodeExecutable = this.claudeBinaryPath;
-        }
-
-        if (thinkingBudget != null) {
-          (queryOptions as any).settings = {
-            alwaysThinkingEnabled: true,
+          const requestId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          const deferred = {
+            resolve: null as any,
+            toolName,
+            toolInput,
           };
-        }
+          const promise = new Promise<{ behavior: string; updatedInput?: unknown; message?: string }>((resolve) => {
+            deferred.resolve = resolve;
+          });
+          session!.pendingApprovals.set(requestId, deferred as any);
+          this._pendingApprovalEmitter?.(input.threadId, requestId, toolName, toolInput, turnId);
 
-        if (session.cwd && session.cwd !== '.') {
-          queryOptions.cwd = session.cwd;
-        }
+          if (opts?.signal) {
+            opts.signal.addEventListener('abort', () => {
+              session!.pendingApprovals.delete(requestId);
+              deferred.resolve({ behavior: 'deny', message: 'Turn interrupted' });
+            });
+          }
 
-        // Start the query with prompt iterable
-        const promptIterable = session.promptQueue[Symbol.asyncIterator]();
-        const q = query({
-          prompt: { [Symbol.asyncIterator]: () => promptIterable } as any,
-          options: queryOptions,
-        });
+          return promise;
+        },
+      } as any;
 
-        session.queryRuntime = q;
-        // Get the iterator ONCE and store it — reused across all turns.
-        // We must NOT use for-await-of on queryRuntime directly because returning
-        // from inside for-await calls .return() on the iterator, which closes the
-        // underlying query subprocess and breaks multi-turn conversations.
-        session.streamIterator = (q as any)[Symbol.asyncIterator]();
-        session.interruptFn = (q as any).interrupt?.bind(q) ?? null;
-        session.closeFn = (q as any).close?.bind(q) ?? null;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[Claude] Failed to start query:', msg);
-        yield turnError(input.threadId, `Failed to start Claude session: ${msg}`, turnId);
-        return;
+      if (session.hasStarted) {
+        (queryOptions as any).resume = session.sessionId;
+      } else {
+        queryOptions.sessionId = session.sessionId;
       }
+
+      if (this.claudeBinaryPath) {
+        (queryOptions as any).pathToClaudeCodeExecutable = this.claudeBinaryPath;
+      }
+
+      if (session.cwd && session.cwd !== '.') {
+        queryOptions.cwd = session.cwd;
+      }
+
+      const settings: Record<string, unknown> = {};
+      if (thinking !== undefined) {
+        settings.alwaysThinkingEnabled = thinking;
+      }
+      if (fastMode) {
+        settings.fastMode = true;
+      }
+      if (Object.keys(settings).length > 0) {
+        (queryOptions as any).settings = settings;
+      }
+      if (thinkingConfig) {
+        (queryOptions as any).thinking = thinkingConfig;
+      }
+
+      const promptText = rawEffort === 'ultrathink' ? `Ultrathink:\n${input.text.trim()}` : input.text;
+      const q = query({
+        prompt: {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              ...userMessage,
+              message: { role: 'user', content: promptText },
+            } as SDKUserMessage;
+          },
+        } as any,
+        options: queryOptions,
+      });
+      session.queryRuntime = q;
+      session.interruptFn = (q as any).interrupt?.bind(q) ?? null;
+      session.closeFn = (q as any).close?.bind(q) ?? null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Claude] Failed to start query:', msg);
+      yield turnError(input.threadId, `Failed to start Claude session: ${msg}`, turnId);
+      return;
     }
 
-    // Push the user message
-    session.promptQueue.push(userMessage);
-
-    // Stream events from the stored iterator using manual .next() calls.
-    // This avoids for-await-of which would call .return() and close the iterator
-    // when we return from this generator at the end of each turn.
     let fullText = '';
     let thinkingText = '';
+    const toolInputBuffers = new Map<string, string>();
 
     try {
-      while (true) {
-        const { value: message, done } = await session.streamIterator!.next();
-        if (done || session.aborted) break;
-
+      for await (const message of session.queryRuntime as AsyncIterable<SDKMessage>) {
+        if (session.aborted) break;
         switch ((message as SDKMessage).type) {
           case 'stream_event': {
             const event = (message as any).event;
@@ -357,11 +433,17 @@ export class ClaudeAdapter implements ProviderAdapter {
               if (block?.type === 'thinking') {
                 thinkingText = '';
               } else if (block?.type === 'tool_use') {
+                const toolId = block.id ?? `tool-${Date.now()}`;
+                if (block.input && typeof block.input === 'object') {
+                  toolInputBuffers.set(toolId, JSON.stringify(block.input));
+                } else {
+                  toolInputBuffers.set(toolId, '');
+                }
                 yield toolUseStart(
                   input.threadId,
                   block.name ?? 'unknown',
-                  block.id ?? `tool-${Date.now()}`,
-                  null,
+                  toolId,
+                  block.input ?? null,
                   turnId,
                 );
               }
@@ -375,6 +457,25 @@ export class ClaudeAdapter implements ProviderAdapter {
               } else if (delta?.type === 'thinking_delta' && delta.thinking) {
                 thinkingText += delta.thinking;
                 yield thinkingDelta(input.threadId, delta.thinking, turnId);
+              } else if (delta?.type === 'input_json_delta' && delta.partial_json) {
+                const toolId = event.content_block?.id;
+                if (toolId) {
+                  const next = (toolInputBuffers.get(toolId) ?? '') + delta.partial_json;
+                  toolInputBuffers.set(toolId, next);
+                  try {
+                    yield {
+                      type: 'tool-use-delta',
+                      threadId: input.threadId,
+                      turnId,
+                      data: {
+                        toolId,
+                        input: JSON.parse(next),
+                      },
+                    };
+                  } catch {
+                    // Partial JSON — wait for more chunks.
+                  }
+                }
               }
             }
 
@@ -435,10 +536,8 @@ export class ClaudeAdapter implements ProviderAdapter {
             if ((message as any).session_id) {
               session.sessionId = (message as any).session_id;
             }
+            session.hasStarted = true;
 
-            // Return from this generator WITHOUT touching session.streamIterator.
-            // The stored iterator stays alive — the next sendTurn() call will
-            // continue pulling from it after the next message is pushed to promptQueue.
             return;
           }
 
@@ -458,14 +557,20 @@ export class ClaudeAdapter implements ProviderAdapter {
         }
       }
 
+      if (session.aborted) {
+        session.queryRuntime = null;
+        session.aborted = false;
+        yield turnError(input.threadId, 'Turn interrupted by user', turnId);
+        return;
+      }
+
       // If we get here without a result, the stream ended unexpectedly
       if (fullText) {
         yield textDone(input.threadId, fullText, turnId);
       }
       yield turnComplete(input.threadId, turnId);
-      // Stream closed — reset so next turn starts a fresh query
       session.queryRuntime = null;
-      session.streamIterator = null;
+      session.hasStarted = true;
     } catch (error: unknown) {
       if (session.aborted) {
         yield turnError(input.threadId, 'Turn interrupted by user', turnId);
@@ -492,7 +597,6 @@ export class ClaudeAdapter implements ProviderAdapter {
       }
       // Clean up session so next message starts a fresh query
       session.queryRuntime = null;
-      session.streamIterator = null;
       session.aborted = false;
     }
   }
@@ -546,7 +650,9 @@ export class ClaudeAdapter implements ProviderAdapter {
 
     session.pendingApprovals.delete(requestId);
 
-    if (decision === 'accept' || decision === 'always-allow') {
+    const normalizedDecision = normalizeApprovalDecision(decision);
+
+    if (normalizedDecision === 'accept' || normalizedDecision === 'always-allow') {
       pending.resolve({
         behavior: 'allow',
         updatedInput: pending.toolInput as Record<string, unknown>,
@@ -564,7 +670,6 @@ export class ClaudeAdapter implements ProviderAdapter {
     if (!session) return;
 
     session.aborted = true;
-    session.promptQueue.close();
 
     if (session.closeFn) {
       try {

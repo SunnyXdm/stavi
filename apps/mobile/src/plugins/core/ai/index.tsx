@@ -34,7 +34,6 @@ import { colors, typography, spacing, radii } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
 import { useConnectionStore } from '../../../stores/connection';
 import { staviClient } from '../../../stores/stavi-client';
-import { useSessionRegistry } from '../../../stores/session-registry';
 import {
   useOrchestration,
   type ApprovalRequest,
@@ -244,10 +243,10 @@ const thinkingStyles = StyleSheet.create({
 // Panel Component
 // ----------------------------------------------------------
 
-function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
+function AIPanel({ instanceId, isActive, bottomBarHeight, initialState }: PluginPanelProps) {
   const connectionState = useConnectionStore((s) => s.state);
   const listRef = useRef<any>(null);
-  const registerSessions = useSessionRegistry((s) => s.register);
+  const worktreePath = (initialState?.directory as string | undefined) ?? null;
 
   const {
     threads,
@@ -259,13 +258,10 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
     sendMessage,
     interruptTurn,
     respondToApproval,
-    setActiveThread,
-    ensureActiveThread,
-  } = useOrchestration();
+  } = useOrchestration({ instanceId, worktreePath });
 
   const [popoverSection, setPopoverSection] = useState<PopoverSection>('providers');
   const [popoverVisible, setPopoverVisible] = useState(false);
-  const [providerLocked, setProviderLocked] = useState(false);
 
   const openPopover = useCallback((section: PopoverSection) => {
     setPopoverSection(section);
@@ -274,11 +270,13 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
 
   // Model/mode/access state
   const [configSelection, setConfigSelection] = useState<ConfigSelection>({
-    provider: 'claude',
-    modelId: 'claude-sonnet-4-20250514',
-    modelName: 'Claude Sonnet 4',
-    thinking: true,
-    effort: 'medium',
+    provider: '',
+    modelId: '',
+    modelName: 'Choose model',
+    thinking: undefined,
+    effort: undefined,
+    fastMode: undefined,
+    contextWindow: undefined,
   });
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('default');
   const [accessLevel, setAccessLevel] = useState<AccessLevel>('supervised');
@@ -290,49 +288,69 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
     modelId: configSelection.modelId,
   }), [configSelection]);
 
-  // Auto-select first available model when providers load
+  const activeThread = useMemo(
+    () => threads.find((thread) => thread.threadId === activeThreadId) ?? null,
+    [threads, activeThreadId],
+  );
+  const providerLocked = Boolean(activeThread?.modelSelection?.provider);
+  const selectedProvider = useMemo(
+    () => (providers as ProviderInfo[]).find((provider) => provider.provider === configSelection.provider) ?? null,
+    [providers, configSelection.provider],
+  );
+  const selectedModelRecord = useMemo(
+    () => selectedProvider?.models.find((model) => model.id === configSelection.modelId) ?? null,
+    [selectedProvider, configSelection.modelId],
+  );
+  const modelCapabilities = selectedModelRecord?.capabilities;
+
+  const syncSelectionToModel = useCallback(
+    (base: ConfigSelection, model: NonNullable<typeof selectedModelRecord> | ProviderInfo['models'][number]): ConfigSelection => ({
+      ...base,
+      provider: model.provider,
+      modelId: model.id,
+      modelName: model.name,
+      thinking: model.capabilities.supportsThinkingToggle ? (base.thinking ?? true) : undefined,
+      effort:
+        model.capabilities.reasoningEffortLevels.find((level) => level.value === base.effort)?.value ??
+        model.capabilities.reasoningEffortLevels.find((level) => level.isDefault)?.value,
+      fastMode: model.capabilities.supportsFastMode ? (base.fastMode ?? false) : undefined,
+      contextWindow:
+        model.capabilities.contextWindowOptions.find((option) => option.value === base.contextWindow)?.value ??
+        model.capabilities.contextWindowOptions.find((option) => option.isDefault)?.value,
+    }),
+    [],
+  );
+
+  // Sync local composer controls from the active thread's persisted selection.
   useEffect(() => {
-    if (providers.length > 0) {
-      const authenticated = providers.find((p: any) => p.authenticated);
-      if (authenticated?.models?.length > 0) {
-        const defaultModel = authenticated.models.find((m: any) => m.isDefault) ?? authenticated.models[0];
-        setConfigSelection((prev) => ({
-          ...prev,
-          provider: authenticated.provider,
-          modelId: defaultModel.id,
-          modelName: defaultModel.name,
-          thinking: defaultModel.supportsThinking ?? prev.thinking,
-        }));
-        setProviderLocked(true);
+    if (activeThread?.modelSelection?.provider && activeThread.modelSelection.modelId) {
+      const provider = providers.find((item: any) => item.provider === activeThread.modelSelection?.provider);
+      const model = provider?.models?.find((item: any) => item.id === activeThread.modelSelection?.modelId);
+      if (model) {
+        setConfigSelection((prev) =>
+          syncSelectionToModel(
+            {
+              ...prev,
+              provider: activeThread.modelSelection!.provider,
+              modelId: activeThread.modelSelection!.modelId,
+              modelName: model.name,
+              thinking: activeThread.modelSelection?.thinking,
+              effort: activeThread.modelSelection?.effort,
+              fastMode: activeThread.modelSelection?.fastMode,
+              contextWindow: activeThread.modelSelection?.contextWindow,
+            },
+            model,
+          ),
+        );
+      }
+    } else if (!providerLocked && configSelection.provider) {
+      const provider = providers.find((item: any) => item.provider === configSelection.provider);
+      const model = provider?.models?.find((item: any) => item.id === configSelection.modelId);
+      if (model) {
+        setConfigSelection((prev) => syncSelectionToModel(prev, model));
       }
     }
-  }, [providers]);
-
-  // Register AI threads as sessions for PluginHeader / DrawerContent
-  const visibleThreads = useMemo(() => threads.filter((t) => !t.archived), [threads]);
-
-  useEffect(() => {
-    registerSessions('ai', {
-      sessions: visibleThreads.map((t) => ({
-        id: t.threadId,
-        title: t.title || 'Thread',
-        subtitle: t.interactionMode === 'plan' ? 'Plan mode' : undefined,
-        isActive: t.threadId === activeThreadId,
-      })),
-      activeSessionId: activeThreadId ?? undefined,
-      onSelectSession: (sessionId: string) => {
-        setActiveThread(sessionId);
-      },
-      onCreateSession: async () => {
-        try {
-          await ensureActiveThread();
-        } catch (err) {
-          console.error('[AI] Failed to create thread:', err);
-        }
-      },
-      createLabel: 'New Thread',
-    });
-  }, [visibleThreads, activeThreadId, registerSessions, setActiveThread, ensureActiveThread]);
+  }, [activeThread, configSelection.modelId, configSelection.provider, providerLocked, providers, syncSelectionToModel]);
 
   // Get active thread data
   const activeAIMessages = activeThreadId
@@ -404,12 +422,20 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
   const handleSend = useCallback(
     async (text: string) => {
       try {
+        const selection = configSelection;
+        if (!selection.provider || !selection.modelId) {
+          openPopover('providers');
+          return;
+        }
+
         await sendMessage(text, undefined, {
           modelSelection: {
-            provider: configSelection.provider,
-            modelId: configSelection.modelId,
-            thinking: configSelection.thinking,
-            effort: configSelection.effort,
+            provider: selection.provider,
+            modelId: selection.modelId,
+            thinking: selection.thinking,
+            effort: selection.effort,
+            fastMode: selection.fastMode,
+            contextWindow: selection.contextWindow,
           },
           interactionMode,
           accessLevel,
@@ -418,7 +444,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
         console.error('[AI] Send error:', err);
       }
     },
-    [sendMessage, configSelection, interactionMode, accessLevel],
+    [sendMessage, configSelection, interactionMode, accessLevel, providers, openPopover, syncSelectionToModel],
   );
 
   // Handle interrupt
@@ -505,9 +531,11 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
       {activeAIMessages.length === 0 ? (
         <View style={styles.emptyChat}>
           <Sparkles size={40} color={colors.accent.subtle} />
-          <Text style={styles.emptyChatTitle}>Start a conversation</Text>
+          <Text style={styles.emptyChatTitle}>
+            {worktreePath ? worktreePath.split('/').filter(Boolean).pop() : 'New AI tab'}
+          </Text>
           <Text style={styles.emptyChatSubtitle}>
-            Ask the AI to help with coding, debugging, or anything else
+            Pick a provider below, then send the first message to lock this tab to that provider.
           </Text>
         </View>
       ) : (
@@ -529,8 +557,11 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
         onSend={handleSend}
         onInterrupt={handleInterrupt}
         onProviderPress={() => openPopover(providerLocked ? 'models' : 'providers')}
-        onModelPress={() => openPopover('models')}
-        onEffortPress={() => openPopover('effort')}
+        onModelPress={() => openPopover(configSelection.provider ? 'models' : 'providers')}
+        onEffortPress={modelCapabilities?.reasoningEffortLevels.length ? () => openPopover('effort') : undefined}
+        onThinkingPress={modelCapabilities?.supportsThinkingToggle ? () => openPopover('thinking') : undefined}
+        onFastModePress={modelCapabilities?.supportsFastMode ? () => openPopover('fastMode') : undefined}
+        onContextWindowPress={modelCapabilities?.contextWindowOptions.length ? () => openPopover('contextWindow') : undefined}
         onModePress={() => setInteractionMode((m) => m === 'default' ? 'plan' : 'default')}
         onAccessPress={() => openPopover('access')}
         isWorking={isWorking}
@@ -538,6 +569,17 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
         mode={interactionMode}
         accessLevel={accessLevel}
         effort={configSelection.effort}
+        thinkingEnabled={configSelection.thinking}
+        showThinkingToggle={Boolean(modelCapabilities?.supportsThinkingToggle)}
+        fastMode={Boolean(configSelection.fastMode)}
+        showFastModeToggle={Boolean(modelCapabilities?.supportsFastMode)}
+        contextWindowLabel={
+          modelCapabilities?.contextWindowOptions.length
+            ? modelCapabilities.contextWindowOptions.find((option) => option.value === configSelection.contextWindow)?.label
+              ?? modelCapabilities.contextWindowOptions.find((option) => option.isDefault)?.label
+              ?? null
+            : null
+        }
       />
 
       {/* Contextual popover */}
@@ -547,9 +589,11 @@ function AIPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
         onClose={() => setPopoverVisible(false)}
         providers={providers as ProviderInfo[]}
         selection={configSelection}
+        providerLocked={providerLocked}
         onSelect={(s) => {
-          setConfigSelection(s);
-          setProviderLocked(true);
+          const provider = (providers as ProviderInfo[]).find((item) => item.provider === s.provider);
+          const model = provider?.models.find((item) => item.id === s.modelId);
+          setConfigSelection(model ? syncSelectionToModel(s, model) : s);
         }}
         mode={interactionMode}
         onModeChange={setInteractionMode}

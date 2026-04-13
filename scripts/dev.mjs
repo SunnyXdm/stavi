@@ -1,31 +1,10 @@
 #!/usr/bin/env node
 
-// ============================================================
-// Stavi — Dev Environment Orchestrator
-// ============================================================
-// Starts the Stavi server (server-core), writes dev-config.ts
-// for the mobile app, and launches Metro.
-//
-// Usage:
-//   yarn dev                   Start everything
-//   yarn dev --no-metro        Server only (you start Metro yourself)
-//   yarn dev [project-dir]     Use a specific project directory
-//
-// Environment variables:
-//   STAVI_PORT          Override default port (3773)
-//   STAVI_SHELL         Shell for terminal sessions (default: /bin/zsh or /bin/sh)
-
-import { $ } from 'zx';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import net from 'node:net';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
 import path from 'node:path';
-
-$.verbose = false;
-
-// ----------------------------------------------------------
-// Paths
-// ----------------------------------------------------------
+import net from 'node:net';
+import { spawnSync, spawn } from 'node:child_process';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const mobileRoot = path.join(repoRoot, 'apps', 'mobile');
@@ -33,19 +12,11 @@ const cliRoot = path.join(repoRoot, 'apps', 'cli');
 const devConfigPath = path.join(mobileRoot, 'src', 'generated', 'dev-config.ts');
 const staviHome = path.join(homedir(), '.stavi');
 
-// ----------------------------------------------------------
-// CLI flags
-// ----------------------------------------------------------
-
 const args = process.argv.slice(2);
-const flags = new Set(args.filter((a) => a.startsWith('--')));
-const positional = args.filter((a) => !a.startsWith('--'));
+const flags = new Set(args.filter((arg) => arg.startsWith('--')));
+const positional = args.filter((arg) => !arg.startsWith('--'));
 const shouldStartMetro = !flags.has('--no-metro');
 const projectRoot = positional[0] ? path.resolve(positional[0]) : repoRoot;
-
-// ----------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------
 
 function getLocalIp() {
   const nets = networkInterfaces();
@@ -69,10 +40,46 @@ function canListen(port) {
 }
 
 async function findPort(start = 3773) {
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 20; i += 1) {
     if (await canListen(start + i)) return start + i;
   }
   throw new Error(`No open port found starting at ${start}`);
+}
+
+function issueToken() {
+  const result = spawnSync(
+    'bun',
+    ['run', path.join(cliRoot, 'src', 'index.ts'), 'token'],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+
+  if (result.status !== 0) {
+    throw new Error(result.stderr || 'Failed to issue Stavi token');
+  }
+
+  return result.stdout.trim();
+}
+
+function readToken() {
+  const credPath = path.join(staviHome, 'userdata', 'credentials.json');
+  if (!existsSync(credPath)) {
+    return issueToken();
+  }
+
+  try {
+    const creds = JSON.parse(readFileSync(credPath, 'utf8'));
+    if (typeof creds.bearerToken === 'string' && creds.bearerToken.length > 0) {
+      return creds.bearerToken;
+    }
+  } catch {
+    return issueToken();
+  }
+
+  return issueToken();
 }
 
 function writeDevConfig({ address, port, token }) {
@@ -106,99 +113,55 @@ function printBanner({ address, port, token }) {
   console.log(`  Address:  \x1b[1m${address}:${port}\x1b[0m`);
   console.log(`  Token:    \x1b[36m${token}\x1b[0m`);
   console.log(`  Project:  \x1b[1m${projectRoot}\x1b[0m`);
+  console.log(`  Turbo:    \x1b[1mserver${shouldStartMetro ? ' + metro' : ''}\x1b[0m`);
   console.log('');
-  console.log('  \x1b[2mMobile app:  Enter the address + token, or use "Connect to This Machine"\x1b[0m');
-  console.log('  \x1b[2mAndroid:     npx react-native run-android  (from apps/mobile)\x1b[0m');
-  console.log('  \x1b[2miOS:         npx react-native run-ios      (from apps/mobile)\x1b[0m');
-  console.log('  \x1b[2mPress Ctrl+C to stop.\x1b[0m');
+  console.log('  \x1b[2mServer hot reload runs through Bun watch.\x1b[0m');
+  console.log('  \x1b[2mMetro runs through the mobile package dev task.\x1b[0m');
   console.log('');
 }
-
-// ----------------------------------------------------------
-// Main
-// ----------------------------------------------------------
 
 async function main() {
   mkdirSync(path.join(staviHome, 'userdata'), { recursive: true });
 
-  const port = Number(process.env.STAVI_PORT) || (await findPort());
   const address = getLocalIp();
+  const port = Number(process.env.STAVI_PORT) || (await findPort());
+  const token = readToken();
 
-  console.log('\x1b[2m  Starting Stavi server...\x1b[0m');
-
-  // Start the server using the CLI entry point (which uses server-core)
-  const server = $`bun run ${path.join(cliRoot, 'src', 'index.ts')} serve --port ${port} --host 0.0.0.0 ${projectRoot}`;
-
-  // Wait for the server to be ready by polling the health endpoint
-  let ready = false;
-  const startedAt = Date.now();
-  while (!ready && Date.now() - startedAt < 30_000) {
-    try {
-      const resp = await fetch(`http://127.0.0.1:${port}/health`);
-      if (resp.ok) {
-        ready = true;
-        break;
-      }
-    } catch {
-      // Server not up yet
-    }
-    await new Promise((r) => setTimeout(r, 300));
-  }
-
-  if (!ready) {
-    console.error('\x1b[31m  Server failed to start within 30 seconds.\x1b[0m');
-    process.exit(1);
-  }
-
-  // Read the bearer token from the credentials file
-  const credPath = path.join(staviHome, 'userdata', 'credentials.json');
-  let token = '';
-  if (existsSync(credPath)) {
-    try {
-      const creds = JSON.parse(await $`cat ${credPath}`.then((r) => r.stdout));
-      token = creds.bearerToken;
-    } catch {
-      // Fall through
-    }
-  }
-
-  if (!token) {
-    // Issue a token via CLI
-    const result = await $`bun run ${path.join(cliRoot, 'src', 'index.ts')} token`;
-    token = result.stdout.trim();
-  }
-
-  // Write dev config for mobile app
   writeDevConfig({ address, port, token });
-
-  // Print the banner
   printBanner({ address, port, token });
 
-  // Start Metro if requested
-  let metro;
+  const turboArgs = ['turbo', 'dev', '--filter=stavi'];
   if (shouldStartMetro) {
-    console.log('  \x1b[2mStarting Metro bundler...\x1b[0m');
-    metro = $({ cwd: mobileRoot })`npx react-native start --host 0.0.0.0`;
-    metro.catch((err) => {
-      console.error('\x1b[31m  Metro failed to start:\x1b[0m', err.stderr || err.message || err);
-      console.error('  \x1b[2mTry: cd apps/mobile && yarn install && npx react-native start\x1b[0m');
-    });
+    turboArgs.push('--filter=@stavi/mobile');
   }
 
-  // Cleanup on exit
-  const cleanup = () => {
-    server.kill();
-    metro?.kill();
-    process.exit(0);
-  };
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
+  const child = spawn(process.platform === 'win32' ? 'yarn.cmd' : 'yarn', turboArgs, {
+    cwd: repoRoot,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      STAVI_PORT: String(port),
+      STAVI_HOST: '0.0.0.0',
+      STAVI_PROJECT_ROOT: projectRoot,
+    },
+  });
 
-  // Keep alive
-  await new Promise(() => {});
+  const shutdown = (code = 0) => {
+    if (!child.killed) {
+      child.kill('SIGTERM');
+    }
+    process.exit(code);
+  };
+
+  process.on('SIGINT', () => shutdown(0));
+  process.on('SIGTERM', () => shutdown(0));
+
+  child.on('exit', (code) => {
+    process.exit(code ?? 0);
+  });
 }
 
-main().catch((err) => {
-  console.error(err.message || err);
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

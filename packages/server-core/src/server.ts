@@ -79,6 +79,7 @@ interface OrchestrationThread {
   interactionMode: 'default' | 'plan';
   branch: string;
   worktreePath: string | null;
+  modelSelection?: ModelSelection;
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -397,7 +398,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
   let lastGitStatusJson = '';
   let sequence = 0;
 
-  const defaultThread: OrchestrationThread = {
+  const defaultThreadTemplate: OrchestrationThread = {
     threadId: 'thread-local',
     projectId: 'project-local',
     title: 'Local Assistant',
@@ -409,8 +410,8 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
     createdAt: nowIso(),
     updatedAt: nowIso(),
   };
-  const threads = new Map<string, OrchestrationThread>([[defaultThread.threadId, defaultThread]]);
-  const messages = new Map<string, OrchestrationMessage[]>([[defaultThread.threadId, []]]);
+  const threads = new Map<string, OrchestrationThread>();
+  const messages = new Map<string, OrchestrationMessage[]>();
 
   // Provider registry — manages AI providers (Claude, Codex)
   const providerRegistry = new ProviderRegistry(baseDir);
@@ -463,6 +464,59 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
     for (const sub of orchestrationSubscriptions.values()) {
       sendJson(sub.ws, makeChunk(sub.requestId, [payload]));
     }
+  };
+
+  const resolveThreadWorktreePath = (value: unknown) => {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      return workspaceRoot;
+    }
+    return resolveWorkspacePath(workspaceRoot, value);
+  };
+
+  const buildThreadFromCommand = (
+    threadId: string,
+    command: Record<string, unknown>,
+    existing?: OrchestrationThread,
+  ): OrchestrationThread => {
+    const createdAt =
+      existing?.createdAt ??
+      (typeof command.createdAt === 'string' && command.createdAt.length > 0
+        ? command.createdAt
+        : nowIso());
+    const rawModelSelection = command.modelSelection as ModelSelection | undefined;
+
+    return {
+      ...(existing ?? defaultThreadTemplate),
+      threadId,
+      projectId:
+        typeof command.projectId === 'string' && command.projectId.length > 0
+          ? command.projectId
+          : existing?.projectId ?? 'project-local',
+      title:
+        typeof command.title === 'string' && command.title.trim().length > 0
+          ? command.title
+          : existing?.title ?? 'Conversation',
+      runtimeMode:
+        (command.runtimeMode as OrchestrationThread['runtimeMode'] | undefined) ??
+        existing?.runtimeMode ??
+        defaultThreadTemplate.runtimeMode,
+      interactionMode:
+        (command.interactionMode as OrchestrationThread['interactionMode'] | undefined) ??
+        existing?.interactionMode ??
+        defaultThreadTemplate.interactionMode,
+      branch:
+        typeof command.branch === 'string'
+          ? command.branch
+          : existing?.branch ?? '',
+      worktreePath:
+        'worktreePath' in command
+          ? resolveThreadWorktreePath(command.worktreePath)
+          : existing?.worktreePath ?? workspaceRoot,
+      modelSelection: rawModelSelection ?? existing?.modelSelection,
+      archived: existing?.archived ?? false,
+      createdAt,
+      updatedAt: nowIso(),
+    };
   };
 
   const addConnectionSubscription = (ws: WebSocket, requestId: string) => {
@@ -1007,24 +1061,16 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
           case 'orchestration.dispatchCommand': {
             const command = payload.command as Record<string, unknown>;
             const type = String(command?.type ?? '');
-            const threadId = String(command?.threadId || defaultThread.threadId);
-            const thread = threads.get(threadId) ?? {
-              ...defaultThread,
-              threadId,
-              title: 'Conversation',
-              runtimeMode:
-                (command.runtimeMode as OrchestrationThread['runtimeMode'] | undefined) ??
-                defaultThread.runtimeMode,
-              interactionMode:
-                (command.interactionMode as OrchestrationThread['interactionMode'] | undefined) ??
-                defaultThread.interactionMode,
-              createdAt: nowIso(),
-              updatedAt: nowIso(),
-            };
-            threads.set(threadId, thread);
-            if (!messages.has(threadId)) messages.set(threadId, []);
+            const threadId = String(command?.threadId || '');
 
             if (type === 'thread.create') {
+              if (!threadId) {
+                sendJson(ws, makeFailure(id, 'threadId is required'));
+                break;
+              }
+              const thread = buildThreadFromCommand(threadId, command);
+              threads.set(threadId, thread);
+              if (!messages.has(threadId)) messages.set(threadId, []);
               broadcastOrchestrationEvent({
                 type: 'thread.created',
                 occurredAt: nowIso(),
@@ -1035,6 +1081,13 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
             }
 
             if (type === 'thread.turn.start') {
+              if (!threadId) {
+                sendJson(ws, makeFailure(id, 'threadId is required'));
+                break;
+              }
+              const thread = buildThreadFromCommand(threadId, command, threads.get(threadId));
+              threads.set(threadId, thread);
+              if (!messages.has(threadId)) messages.set(threadId, []);
               const msg = command.message as Record<string, unknown>;
               const userMessage: OrchestrationMessage = {
                 messageId: String(msg.messageId ?? `msg-${Date.now()}`),
@@ -1089,9 +1142,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
 
               if (adapter && adapter.isReady()) {
                 // Track which adapter is running this turn
-                if (providerKind) {
-                  activeTurnAdapters.set(threadId, providerKind);
-                }
+                activeTurnAdapters.set(threadId, providerKind ?? adapter.provider);
                 // Real AI provider streaming
                 (async () => {
                   try {
@@ -1102,6 +1153,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
                       cwd: thread.worktreePath ?? workspaceRoot,
                       modelSelection,
                       interactionMode: command.interactionMode as 'default' | 'plan' | undefined,
+                      runtimeMode: thread.runtimeMode,
                     });
 
                     for await (const event of stream) {
@@ -1151,6 +1203,22 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
                               turnId,
                               type: 'tool-use',
                               toolName: String(event.data.toolName ?? ''),
+                              toolId: String(event.data.toolId ?? ''),
+                              input: event.data.input,
+                              state: 'running',
+                            },
+                          });
+                          break;
+                        }
+
+                        case 'tool-use-delta': {
+                          broadcastOrchestrationEvent({
+                            type: 'thread.activity-appended',
+                            occurredAt: nowIso(),
+                            payload: {
+                              threadId,
+                              turnId,
+                              type: 'tool-use',
                               toolId: String(event.data.toolId ?? ''),
                               input: event.data.input,
                               state: 'running',
@@ -1287,6 +1355,10 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
             }
 
             if (type === 'thread.turn.interrupt') {
+              if (!threadId) {
+                sendJson(ws, makeFailure(id, 'threadId is required'));
+                break;
+              }
               const activeKind = activeTurnAdapters.get(threadId);
               const adapter = activeKind
                 ? providerRegistry.getAdapter(activeKind as any)
@@ -1297,8 +1369,18 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
             }
 
             if (type === 'thread.approval.respond') {
+              if (!threadId) {
+                sendJson(ws, makeFailure(id, 'threadId is required'));
+                break;
+              }
               const requestId = String(command.requestId ?? '');
-              const decision = String(command.decision ?? 'accept') as 'accept' | 'reject' | 'always-allow';
+              const rawDecision = String(command.decision ?? 'accept');
+              let decision: import('./providers/types').ApprovalDecision = 'accept';
+              if (rawDecision === 'acceptForSession' || rawDecision === 'always-allow') {
+                decision = 'always-allow';
+              } else if (rawDecision === 'decline' || rawDecision === 'reject') {
+                decision = 'reject';
+              }
               const providerKind = (command.provider as string | undefined)
                 ?? activeTurnAdapters.get(threadId);
               const adapter = providerKind

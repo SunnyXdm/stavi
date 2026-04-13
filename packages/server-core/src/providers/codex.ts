@@ -13,6 +13,7 @@ import type {
   ProviderEvent,
   SendTurnInput,
   ApprovalDecision,
+  ModelCapabilities,
 } from './types';
 import {
   textDelta,
@@ -32,19 +33,99 @@ const execFileAsync = promisify(execFile);
 // Constants
 // ----------------------------------------------------------
 
+const CODEX_DEFAULT_CAPABILITIES: ModelCapabilities = {
+  reasoningEffortLevels: [
+    { value: 'xhigh', label: 'Extra High' },
+    { value: 'high', label: 'High', isDefault: true },
+    { value: 'medium', label: 'Medium' },
+    { value: 'low', label: 'Low' },
+  ],
+  supportsFastMode: true,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
+};
+
 const DEFAULT_CODEX_MODELS: ModelInfo[] = [
   {
-    id: 'codex-mini-latest',
-    name: 'Codex Mini',
+    id: 'gpt-5.4',
+    name: 'GPT-5.4',
     provider: 'codex',
     supportsThinking: false,
     maxTokens: 16384,
     contextWindow: 200000,
     isDefault: true,
+    capabilities: CODEX_DEFAULT_CAPABILITIES,
+  },
+  {
+    id: 'gpt-5.4-mini',
+    name: 'GPT-5.4 Mini',
+    provider: 'codex',
+    supportsThinking: false,
+    maxTokens: 16384,
+    contextWindow: 200000,
+    capabilities: CODEX_DEFAULT_CAPABILITIES,
+  },
+  {
+    id: 'gpt-5.3-codex',
+    name: 'GPT-5.3 Codex',
+    provider: 'codex',
+    supportsThinking: false,
+    maxTokens: 16384,
+    contextWindow: 200000,
+    capabilities: CODEX_DEFAULT_CAPABILITIES,
+  },
+  {
+    id: 'gpt-5.2-codex',
+    name: 'GPT-5.2 Codex',
+    provider: 'codex',
+    supportsThinking: false,
+    maxTokens: 16384,
+    contextWindow: 200000,
+    capabilities: CODEX_DEFAULT_CAPABILITIES,
+  },
+  {
+    id: 'gpt-5.2',
+    name: 'GPT-5.2',
+    provider: 'codex',
+    supportsThinking: false,
+    maxTokens: 16384,
+    contextWindow: 200000,
+    capabilities: CODEX_DEFAULT_CAPABILITIES,
   },
 ];
 
 const REQUEST_TIMEOUT_MS = 20_000;
+
+function mapCodexRuntimeMode(runtimeMode: SendTurnInput['runtimeMode']): {
+  approvalPolicy: 'untrusted' | 'on-request' | 'never';
+  sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
+} {
+  switch (runtimeMode) {
+    case 'auto-accept-edits':
+      return {
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write',
+      };
+    case 'full-access':
+      return {
+        approvalPolicy: 'never',
+        sandbox: 'danger-full-access',
+      };
+    case 'approval-required':
+    default:
+      return {
+        approvalPolicy: 'untrusted',
+        sandbox: 'read-only',
+      };
+  }
+}
+
+function normalizeApprovalDecision(decision: ApprovalDecision): 'accept' | 'reject' | 'always-allow' {
+  if (decision === 'acceptForSession') return 'always-allow';
+  if (decision === 'decline') return 'reject';
+  return decision;
+}
 
 // ----------------------------------------------------------
 // JSON-RPC types
@@ -222,17 +303,19 @@ export class CodexAdapter implements ProviderAdapter {
       try {
         const modelsResult = await this.sendRequest(session, 'model/list', {});
         if (Array.isArray(modelsResult)) {
-          this.dynamicModels = (modelsResult as any[]).map((m) => ({
-            id: m.id ?? m.model ?? 'unknown',
-            name: m.name ?? m.id ?? 'Unknown',
-            provider: 'codex' as const,
-            supportsThinking: false,
-            maxTokens: m.maxTokens ?? 16384,
-            contextWindow: m.contextWindow ?? 200000,
-          }));
-          // Mark first as default
-          if (this.dynamicModels.length > 0) {
-            this.dynamicModels[0].isDefault = true;
+          const discovered = (modelsResult as any[])
+            .map((m) => ({
+              id: m.id ?? m.model ?? 'unknown',
+              name: m.name ?? m.id ?? 'Unknown',
+            }))
+            .filter((model) => DEFAULT_CODEX_MODELS.some((candidate) => candidate.id === model.id));
+          if (discovered.length > 0) {
+            this.dynamicModels = DEFAULT_CODEX_MODELS
+              .filter((candidate) => discovered.some((model) => model.id === candidate.id))
+              .map((candidate, index) => ({
+                ...candidate,
+                isDefault: index === 0,
+              }));
           }
         }
       } catch {
@@ -269,12 +352,13 @@ export class CodexAdapter implements ProviderAdapter {
     session.eventBuffer = [];
 
     try {
+      const runtimeMode = mapCodexRuntimeMode(input.runtimeMode);
       // Start or resume thread
       if (!session.providerThreadId) {
         const result = await this.sendRequest(session, 'thread/start', {
           model: modelId,
-          approvalPolicy: 'untrusted',
-          sandbox: 'read-only',
+          approvalPolicy: runtimeMode.approvalPolicy,
+          sandbox: runtimeMode.sandbox,
           cwd: session.cwd,
         });
         session.providerThreadId = (result as any)?.thread?.id ?? null;
@@ -286,6 +370,7 @@ export class CodexAdapter implements ProviderAdapter {
         input: [{ type: 'text', text: input.text }],
         model: modelId,
         effort,
+        ...(input.modelSelection?.fastMode ? { serviceTier: 'fast' } : {}),
       });
       session.activeTurnId = (turnResult as any)?.turn?.id ?? `turn-${Date.now()}`;
 
@@ -357,9 +442,10 @@ export class CodexAdapter implements ProviderAdapter {
     if (!pending) return;
 
     // Map our decision to Codex's format
-    const codexDecision = decision === 'always-allow'
+    const normalizedDecision = normalizeApprovalDecision(decision);
+    const codexDecision = normalizedDecision === 'always-allow'
       ? 'acceptForSession'
-      : decision === 'accept'
+      : normalizedDecision === 'accept'
         ? 'accept'
         : 'decline';
 
