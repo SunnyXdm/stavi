@@ -26,16 +26,14 @@ import {
   ChevronDown,
   ChevronRight,
   Layers,
-  Plus,
 } from 'lucide-react-native';
-import type { PluginDefinition, PluginPanelProps } from '@stavi/shared';
+import type { WorkspacePluginDefinition, WorkspacePluginPanelProps } from '@stavi/shared';
 import type { AIPluginAPI } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
 import { useConnectionStore } from '../../../stores/connection';
 import { usePluginRegistry } from '../../../stores/plugin-registry';
 import { useSessionRegistry } from '../../../stores/session-registry';
-import { staviClient } from '../../../stores/stavi-client';
 import {
   useOrchestration,
   type ApprovalRequest,
@@ -245,10 +243,16 @@ const thinkingStyles = StyleSheet.create({
 // Panel Component
 // ----------------------------------------------------------
 
-function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, onRequestNewSession }: PluginPanelProps) {
-  const connectionState = useConnectionStore((s) => s.state);
+function getClient(serverId?: string) {
+  const state = useConnectionStore.getState();
+  const resolvedServerId = serverId ?? state.savedConnections[0]?.id;
+  return resolvedServerId ? state.getClientForServer(resolvedServerId) : undefined;
+}
+
+function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session }: WorkspacePluginPanelProps) {
+  const connectionState = useConnectionStore((s) => s.getStatusForServer(session.serverId));
   const listRef = useRef<any>(null);
-  const worktreePath = (initialState?.directory as string | undefined) ?? null;
+  const worktreePath = (initialState?.directory as string | undefined) ?? session.folder;
 
   const {
     threads,
@@ -261,7 +265,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, onReques
     interruptTurn,
     respondToApproval,
     setActiveThread,
-  } = useOrchestration({ instanceId, worktreePath });
+  } = useOrchestration({ instanceId, worktreePath, serverId: session.serverId });
 
   // Register AI threads with SessionRegistry so DrawerContent can show them
   const registerSessions = useSessionRegistry((s) => s.register);
@@ -277,12 +281,10 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, onReques
       onSelectSession: (sessionId) => {
         setActiveThread(sessionId);
       },
-      onCreateSession: () => {
-        onRequestNewSession?.();
-      },
+      onCreateSession: () => {},
       createLabel: 'New AI Session',
     });
-  }, [threads, activeThreadId, registerSessions, onRequestNewSession, setActiveThread]);
+  }, [threads, activeThreadId, registerSessions, setActiveThread]);
 
   const [popoverSection, setPopoverSection] = useState<PopoverSection>('providers');
   const [popoverVisible, setPopoverVisible] = useState(false);
@@ -379,11 +381,14 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, onReques
   // Update tab title to show provider name (Claude / Codex)
   const setTabTitle = useCallback((title: string) => {
     usePluginRegistry.setState((s) => ({
-      openTabs: s.openTabs.map((t) =>
-        t.id === instanceId ? { ...t, title } : t,
-      ),
+      openTabsBySession: {
+        ...s.openTabsBySession,
+        [session.id]: (s.openTabsBySession[session.id] ?? []).map((tab) =>
+          tab.id === instanceId ? { ...tab, title } : tab,
+        ),
+      },
     }));
-  }, [instanceId]);
+  }, [instanceId, session.id]);
 
   useEffect(() => {
     if (!configSelection.provider) return;
@@ -595,13 +600,6 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, onReques
             <Text style={styles.emptyChatSubtitle}>
               Start a new session in a project directory.
             </Text>
-            <Pressable
-              style={styles.newSessionButton}
-              onPress={onRequestNewSession}
-            >
-              <Plus size={16} color={colors.fg.onAccent} />
-              <Text style={styles.newSessionButtonText}>New AI Session</Text>
-            </Pressable>
           </View>
         )
       ) : (
@@ -679,7 +677,7 @@ function aiApi(): AIPluginAPI {
     sendMessage: async (text, threadId) => {
       const messageId = `msg-${Date.now()}`;
       const commandId = `cmd-${Date.now()}`;
-      const config = await staviClient.request<any>('server.getConfig', {});
+      const config = await getClient()?.request<any>('server.getConfig', {});
       const providers = Array.isArray(config?.providers) ? config.providers : [];
       const selectedProvider = providers.find((provider: any) => provider?.authenticated && provider?.installed)
         ?? providers.find((provider: any) => provider?.installed)
@@ -689,7 +687,7 @@ function aiApi(): AIPluginAPI {
           ?? selectedProvider.models[0]
         : null;
 
-      await staviClient.request('orchestration.dispatchCommand', {
+      await getClient()?.request('orchestration.dispatchCommand', {
         command: {
           type: 'thread.turn.start',
           commandId,
@@ -717,7 +715,7 @@ function aiApi(): AIPluginAPI {
     },
 
     interruptTurn: async (threadId) => {
-      await staviClient.request('orchestration.dispatchCommand', {
+      await getClient()?.request('orchestration.dispatchCommand', {
         command: {
           type: 'thread.turn.interrupt',
           commandId: `cmd-${Date.now()}`,
@@ -728,7 +726,7 @@ function aiApi(): AIPluginAPI {
     },
 
     respondToApproval: async (threadId, requestId, decision) => {
-      await staviClient.request('orchestration.dispatchCommand', {
+      await getClient()?.request('orchestration.dispatchCommand', {
         command: {
           type: 'thread.approval.respond',
           commandId: `cmd-${Date.now()}`,
@@ -741,11 +739,11 @@ function aiApi(): AIPluginAPI {
     },
 
     listThreads: async () => {
-      const snapshot = await staviClient.request<{ threads: any[] }>(
+      const snapshot = await getClient()?.request<{ threads: any[] }>(
         'orchestration.getSnapshot',
         {},
       );
-      return (snapshot.threads || []).map((t: any) => ({
+      return (snapshot?.threads || []).map((t: any) => ({
         id: t.threadId || t.id,
         title: t.title,
       }));
@@ -757,10 +755,11 @@ function aiApi(): AIPluginAPI {
 // Plugin Definition
 // ----------------------------------------------------------
 
-export const aiPlugin: PluginDefinition<AIPluginAPI> = {
+export const aiPlugin: WorkspacePluginDefinition = {
   id: 'ai',
   name: 'AI',
   description: 'Claude & Codex AI coding agents',
+  scope: 'workspace',
   kind: 'core',
   icon: Sparkles,
   component: AIPanel,
@@ -815,22 +814,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: typography.fontSize.base * typography.lineHeight.normal,
   },
-  newSessionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    backgroundColor: colors.accent.primary,
-    paddingHorizontal: spacing[5],
-    paddingVertical: spacing[3],
-    borderRadius: radii.lg,
-    marginTop: spacing[2],
-  },
-  newSessionButtonText: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.onAccent,
-  },
-
   // Message list
   messageList: {
     paddingTop: spacing[4],

@@ -3,18 +3,16 @@
 // ============================================================
 
 import { useCallback } from 'react';
-import { staviClient } from '../../../../stores/stavi-client';
 import { useConnectionStore } from '../../../../stores/connection';
 import { useAiBindingsStore } from '../../../../stores/ai-bindings-store';
 import type { OrchestrationState, Thread } from '../useOrchestration';
 
-// Phase 0: serverId comes from the active connection; sessionId is 'local' until Phase 3
-// introduces real Session IDs.
-function getServerId(): string {
-  return useConnectionStore.getState().activeConnection?.id ?? 'local';
+function getOrchestrationClient(serverId: string) {
+  return useConnectionStore.getState().getClientForServer(serverId);
 }
 
 interface ActionDeps {
+  serverId: string;
   setState: React.Dispatch<React.SetStateAction<OrchestrationState>>;
   activeThreadIdRef: React.MutableRefObject<string | null>;
   instanceId: string | undefined;
@@ -23,6 +21,7 @@ interface ActionDeps {
 }
 
 export function useOrchestrationActions({
+  serverId,
   setState,
   activeThreadIdRef,
   instanceId,
@@ -86,7 +85,7 @@ export function useOrchestrationActions({
         return { ...prev, messages: updated, aiMessages: updatedAI, threads: updatedThreads };
       });
 
-      await staviClient.request('orchestration.dispatchCommand', {
+      await getOrchestrationClient(serverId)?.request('orchestration.dispatchCommand', {
         command: {
           type: 'thread.turn.start',
           commandId,
@@ -101,13 +100,13 @@ export function useOrchestrationActions({
 
       return { threadId: tid, turnId: commandId };
     },
-    [ensureActiveThread, resolveThreadModelSelection, setState],
+    [ensureActiveThread, resolveThreadModelSelection, serverId, setState],
   );
 
   const interruptTurn = useCallback(async (threadId?: string) => {
     const tid = threadId || activeThreadIdRef.current;
     if (!tid) return;
-    await staviClient.request('orchestration.dispatchCommand', {
+    await getOrchestrationClient(serverId)?.request('orchestration.dispatchCommand', {
       command: {
         type: 'thread.turn.interrupt',
         commandId: `cmd-${Date.now()}`,
@@ -115,7 +114,7 @@ export function useOrchestrationActions({
         createdAt: new Date().toISOString(),
       },
     });
-  }, [activeThreadIdRef]);
+  }, [activeThreadIdRef, serverId]);
 
   const respondToApproval = useCallback(
     async (threadId: string, requestId: string, decision: 'accept' | 'reject' | 'always-allow') => {
@@ -125,7 +124,7 @@ export function useOrchestrationActions({
         updated.set(threadId, existing.map((a) => a.requestId === requestId ? { ...a, pending: false } : a));
         return { ...prev, approvals: updated };
       });
-      await staviClient.request('orchestration.dispatchCommand', {
+      await getOrchestrationClient(serverId)?.request('orchestration.dispatchCommand', {
         command: {
           type: 'thread.approval.respond',
           commandId: `cmd-${Date.now()}`,
@@ -136,12 +135,11 @@ export function useOrchestrationActions({
         },
       });
     },
-    [setState],
+    [serverId, setState],
   );
 
   const setActiveThread = useCallback((threadId: string) => {
     if (instanceId) {
-      const serverId = getServerId();
       useAiBindingsStore.getState().bind(
         { serverId, sessionId: 'local', instanceId },
         threadId,
@@ -152,20 +150,20 @@ export function useOrchestrationActions({
   }, [instanceId, activeThreadIdRef, setState]);
 
   const updateSettings = useCallback(async (settings: Record<string, unknown>) => {
-    const result = await staviClient.request<{ providers?: any[] }>('server.updateSettings', settings);
+    const result = await getOrchestrationClient(serverId)?.request<{ providers?: any[] }>('server.updateSettings', settings);
     if (result?.providers) {
       setState((prev) => ({ ...prev, providers: result.providers! }));
     }
-  }, [setState]);
+  }, [serverId, setState]);
 
   const refreshProviders = useCallback(async () => {
     try {
-      const result = await staviClient.request<{ providers?: any[] }>('server.refreshProviders', {});
+      const result = await getOrchestrationClient(serverId)?.request<{ providers?: any[] }>('server.refreshProviders', {});
       if (result?.providers) {
         setState((prev) => ({ ...prev, providers: result.providers! }));
       }
     } catch { /* ignore */ }
-  }, [setState]);
+  }, [serverId, setState]);
 
   return { sendMessage, interruptTurn, respondToApproval, setActiveThread, updateSettings, refreshProviders };
 }

@@ -17,10 +17,9 @@ import {
   Keyboard,
 } from 'react-native';
 import { Search, FileCode, AlertCircle } from 'lucide-react-native';
-import type { PluginDefinition, PluginPanelProps } from '@stavi/shared';
+import type { WorkspacePluginDefinition, WorkspacePluginPanelProps } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
 import { useConnectionStore } from '../../../stores/connection';
-import { staviClient } from '../../../stores/stavi-client';
 import { gPI } from '../../../services/gpi';
 
 // ----------------------------------------------------------
@@ -37,8 +36,14 @@ interface SearchMatch {
 // Panel Component
 // ----------------------------------------------------------
 
-function SearchPanel({ instanceId, isActive }: PluginPanelProps) {
-  const connectionState = useConnectionStore((s) => s.state);
+function SearchPanel({ session }: WorkspacePluginPanelProps) {
+  const serverId = session.serverId;
+  const connectionState = serverId
+    ? useConnectionStore.getState().getStatusForServer(serverId)
+    : 'disconnected';
+  const client = serverId
+    ? useConnectionStore.getState().getClientForServer(serverId)
+    : undefined;
   const [query, setQuery] = useState('');
   const [matches, setMatches] = useState<SearchMatch[]>([]);
   const [loading, setLoading] = useState(false);
@@ -48,7 +53,7 @@ function SearchPanel({ instanceId, isActive }: PluginPanelProps) {
 
   const runSearch = useCallback(async () => {
     const q = query.trim();
-    if (!q || staviClient.getState() !== 'connected') return;
+    if (!q || !client || client.getState() !== 'connected') return;
 
     Keyboard.dismiss();
     setLoading(true);
@@ -56,7 +61,7 @@ function SearchPanel({ instanceId, isActive }: PluginPanelProps) {
     setSearched(true);
 
     try {
-      const result = await staviClient.request<{ matches: SearchMatch[] }>('fs.grep', {
+      const result = await client.request<{ matches: SearchMatch[] }>('fs.grep', {
         pattern: q,
         limit: 200,
       });
@@ -67,7 +72,7 @@ function SearchPanel({ instanceId, isActive }: PluginPanelProps) {
     } finally {
       setLoading(false);
     }
-  }, [query]);
+  }, [client, query]);
 
   const handleTapMatch = useCallback(async (match: SearchMatch) => {
     try {
@@ -161,10 +166,11 @@ function SearchPanel({ instanceId, isActive }: PluginPanelProps) {
 // Plugin Definition
 // ----------------------------------------------------------
 
-export const workspaceSearchPlugin: PluginDefinition = {
+export const workspaceSearchPlugin: WorkspacePluginDefinition = {
   id: 'workspace-search',
   name: 'Search',
   description: 'Search across all project files',
+  scope: 'workspace',
   kind: 'extra',
   icon: Search,
   component: SearchPanel,

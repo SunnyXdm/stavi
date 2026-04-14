@@ -1,11 +1,9 @@
-// ============================================================
-// Plugin Registry — Zustand store for plugin lifecycle
-// ============================================================
-// Design decisions:
-// - Registry is reactive (Zustand, not a static Map that's read once)
-// - Bottom bar is a proper subscriber, no AsyncStorage polling hack
-// - allowMultipleInstances is respected (not a dead flag)
-// - Context value is memoized (no cascading re-renders)
+// WHAT: Plugin Registry — Zustand store for plugin lifecycle, now keyed per session.
+// WHY:  Phase 2 introduces per-session tab state so switching sessions restores the
+//       correct tab layout. Server-scoped plugins are rejected from the tab system.
+// HOW:  openTabsBySession / activeTabIdBySession keyed by sessionId.
+//       Version bumped to 3; old state is dropped (one-time tab reset).
+// SEE:  apps/mobile/src/navigation/WorkspaceScreen.tsx, packages/shared/src/plugin-types.ts
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
@@ -15,75 +13,16 @@ import type {
   PluginDefinition,
   PluginInstance,
   PluginStatus,
-  PluginPanelProps,
-  PluginAPI,
 } from '@stavi/shared';
-
-// ----------------------------------------------------------
-// Store State
-// ----------------------------------------------------------
-
-interface PluginRegistryState {
-  /** All registered plugin definitions, keyed by plugin ID */
-  definitions: Record<string, PluginDefinition>;
-
-  /** All registered plugin components (separate from definitions to avoid serialization issues) */
-  // NOTE: Components are stored in a module-level Map, not in Zustand state,
-  // because React components cannot be serialized by the persist middleware.
-
-  /** Open tab instances */
-  openTabs: PluginInstance[];
-
-  /** Currently active tab instance ID */
-  activeTabId: string | null;
-
-  /** Whether the plugin system is initialized */
-  isReady: boolean;
-}
-
-interface PluginRegistryActions {
-  /** Register a plugin definition (called at boot for core, on install for third-party) */
-  register(definition: PluginDefinition, component?: ComponentType<PluginPanelProps>): void;
-
-  /** Unregister a plugin (third-party uninstall) */
-  unregister(pluginId: string): void;
-
-  /** Open a plugin tab. Returns the instance ID. */
-  openTab(pluginId: string, initialState?: Record<string, unknown>): string;
-
-  /** Close a tab (only extra plugins, core tabs are uncloseable) */
-  closeTab(instanceId: string): void;
-
-  /** Switch to a tab */
-  setActiveTab(instanceId: string): void;
-
-  /** Update a plugin instance's status */
-  setPluginStatus(pluginId: string, status: PluginStatus, error?: string): void;
-
-  /** Initialize: ensure all core plugins have tabs */
-  initialize(): void;
-
-  /** Get the definition for a plugin ID */
-  getDefinition(pluginId: string): PluginDefinition | undefined;
-
-  /** Get all core plugin definitions, sorted by navOrder */
-  getCorePlugins(): PluginDefinition[];
-
-  /** Get all extra plugin definitions */
-  getExtraPlugins(): PluginDefinition[];
-
-  /** Can this tab be closed? (core = no, extra = yes) */
-  canCloseTab(instanceId: string): boolean;
-}
 
 // ----------------------------------------------------------
 // Component registry (module-level, not serialized)
 // ----------------------------------------------------------
 
-const componentRegistry = new Map<string, ComponentType<PluginPanelProps>>();
+const componentRegistry = new Map<string, ComponentType<any>>();
 
-export function getPluginComponent(pluginId: string): ComponentType<PluginPanelProps> | undefined {
-  return componentRegistry.get(pluginId);
+export function getPluginComponent(pluginId: string): ComponentType<any> | undefined {
+  return componentRegistry.get(pluginId) as ComponentType<any> | undefined;
 }
 
 // ----------------------------------------------------------
@@ -97,29 +36,61 @@ function createInstanceId(): string {
 }
 
 // ----------------------------------------------------------
+// Store State
+// ----------------------------------------------------------
+
+interface PluginRegistryState {
+  definitions: Record<string, PluginDefinition>;
+  openTabsBySession: Record<string, PluginInstance[]>;
+  activeTabIdBySession: Record<string, string | null>;
+  isReady: boolean;
+}
+
+interface PluginRegistryActions {
+  register(definition: PluginDefinition, component?: ComponentType<any>): void;
+  unregister(pluginId: string): void;
+
+  /** Open a tab for a workspace-scoped plugin in the given session. Returns instance id. */
+  openTab(pluginId: string, initialState?: Record<string, unknown>, sessionId?: string): string;
+
+  closeTab(instanceId: string, sessionId?: string): void;
+  setActiveTab(instanceId: string, sessionId?: string): void;
+  setPluginStatus(pluginId: string, status: PluginStatus, error?: string): void;
+
+  /** Ensure default workspace plugins have tabs for a given session. */
+  initialize(sessionId?: string): void;
+
+  getDefinition(pluginId: string): PluginDefinition | undefined;
+  getCorePlugins(): PluginDefinition[];
+  getExtraPlugins(): PluginDefinition[];
+  canCloseTab(instanceId: string, sessionId?: string): boolean;
+
+  // Per-session accessors
+  getOpenTabs(sessionId?: string): PluginInstance[];
+  getActiveTabId(sessionId?: string): string | null;
+}
+
+// ----------------------------------------------------------
 // Store
 // ----------------------------------------------------------
+
+const DEFAULT_SESSION = '__workspace__';
 
 export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActions>()(
   persist(
     (set, get) => ({
-      // --- State ---
       definitions: {},
-      openTabs: [],
-      activeTabId: null,
+      openTabsBySession: {},
+      activeTabIdBySession: {},
       isReady: false,
 
-      // --- Actions ---
-
       register: (definition, component) => {
-        if (component) {
-          componentRegistry.set(definition.id, component);
+        const comp = component ?? (definition as any).component;
+        if (comp) {
+          componentRegistry.set(definition.id, comp as ComponentType<any>);
         }
         set((state) => ({
-          definitions: {
-            ...state.definitions,
-            [definition.id]: definition,
-          },
+          definitions: { ...state.definitions, [definition.id]: definition },
         }));
       },
 
@@ -127,35 +98,50 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
         componentRegistry.delete(pluginId);
         set((state) => {
           const { [pluginId]: _, ...remaining } = state.definitions;
+          const nextBySession: Record<string, PluginInstance[]> = {};
+          const nextActiveById: Record<string, string | null> = {};
+          for (const [sid, tabs] of Object.entries(state.openTabsBySession)) {
+            const filtered = tabs.filter((t) => t.pluginId !== pluginId);
+            nextBySession[sid] = filtered;
+            const activeWasRemoved = state.activeTabIdBySession[sid] &&
+              tabs.find((t) => t.id === state.activeTabIdBySession[sid])?.pluginId === pluginId;
+            nextActiveById[sid] = activeWasRemoved
+              ? (filtered[filtered.length - 1]?.id ?? null)
+              : (state.activeTabIdBySession[sid] ?? null);
+          }
           return {
             definitions: remaining,
-            openTabs: state.openTabs.filter((t) => t.pluginId !== pluginId),
-            activeTabId:
-              state.openTabs.find((t) => t.id === state.activeTabId)?.pluginId === pluginId
-                ? state.openTabs.find((t) => t.pluginId !== pluginId)?.id ?? null
-                : state.activeTabId,
+            openTabsBySession: nextBySession,
+            activeTabIdBySession: nextActiveById,
           };
         });
       },
 
-      openTab: (pluginId, initialState) => {
+      openTab: (pluginId, initialState, sessionId = DEFAULT_SESSION) => {
         const state = get();
         const definition = state.definitions[pluginId];
         if (!definition) {
           console.warn(`[PluginRegistry] Cannot open tab: plugin "${pluginId}" not registered`);
           return '';
         }
+        // Server-scoped plugins cannot be opened as tabs
+        if (definition.scope === 'server') {
+          console.warn(`[PluginRegistry] Rejected openTab for server-scoped plugin "${pluginId}"`);
+          return '';
+        }
 
-        // Reuse existing singleton plugins only when multiple instances are disabled
+        const sessionTabs = state.openTabsBySession[sessionId] ?? [];
+
         if (!definition.allowMultipleInstances) {
-          const existing = state.openTabs.find((t) => t.pluginId === pluginId);
+          const existing = sessionTabs.find((t) => t.pluginId === pluginId);
           if (existing) {
-            set({ activeTabId: existing.id });
+            set((s) => ({
+              activeTabIdBySession: { ...s.activeTabIdBySession, [sessionId]: existing.id },
+            }));
             return existing.id;
           }
         }
 
-        // Create new instance
         const instance: PluginInstance = {
           id: createInstanceId(),
           pluginId,
@@ -165,111 +151,109 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
         };
 
         set((s) => ({
-          openTabs: [...s.openTabs, instance],
-          activeTabId: instance.id,
+          openTabsBySession: {
+            ...s.openTabsBySession,
+            [sessionId]: [...(s.openTabsBySession[sessionId] ?? []), instance],
+          },
+          activeTabIdBySession: { ...s.activeTabIdBySession, [sessionId]: instance.id },
         }));
 
-        // Fire lifecycle hook
         definition.onActivate?.(instance.id);
-
         return instance.id;
       },
 
-      closeTab: (instanceId) => {
+      closeTab: (instanceId, sessionId = DEFAULT_SESSION) => {
         const state = get();
-        const tab = state.openTabs.find((t) => t.id === instanceId);
+        const tabs = state.openTabsBySession[sessionId] ?? [];
+        const tab = tabs.find((t) => t.id === instanceId);
         if (!tab) return;
 
-        // Singleton core plugins cannot be closed; multi-instance core tabs can be
         const definition = state.definitions[tab.pluginId];
         if (definition?.kind === 'core' && !definition.allowMultipleInstances) return;
 
-        // Fire lifecycle hook
         definition?.onDeactivate?.(instanceId);
+        const newTabs = tabs.filter((t) => t.id !== instanceId);
+        const currentActive = state.activeTabIdBySession[sessionId];
+        const newActive = currentActive === instanceId
+          ? (newTabs[newTabs.length - 1]?.id ?? null)
+          : currentActive ?? null;
 
-        const newTabs = state.openTabs.filter((t) => t.id !== instanceId);
-        const newActiveId =
-          state.activeTabId === instanceId
-            ? newTabs[newTabs.length - 1]?.id ?? null
-            : state.activeTabId;
-
-        set({ openTabs: newTabs, activeTabId: newActiveId });
-      },
-
-      setActiveTab: (instanceId) => {
-        const state = get();
-        const previousTab = state.openTabs.find((t) => t.id === state.activeTabId);
-        const nextTab = state.openTabs.find((t) => t.id === instanceId);
-
-        if (!nextTab) return;
-
-        // Fire lifecycle hooks
-        if (previousTab && previousTab.id !== instanceId) {
-          state.definitions[previousTab.pluginId]?.onDeactivate?.(previousTab.id);
-        }
-        state.definitions[nextTab.pluginId]?.onActivate?.(nextTab.id);
-
-        set({ activeTabId: instanceId });
-      },
-
-      setPluginStatus: (pluginId, status, error) => {
-        set((state) => ({
-          openTabs: state.openTabs.map((t) =>
-            t.pluginId === pluginId ? { ...t, status, error } : t,
-          ),
+        set((s) => ({
+          openTabsBySession: { ...s.openTabsBySession, [sessionId]: newTabs },
+          activeTabIdBySession: { ...s.activeTabIdBySession, [sessionId]: newActive },
         }));
       },
 
-      initialize: () => {
+      setActiveTab: (instanceId, sessionId = DEFAULT_SESSION) => {
+        const state = get();
+        const tabs = state.openTabsBySession[sessionId] ?? [];
+        const nextTab = tabs.find((t) => t.id === instanceId);
+        if (!nextTab) return;
+
+        const currentActive = state.activeTabIdBySession[sessionId];
+        const previousTab = currentActive ? tabs.find((t) => t.id === currentActive) : null;
+        if (previousTab && previousTab.id !== instanceId) {
+          state.definitions[previousTab.pluginId]?.onDeactivate?.(previousTab.id);
+        }
+        state.definitions[nextTab.pluginId]?.onActivate?.(instanceId);
+
+        set((s) => ({
+          activeTabIdBySession: { ...s.activeTabIdBySession, [sessionId]: instanceId },
+        }));
+      },
+
+      setPluginStatus: (pluginId, status, error) => {
+        set((state) => {
+          const nextBySession: Record<string, PluginInstance[]> = {};
+          for (const [sid, tabs] of Object.entries(state.openTabsBySession)) {
+            nextBySession[sid] = tabs.map((t) =>
+              t.pluginId === pluginId ? { ...t, status, error } : t,
+            );
+          }
+          return { openTabsBySession: nextBySession };
+        });
+      },
+
+      initialize: (sessionId = DEFAULT_SESSION) => {
         const state = get();
         const corePlugins = Object.values(state.definitions)
-          .filter((d) => d.kind === 'core')
+          .filter((d) => d.kind === 'core' && d.scope !== 'server')
           .sort((a, b) => (a.navOrder ?? 99) - (b.navOrder ?? 99));
 
-        let tabs = [...state.openTabs];
+        let tabs = [...(state.openTabsBySession[sessionId] ?? [])];
         const existingPluginIds = new Set(tabs.map((t) => t.pluginId));
 
         for (const def of corePlugins) {
           if (def.allowMultipleInstances) {
-            // Multi-instance core nav plugins (AI): ensure at least one default
-            // empty tab exists so the bottom bar always lands on them first.
             if (!existingPluginIds.has(def.id)) {
-              tabs.push({
-                id: createInstanceId(),
-                pluginId: def.id,
-                title: def.name,
-                status: 'active',
-              });
+              tabs.push({ id: createInstanceId(), pluginId: def.id, title: def.name, status: 'active' });
               existingPluginIds.add(def.id);
             }
             continue;
           }
-          // Singleton core plugins: create a tab if none exists
           if (!existingPluginIds.has(def.id)) {
-            tabs.push({
-              id: createInstanceId(),
-              pluginId: def.id,
-              title: def.name,
-              status: 'active',
-            });
+            tabs.push({ id: createInstanceId(), pluginId: def.id, title: def.name, status: 'active' });
             existingPluginIds.add(def.id);
           }
         }
 
-        // Remove tabs for plugins that no longer exist
-        tabs = tabs.filter((t) => t.pluginId in state.definitions);
-
-        // Prefer AI as the default active tab on first launch.
-        // On subsequent launches, restore the persisted activeTabId.
-        const aiTab = tabs.find((t) => {
+        // Remove stale tabs (plugin no longer registered or is server-scoped)
+        tabs = tabs.filter((t) => {
           const def = state.definitions[t.pluginId];
-          return def?.navOrder === 0;
+          return def && def.scope !== 'server';
         });
-        const activeTabId = state.activeTabId && tabs.some((t) => t.id === state.activeTabId)
-          ? state.activeTabId
+
+        const aiTab = tabs.find((t) => state.definitions[t.pluginId]?.navOrder === 0);
+        const currentActive = state.activeTabIdBySession[sessionId];
+        const activeTabId = (currentActive && tabs.some((t) => t.id === currentActive))
+          ? currentActive
           : (aiTab?.id ?? tabs[0]?.id ?? null);
 
-        set({ openTabs: tabs, activeTabId, isReady: true });
+        set((s) => ({
+          openTabsBySession: { ...s.openTabsBySession, [sessionId]: tabs },
+          activeTabIdBySession: { ...s.activeTabIdBySession, [sessionId]: activeTabId },
+          isReady: true,
+        }));
       },
 
       getDefinition: (pluginId) => get().definitions[pluginId],
@@ -284,42 +268,30 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
           .filter((d) => d.kind === 'extra')
           .sort((a, b) => a.name.localeCompare(b.name)),
 
-      canCloseTab: (instanceId) => {
-        const tab = get().openTabs.find((t) => t.id === instanceId);
+      canCloseTab: (instanceId, sessionId = DEFAULT_SESSION) => {
+        const tab = (get().openTabsBySession[sessionId] ?? []).find((t) => t.id === instanceId);
         if (!tab) return false;
         const def = get().definitions[tab.pluginId];
         if (!def) return false;
-        // Extra plugins: always closeable
-        // Multi-instance core plugins: closeable
-        // Singleton core plugins: not closeable
         return def.kind !== 'core' || (def.allowMultipleInstances ?? false);
       },
+
+      getOpenTabs: (sessionId = DEFAULT_SESSION) => get().openTabsBySession[sessionId] ?? [],
+
+      getActiveTabId: (sessionId = DEFAULT_SESSION) => get().activeTabIdBySession[sessionId] ?? null,
     }),
     {
       name: 'stavi-plugin-registry',
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => AsyncStorage),
-      // Only persist tab state, not definitions (those are registered at boot)
       partialize: (state) => ({
-        openTabs: state.openTabs,
-        activeTabId: state.activeTabId,
+        openTabsBySession: state.openTabsBySession,
+        activeTabIdBySession: state.activeTabIdBySession,
       }),
-      migrate: (persistedState: unknown, fromVersion: number) => {
-        if (!persistedState || typeof persistedState !== 'object') return persistedState;
-        const s = persistedState as Record<string, unknown>;
-
-        if (fromVersion < 2) {
-          // Rename pluginId 'search' → 'workspace-search'.
-          // Drop tabs whose pluginId will no longer be registered (guard against future renames).
-          if (Array.isArray(s.openTabs)) {
-            s.openTabs = s.openTabs.map((tab: any) => {
-              if (tab?.pluginId === 'search') return { ...tab, pluginId: 'workspace-search' };
-              return tab;
-            });
-          }
-        }
-
-        return s;
+      migrate: (_persistedState: unknown, _fromVersion: number) => {
+        // Version 3: drop all persisted tab state (one-time reset).
+        // Users lose their tab layout once; Phase 3 re-initializes per session.
+        return { openTabsBySession: {}, activeTabIdBySession: {} };
       },
     },
   ),

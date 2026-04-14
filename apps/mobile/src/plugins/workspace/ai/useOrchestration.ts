@@ -10,7 +10,6 @@
 //   hooks/useOrchestrationActions.ts — sendMessage, interruptTurn, etc.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { staviClient } from '../../../stores/stavi-client';
 import { useConnectionStore } from '../../../stores/connection';
 import { useAiBindingsStore } from '../../../stores/ai-bindings-store';
 import type { AIMessage } from './types';
@@ -101,11 +100,16 @@ export interface OrchestrationState {
 // Hook
 // ----------------------------------------------------------
 
-export function useOrchestration(input?: { instanceId?: string; worktreePath?: string | null }) {
+export function useOrchestration(input?: {
+  instanceId?: string;
+  worktreePath?: string | null;
+  serverId?: string;
+}) {
   const instanceId = input?.instanceId;
   const preferredWorktreePath = input?.worktreePath ?? null;
-  const connectionState = useConnectionStore((s) => s.state);
-  const activeConnectionId = useConnectionStore((s) => s.activeConnection?.id ?? 'local');
+  const activeConnectionId = input?.serverId ?? useConnectionStore.getState().savedConnections[0]?.id ?? 'local';
+  const connectionState = useConnectionStore.getState().getServerStatus(activeConnectionId);
+  const client = useConnectionStore.getState().getClientForServer(activeConnectionId);
   const projectsRef = useRef<any[]>([]);
   const serverConfigRef = useRef<any>(null);
   const activeThreadIdRef = useRef<string | null>(null);
@@ -192,7 +196,11 @@ export function useOrchestration(input?: { instanceId?: string; worktreePath?: s
       : null;
     const title = dirName ? `${dirName} AI` : 'AI Session';
 
-    await staviClient.request('orchestration.dispatchCommand', {
+    if (!client) {
+      throw new Error('Client unavailable for active server');
+    }
+
+    await client.request('orchestration.dispatchCommand', {
       command: {
         type: 'thread.create',
         commandId: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -415,8 +423,11 @@ export function useOrchestration(input?: { instanceId?: string; worktreePath?: s
 
     async function init() {
       try {
-        const serverConfig = await staviClient.request<any>('server.getConfig', {});
-        const snapshot = await staviClient.request<{
+        if (!client) {
+          throw new Error('Client unavailable for active server');
+        }
+        const serverConfig = await client.request<any>('server.getConfig', {});
+        const snapshot = await client.request<{
           snapshotSequence: number;
           threads: any[];
           projects: any[];
@@ -496,7 +507,7 @@ export function useOrchestration(input?: { instanceId?: string; worktreePath?: s
         });
 
         console.log('[Orchestration] Subscribing to domain events...');
-        unsubRef.current = staviClient.subscribe(
+        unsubRef.current = client.subscribe(
           'subscribeOrchestrationDomainEvents',
           {},
           (event: any) => { if (!cancelled) processEvent(event); },
@@ -514,13 +525,14 @@ export function useOrchestration(input?: { instanceId?: string; worktreePath?: s
       unsubRef.current?.();
       unsubRef.current = null;
     };
-  }, [connectionState, instanceId, processEvent, activeConnectionId]);
+  }, [connectionState, instanceId, processEvent, activeConnectionId, client]);
 
   // ----------------------------------------------------------
   // Actions
   // ----------------------------------------------------------
 
   const actions = useOrchestrationActions({
+    serverId: activeConnectionId,
     setState,
     activeThreadIdRef,
     instanceId,

@@ -1,107 +1,48 @@
-// ============================================================
-// Plugin Types — the contract for the entire plugin system
-// ============================================================
+// WHAT: Plugin type system — discriminated union for workspace vs server plugins.
+// WHY:  Phase 2 splits plugins by scope so workspace plugins receive a Session and
+//       server plugins receive a serverId; mixing props caused client singleton leaks.
+// HOW:  WorkspacePluginDefinition and ServerPluginDefinition share a base interface.
+//       PluginPanelProps is a discriminated union on the `scope` discriminant.
+// SEE:  apps/mobile/src/stores/plugin-registry.ts, apps/mobile/src/components/PluginRenderer.tsx
 
 import type { ComponentType } from 'react';
+import type { Session } from './domain-types';
 
 // ----------------------------------------------------------
-// Plugin Definition — the static manifest (registered at boot)
+// Plugin scope
+// ----------------------------------------------------------
+
+export type PluginScope = 'workspace' | 'server';
+
+// ----------------------------------------------------------
+// Plugin panel props (discriminated on scope)
+// ----------------------------------------------------------
+
+export interface WorkspacePluginPanelProps {
+  scope: 'workspace';
+  instanceId: string;
+  isActive: boolean;
+  session: Session;
+  bottomBarHeight: number;
+  initialState?: Record<string, unknown>;
+}
+
+export interface ServerPluginPanelProps {
+  scope: 'server';
+  instanceId: string;
+  isActive: boolean;
+  serverId: string;
+  bottomBarHeight: number;
+  initialState?: Record<string, unknown>;
+}
+
+export type PluginPanelProps = WorkspacePluginPanelProps | ServerPluginPanelProps;
+
+// ----------------------------------------------------------
+// Plugin kind / permissions
 // ----------------------------------------------------------
 
 export type PluginKind = 'core' | 'extra';
-
-export interface PluginDefinition<T extends PluginAPI = PluginAPI> {
-  /** Unique identifier, e.g. "terminal", "editor", "ai" */
-  id: string;
-
-  /** Human-readable display name */
-  name: string;
-
-  /** Short description */
-  description: string;
-
-  /** "core" = bundled, uncloseable, single instance. "extra" = optional, closeable. */
-  kind: PluginKind;
-
-  /** Icon component (lucide-react-native or similar) */
-  icon: ComponentType<{ size?: number; color?: string }>;
-
-  /** The panel React component to render */
-  component: ComponentType<PluginPanelProps>;
-
-  /** Position in bottom nav bar. undefined = not in main nav (appears in Tabs sheet). */
-  navOrder?: number;
-
-  /** Override label in bottom nav (defaults to `name`) */
-  navLabel?: string;
-
-  /** Whether this plugin can have multiple open instances */
-  allowMultipleInstances?: boolean;
-
-  /** Which permissions this plugin needs (for third-party sandboxing) */
-  permissions?: PluginPermission[];
-
-  /** Factory function returning the cross-plugin API object */
-  api?: () => T;
-
-  /** Lifecycle hooks */
-  onActivate?: (instanceId: string) => void;
-  onDeactivate?: (instanceId: string) => void;
-}
-
-// ----------------------------------------------------------
-// Plugin Instance — the runtime representation (one per open tab)
-// ----------------------------------------------------------
-
-export type PluginStatus = 'registered' | 'activating' | 'active' | 'error' | 'disabled';
-
-export interface PluginInstance {
-  /** Unique tab instance ID */
-  id: string;
-
-  /** Which plugin definition this is an instance of */
-  pluginId: string;
-
-  /** Display title for the tab */
-  title: string;
-
-  /** Current status */
-  status: PluginStatus;
-
-  /** Error message if status is 'error' */
-  error?: string;
-
-  /** Initial state passed when the tab was opened (e.g. { file: '/src/app.tsx' }) */
-  initialState?: Record<string, unknown>;
-}
-
-// ----------------------------------------------------------
-// Plugin Panel Props — what the host passes to each plugin's UI
-// ----------------------------------------------------------
-
-export interface PluginPanelProps {
-  /** This tab's unique instance ID */
-  instanceId: string;
-
-  /** Whether this panel is currently visible/focused */
-  isActive: boolean;
-
-  /** Height of the bottom bar (for padding) */
-  bottomBarHeight: number;
-
-  /** Initial state passed when the tab was opened */
-  initialState?: Record<string, unknown>;
-
-  /**
-   * Called when the panel wants to create a new instance of itself
-   * (e.g. AI "New Session" button triggers directory picker in host).
-   */
-  onRequestNewSession?: () => void;
-}
-
-// ----------------------------------------------------------
-// Plugin Permissions (for third-party sandboxing)
-// ----------------------------------------------------------
 
 export type PluginPermission =
   | 'terminal:read'
@@ -124,23 +65,64 @@ export type PluginPermission =
 export interface PluginAPI {}
 
 // ----------------------------------------------------------
+// Plugin Definition base (shared fields)
+// ----------------------------------------------------------
+
+interface PluginDefinitionBase {
+  id: string;
+  name: string;
+  description: string;
+  kind: PluginKind;
+  icon: ComponentType<{ size?: number; color?: string }>;
+  navOrder?: number;
+  navLabel?: string;
+  allowMultipleInstances?: boolean;
+  permissions?: PluginPermission[];
+  api?: () => PluginAPI;
+  onActivate?: (instanceId: string) => void;
+  onDeactivate?: (instanceId: string) => void;
+}
+
+// ----------------------------------------------------------
+// Discriminated plugin definitions
+// ----------------------------------------------------------
+
+export interface WorkspacePluginDefinition extends PluginDefinitionBase {
+  scope: 'workspace';
+  component: ComponentType<WorkspacePluginPanelProps>;
+}
+
+export interface ServerPluginDefinition extends PluginDefinitionBase {
+  scope: 'server';
+  component: ComponentType<ServerPluginPanelProps>;
+}
+
+export type PluginDefinition = WorkspacePluginDefinition | ServerPluginDefinition;
+
+// ----------------------------------------------------------
+// Plugin Instance — runtime representation (one per open tab)
+// ----------------------------------------------------------
+
+export type PluginStatus = 'registered' | 'activating' | 'active' | 'error' | 'disabled';
+
+export interface PluginInstance {
+  id: string;
+  pluginId: string;
+  title: string;
+  status: PluginStatus;
+  error?: string;
+  initialState?: Record<string, unknown>;
+}
+
+// ----------------------------------------------------------
 // Session Registration — for sidebar/drawer session lists
 // ----------------------------------------------------------
 
 export interface SessionRegistration {
-  /** Sessions this plugin is managing */
   sessions: SessionEntry[];
-
-  /** Currently active session ID */
   activeSessionId?: string;
-
-  /** Callback when user selects a session in the drawer */
   onSelectSession: (sessionId: string) => void;
-
-  /** Callback when user wants to create a new session */
   onCreateSession?: () => void;
-
-  /** Label for "new session" button */
   createLabel?: string;
 }
 

@@ -24,11 +24,10 @@ import {
   ChevronDown,
   Search,
 } from 'lucide-react-native';
-import type { PluginDefinition, PluginPanelProps } from '@stavi/shared';
+import type { WorkspacePluginDefinition, WorkspacePluginPanelProps } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
 import { useConnectionStore } from '../../../stores/connection';
-import { staviClient } from '../../../stores/stavi-client';
 import { gPI } from '../../../services/gpi';
 
 // ----------------------------------------------------------
@@ -48,19 +47,25 @@ interface FileEntry {
 // Panel Component
 // ----------------------------------------------------------
 
-function ExplorerPanel({ instanceId, isActive }: PluginPanelProps) {
-  const connectionState = useConnectionStore((s) => s.state);
+function ExplorerPanel({ session }: WorkspacePluginPanelProps) {
+  const serverId = session.serverId;
+  const connectionState = serverId
+    ? useConnectionStore.getState().getStatusForServer(serverId)
+    : 'disconnected';
+  const client = serverId
+    ? useConnectionStore.getState().getClientForServer(serverId)
+    : undefined;
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Fetch project entries
   const fetchEntries = useCallback(async () => {
-    if (staviClient.getState() !== 'connected') return;
+    if (!client || client.getState() !== 'connected') return;
 
     setLoading(true);
     try {
-      const result = await staviClient.request<{
+      const result = await client.request<{
         entries: Array<{ name: string; path: string; type: string }>;
       }>('fs.search', {
         query: searchQuery || '*',
@@ -85,7 +90,7 @@ function ExplorerPanel({ instanceId, isActive }: PluginPanelProps) {
     } finally {
       setLoading(false);
     }
-  }, [searchQuery]);
+  }, [client, searchQuery]);
 
   useEffect(() => {
     if (connectionState === 'connected') {
@@ -189,10 +194,11 @@ function FileIcon({ name }: { name: string }) {
 // Plugin Definition
 // ----------------------------------------------------------
 
-export const explorerPlugin: PluginDefinition = {
+export const explorerPlugin: WorkspacePluginDefinition = {
   id: 'explorer',
   name: 'Explorer',
   description: 'Browse and manage project files',
+  scope: 'workspace',
   kind: 'extra',
   icon: FolderTree,
   component: ExplorerPanel,

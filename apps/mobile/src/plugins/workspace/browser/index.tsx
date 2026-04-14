@@ -20,7 +20,11 @@ import {
 } from 'react-native';
 import { Globe, ArrowLeft, ArrowRight, RotateCw, X } from 'lucide-react-native';
 import { WebView, type WebViewNavigation } from 'react-native-webview';
-import type { PluginDefinition, PluginPanelProps, PluginAPI } from '@stavi/shared';
+import type {
+  WorkspacePluginDefinition,
+  WorkspacePluginPanelProps,
+  PluginAPI,
+} from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
 
 // ----------------------------------------------------------
@@ -58,7 +62,7 @@ function displayUrl(url: string): string {
 // Panel Component
 // ----------------------------------------------------------
 
-function BrowserPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
+function BrowserPanel({ instanceId, isActive, bottomBarHeight }: WorkspacePluginPanelProps) {
 
   const webViewRef = useRef<WebView>(null);
   const [currentUrl, setCurrentUrl] = useState(DEFAULT_URL);
@@ -229,10 +233,11 @@ function browserApi(): BrowserPluginAPI {
 // Plugin Definition
 // ----------------------------------------------------------
 
-export const browserPlugin: PluginDefinition<BrowserPluginAPI> = {
+export const browserPlugin: WorkspacePluginDefinition = {
   id: 'browser',
   name: 'Browser',
   description: 'In-app WebView browser for previewing local dev servers',
+  scope: 'workspace',
   kind: 'core',
   icon: Globe,
   component: BrowserPanel,

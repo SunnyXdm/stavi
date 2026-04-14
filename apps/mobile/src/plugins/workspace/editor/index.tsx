@@ -17,12 +17,14 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Code2, X, FileText } from 'lucide-react-native';
-import type { PluginDefinition, PluginPanelProps } from '@stavi/shared';
+import type {
+  WorkspacePluginDefinition,
+  WorkspacePluginPanelProps,
+} from '@stavi/shared';
 import type { EditorPluginAPI } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
 import { useConnectionStore } from '../../../stores/connection';
-import { staviClient } from '../../../stores/stavi-client';
 
 // ----------------------------------------------------------
 // Types
@@ -71,8 +73,14 @@ function notifyListeners(instanceId: string) {
 // Panel Component
 // ----------------------------------------------------------
 
-function EditorPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
-  const connectionState = useConnectionStore((s) => s.state);
+function EditorPanel({ instanceId, session }: WorkspacePluginPanelProps) {
+  const serverId = session.serverId;
+  const connectionState = serverId
+    ? useConnectionStore.getState().getStatusForServer(serverId)
+    : 'disconnected';
+  const client = serverId
+    ? useConnectionStore.getState().getClientForServer(serverId)
+    : undefined;
   const [, forceUpdate] = useState(0);
 
   // Get or create per-instance state
@@ -208,6 +216,11 @@ function EditorPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps
 // Plugin API (for GPI cross-plugin calls)
 // ----------------------------------------------------------
 
+function getEditorClient(serverId?: string) {
+  if (!serverId) return undefined;
+  return useConnectionStore.getState().getClientForServer(serverId);
+}
+
 function editorApi(): EditorPluginAPI {
   return {
     openFile: async (path, line) => {
@@ -231,8 +244,9 @@ function editorApi(): EditorPluginAPI {
       notifyListeners(firstInstanceId);
 
       try {
-        const result = await staviClient.request<{ content: string }>('fs.read', { path });
-        const content = result.content || '(unable to read file)';
+        const serverId = useConnectionStore.getState().savedConnections[0]?.id;
+        const result = await getEditorClient(serverId)?.request<{ content: string }>('fs.read', { path });
+        const content = result?.content || '(unable to read file)';
         s.openFiles = s.openFiles.map((f) =>
           f.path === path ? { ...f, content, loading: false } : f,
         );
@@ -252,7 +266,8 @@ function editorApi(): EditorPluginAPI {
       const s = getInstanceState(firstInstanceId);
       const file = s.openFiles.find((f) => f.path === path);
       if (!file) return;
-      await staviClient.request('fs.write', {
+      const serverId = useConnectionStore.getState().savedConnections[0]?.id;
+      await getEditorClient(serverId)?.request('fs.write', {
         path,
         content: file.content,
       });
@@ -270,10 +285,11 @@ function editorApi(): EditorPluginAPI {
 // Plugin Definition
 // ----------------------------------------------------------
 
-export const editorPlugin: PluginDefinition<EditorPluginAPI> = {
+export const editorPlugin: WorkspacePluginDefinition = {
   id: 'editor',
   name: 'Editor',
   description: 'Source code viewer with syntax highlighting',
+  scope: 'workspace',
   kind: 'core',
   icon: Code2,
   component: EditorPanel,

@@ -3,7 +3,7 @@
 // ============================================================
 
 import type { WebSocket } from 'ws';
-import type { ModelSelection } from './providers/types';
+import type { OrchestrationThread } from '@stavi/shared';
 
 // ----------------------------------------------------------
 // RPC wire protocol
@@ -100,18 +100,26 @@ export interface OrchestrationMessage {
   createdAt: string;
 }
 
-export interface OrchestrationThread {
-  threadId: string;
-  projectId: string;
+export type { OrchestrationThread };
+
+// ----------------------------------------------------------
+// Sessions
+// ----------------------------------------------------------
+
+export type SessionStatus = 'idle' | 'running' | 'errored' | 'archived';
+export type AgentRuntime = 'claude' | 'codex';
+
+export interface Session {
+  id: string;
+  serverId: string;
+  folder: string;
   title: string;
-  runtimeMode: 'approval-required' | 'auto-accept-edits' | 'full-access';
-  interactionMode: 'default' | 'plan';
-  branch: string;
-  worktreePath: string | null;
-  modelSelection?: ModelSelection;
-  archived: boolean;
-  createdAt: string;
-  updatedAt: string;
+  agentRuntime: AgentRuntime;
+  status: SessionStatus;
+  createdAt: number;
+  updatedAt: number;
+  lastActiveAt: number;
+  metadata?: Record<string, unknown>;
 }
 
 // ----------------------------------------------------------
