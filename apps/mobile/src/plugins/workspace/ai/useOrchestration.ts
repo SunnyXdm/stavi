@@ -109,7 +109,12 @@ export function useOrchestration(input?: {
   const instanceId = input?.instanceId;
   const preferredWorktreePath = input?.worktreePath ?? null;
   const sessionId = input?.sessionId ?? 'local';
-  const activeConnectionId = input?.serverId ?? useConnectionStore.getState().savedConnections[0]?.id ?? 'local';
+  // Phase 5 cross-server audit: serverId must be passed explicitly by the caller.
+  // Falling back to savedConnections[0] would route events to the wrong server.
+  if (!input?.serverId) {
+    console.warn('[useOrchestration] serverId not provided — subscription will be inactive.');
+  }
+  const activeConnectionId = input?.serverId ?? 'local';
   const connectionState = useConnectionStore.getState().getServerStatus(activeConnectionId);
   const client = useConnectionStore.getState().getClientForServer(activeConnectionId);
   const projectsRef = useRef<any[]>([]);

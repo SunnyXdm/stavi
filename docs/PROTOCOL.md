@@ -2088,7 +2088,7 @@ The connection store (`useConnectionStore`) tracks the full lifecycle of a conne
 
 ```typescript
 interface SavedConnection {
-  id: string;              // "conn_<timestamp>_<random>"
+  id: string;              // "conn_<timestamp>_<random>" — local identifier
   name: string;            // User-assigned label
   host: string;
   port: number;
@@ -2096,10 +2096,17 @@ interface SavedConnection {
   tls?: boolean;
   createdAt: number;       // Unix ms
   lastConnectedAt?: number; // Unix ms
+  serverId?: string;       // Bound after first connect via server.getConfig.serverId.
+                           // Used for dedup: two addresses with the same serverId
+                           // refer to the same daemon (Phase 5 merge behavior).
 }
 ```
 
-Saved connections are persisted to `AsyncStorage` under the key `stavi-connection` (only `savedConnections` is persisted; the transient state fields are not).
+`SavedConnection` is now the canonical shape in `@stavi/shared` (`packages/shared/src/transport-types.ts`), re-exported from `apps/mobile/src/stores/connection.ts`. The old `@stavi/shared` shape (`label`/`config`/`serverPublicKey`) was removed in Phase 5 — no server-side consumers existed.
+
+**Dedup behavior (Phase 5):** On `addServer`, the mobile app pre-flights `server.getConfig` to learn the remote `serverId`. If an existing `SavedConnection` already has the same `serverId`:
+- Same host+port → rejects with "already added".
+- Different host+port (e.g., `192.168.1.5:8022` vs `macbook.local:8022`) → merges: updates address on the existing entry, preserves `lastConnectedAt`.
 
 ---
 

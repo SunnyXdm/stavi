@@ -340,11 +340,13 @@ function GitPanel({ session }: WorkspacePluginPanelProps) {
 // ----------------------------------------------------------
 
 function gitApi(): GitPluginAPI {
+  // Phase 5 audit: GPI gitApi has no serverId context. Best-effort fallback.
+  // Phase 7 should pass serverId through the GPI call.
   const getFallbackClient = () => {
     const firstServerId = useConnectionStore.getState().savedConnections[0]?.id;
-    return firstServerId
-      ? useConnectionStore.getState().getClientForServer(firstServerId)
-      : undefined;
+    if (!firstServerId) return undefined;
+    console.warn('[gitApi] GPI call: serverId not scoped — using first server. Fix in Phase 7.');
+    return useConnectionStore.getState().getClientForServer(firstServerId);
   };
 
   return {

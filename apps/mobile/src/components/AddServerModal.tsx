@@ -45,6 +45,7 @@ export function AddServerModal({ visible, onClose, onComplete }: AddServerModalP
   const [port, setPort] = useState(String(devConnectionConfig?.port ?? 3773));
   const [token, setToken] = useState(devConnectionConfig?.bearerToken ?? '');
   const [error, setError] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
 
   const hostRef = useRef<TextInput>(null);
   const portRef = useRef<TextInput>(null);
@@ -65,7 +66,7 @@ export function AddServerModal({ visible, onClose, onComplete }: AddServerModalP
     onClose();
   }, [resetForm, onClose]);
 
-  const handleConnect = useCallback(() => {
+  const handleConnect = useCallback(async () => {
     // Validate
     const trimmedHost = host.trim();
     const trimmedToken = token.trim();
@@ -90,17 +91,24 @@ export function AddServerModal({ visible, onClose, onComplete }: AddServerModalP
     }
 
     setError(null);
+    setConnecting(true);
 
-    // Save and return
-    const connection = addServer({
-      name: name.trim() || `${trimmedHost}:${portNum}`,
-      host: trimmedHost,
-      port: portNum,
-      bearerToken: trimmedToken,
-    });
+    try {
+      // addServer is async in Phase 5 — it pre-flights server.getConfig for dedup.
+      const connection = await addServer({
+        name: name.trim() || `${trimmedHost}:${portNum}`,
+        host: trimmedHost,
+        port: portNum,
+        bearerToken: trimmedToken,
+      });
 
-    resetForm();
-    onComplete(connection);
+      resetForm();
+      onComplete(connection);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add server');
+    } finally {
+      setConnecting(false);
+    }
   }, [addServer, name, host, onComplete, port, resetForm, token]);
 
   return (
@@ -223,11 +231,12 @@ export function AddServerModal({ visible, onClose, onComplete }: AddServerModalP
             <Pressable
               style={({ pressed }) => [
                 styles.connectButton,
-                pressed && styles.connectButtonPressed,
+                (pressed || connecting) && styles.connectButtonPressed,
               ]}
-              onPress={handleConnect}
+              onPress={() => void handleConnect()}
+              disabled={connecting}
             >
-              <Text style={styles.connectButtonText}>Connect</Text>
+              <Text style={styles.connectButtonText}>{connecting ? 'Connecting…' : 'Connect'}</Text>
             </Pressable>
           </ScrollView>
         </KeyboardAvoidingView>

@@ -1,6 +1,11 @@
 // ============================================================
 // Transport Types — WebSocket connection, RPC, auth
 // ============================================================
+// WHAT: Canonical transport / connection types shared across mobile, cli, relay.
+// WHY:  Single source of truth — Phase 5 unifies the mobile-only SavedConnection
+//       shape into this file and removes the diverged mobile definition.
+// HOW:  Exports SavedConnection (mobile canonical shape), legacy shims, RPC types.
+// SEE:  apps/mobile/src/stores/connection.ts, packages/server-core/src/context.ts
 
 // ----------------------------------------------------------
 // Connection
@@ -8,29 +13,41 @@
 
 export type ConnectionState =
   | 'idle'
+  | 'authenticating'
   | 'connecting'
-  | 'handshaking'
-  | 'secure'
-  | 'ready'
+  | 'connected'
   | 'reconnecting'
-  | 'closed'
-  | 'error';
+  | 'error'
+  | 'disconnected';
 
+/**
+ * Canonical SavedConnection shape — adopted from the mobile store in Phase 5.
+ * The old @stavi/shared shape (label/config/serverPublicKey) is removed because
+ * no server-side code consumed it (grep confirmed zero server-side consumers).
+ *
+ * serverId is optional until the first successful connect, at which point
+ * it is locked to the value returned by server.getConfig.serverId.
+ */
+export interface SavedConnection {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  bearerToken: string;
+  tls?: boolean;
+  createdAt: number;
+  lastConnectedAt?: number;
+  /** Bound after first successful connect via server.getConfig.serverId. */
+  serverId?: string;
+}
+
+/** @deprecated Use SavedConnection. Kept for reference during Phase 6 relay work. */
 export interface ConnectionConfig {
   host: string;
   port: number;
   token: string;
   relayUrl?: string;
   useTls?: boolean;
-}
-
-export interface SavedConnection {
-  id: string;
-  label: string;
-  config: ConnectionConfig;
-  serverPublicKey?: string;
-  lastConnected?: number;
-  createdAt: number;
 }
 
 // ----------------------------------------------------------

@@ -4,6 +4,7 @@
 // WHAT: Session CRUD + subscription stream.
 // WHY:  Sessions are persisted and need RPC access.
 // HOW:  Calls repositories; broadcasts updates to subscribers.
+//       Phase 5: belt-and-suspenders serverId validation on all session reads.
 // SEE:  repositories/session-repo.ts, repositories/thread-repo.ts
 
 import type { ServerContext, RpcHandler } from '../context';
@@ -52,6 +53,11 @@ export function createSessionHandlers(ctx: ServerContext): Record<string, RpcHan
       const session = ctx.sessionRepo.getSession(sessionId);
       if (!session) {
         sendJson(ws, makeFailure(id, `Session not found: ${sessionId}`));
+        return;
+      }
+      // Phase 5: belt-and-suspenders — each server only holds its own sessions.
+      if (session.serverId && session.serverId !== ctx.serverId) {
+        sendJson(ws, makeFailure(id, `Session ${sessionId} belongs to a different server`));
         return;
       }
       const threads = ctx.threadRepo.listThreadsForSession(sessionId);

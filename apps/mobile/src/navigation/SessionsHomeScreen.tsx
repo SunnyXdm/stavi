@@ -1,11 +1,15 @@
-// WHAT: Sessions Home root screen listing sessions grouped by server.
-// WHY:  Phase 2 replaces Connect-as-root with a multi-server sessions landing page.
-// HOW:  Reads per-server connection + sessions stores, auto-connects saved servers, and
-//       opens server-scoped tools via ServerToolsSheet.
-// SEE:  apps/mobile/src/stores/connection.ts, apps/mobile/src/stores/sessions-store.ts
+// WHAT: Sessions Home root screen — lists sessions grouped by server.
+// WHY:  Phase 2 entry point. Phase 5 adds collapse toggle, connection menu,
+//       reconnect toast, and serverId-based ordering (insertion order).
+// HOW:  Reads connection + sessions stores. Server sections extracted to
+//       SessionsHomeServerSection for line-count compliance.
+// SEE:  components/SessionsHomeServerSection.tsx, stores/connection.ts
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ActionSheetIOS,
+  Alert,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -14,76 +18,118 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { FlashList } from '@shopify/flash-list';
-import { FolderPlus, Plus, Server, Settings, Wrench } from 'lucide-react-native';
+import { FolderPlus, Plus, Server, Settings } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AddServerSheet } from '../components/AddServerSheet';
 import { NewSessionFlow } from '../components/NewSessionFlow';
+import { ReconnectToast } from '../components/ReconnectToast';
 import { ServerToolsSheet } from '../components/ServerToolsSheet';
-import { useConnectionStore, type ConnectionState } from '../stores/connection';
+import { ServerSection as SessionsHomeServerSection } from '../components/SessionsHomeServerSection';
+import {
+  useConnectionStore,
+  type ConnectionState,
+  type SavedConnection,
+} from '../stores/connection';
 import { useSessionsStore } from '../stores/sessions-store';
 import { colors, radii, spacing, typography } from '../theme';
-
-const STATUS_COLORS: Record<ConnectionState, string> = {
-  idle: colors.fg.muted,
-  authenticating: colors.semantic.warning,
-  connecting: colors.semantic.warning,
-  connected: colors.semantic.success,
-  reconnecting: colors.semantic.warning,
-  error: colors.semantic.error,
-  disconnected: colors.fg.muted,
-};
 
 export function SessionsHomeScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<any>>();
   const [showAddServer, setShowAddServer] = useState(false);
   const [showNewSession, setShowNewSession] = useState(false);
   const [toolsServerId, setToolsServerId] = useState<string | null>(null);
+  const [collapsedIds, setCollapsedIds] = useState<Record<string, boolean>>({});
+  const [toastServerId, setToastServerId] = useState<string | null>(null);
 
-  const savedConnections = useConnectionStore((state) => state.savedConnections);
-  const connectServer = useConnectionStore((state) => state.connectServer);
-  const autoConnectSavedServers = useConnectionStore((state) => state.autoConnectSavedServers);
-  const getStatusForServer = useConnectionStore((state) => state.getStatusForServer);
+  const savedConnections = useConnectionStore((s) => s.savedConnections);
+  const connectServer = useConnectionStore((s) => s.connectServer);
+  const disconnectServer = useConnectionStore((s) => s.disconnectServer);
+  const forgetServer = useConnectionStore((s) => s.forgetServer);
+  const autoConnectSavedServers = useConnectionStore((s) => s.autoConnectSavedServers);
+  const getStatusForServer = useConnectionStore((s) => s.getStatusForServer);
+  const onReconnect = useConnectionStore((s) => s.onReconnect);
 
-  const getSessionsForServer = useSessionsStore((state) => state.getSessionsForServer);
-  const refreshForServer = useSessionsStore((state) => state.refreshForServer);
-  const hydrateConnectedServers = useSessionsStore((state) => state.hydrateConnectedServers);
-  const errorByServer = useSessionsStore((state) => state.errorByServer);
-  const isLoadingByServer = useSessionsStore((state) => state.isLoadingByServer);
+  const getSessionsForServer = useSessionsStore((s) => s.getSessionsForServer);
+  const refreshForServer = useSessionsStore((s) => s.refreshForServer);
+  const hydrateConnectedServers = useSessionsStore((s) => s.hydrateConnectedServers);
+  const errorByServer = useSessionsStore((s) => s.errorByServer);
+  const isLoadingByServer = useSessionsStore((s) => s.isLoadingByServer);
 
-  useEffect(() => {
-    autoConnectSavedServers();
-  }, [autoConnectSavedServers]);
-
+  useEffect(() => { autoConnectSavedServers(); }, [autoConnectSavedServers]);
   useEffect(() => {
     hydrateConnectedServers();
   }, [hydrateConnectedServers, savedConnections.length]);
 
+  // Reconnect toast + re-subscribe sessions on reconnect.
+  useEffect(() => {
+    return onReconnect((serverId) => {
+      setToastServerId(serverId);
+      void refreshForServer(serverId).catch(() => {});
+      const t = setTimeout(() => setToastServerId(null), 3500);
+      return () => clearTimeout(t);
+    });
+  }, [onReconnect, refreshForServer]);
+
   const sections = useMemo(
     () =>
-      savedConnections.map((savedConnection) => {
-        const status = getStatusForServer(savedConnection.id);
-        return {
-          savedConnection,
-          status,
-          sessions: getSessionsForServer(savedConnection.id),
-          error: errorByServer[savedConnection.id],
-          loading: isLoadingByServer[savedConnection.id] ?? false,
-        };
-      }),
+      savedConnections.map((conn) => ({
+        savedConnection: conn,
+        status: getStatusForServer(conn.id),
+        sessions: getSessionsForServer(conn.id),
+        error: errorByServer[conn.id],
+        loading: isLoadingByServer[conn.id] ?? false,
+      })),
     [errorByServer, getSessionsForServer, getStatusForServer, isLoadingByServer, savedConnections],
   );
 
-  const connected = sections.filter((section) => section.status !== 'disconnected');
-  const disconnected = sections.filter((section) => section.status === 'disconnected');
-
   const handleRefresh = useCallback(async () => {
-    await Promise.all(connected.map((section) => refreshForServer(section.savedConnection.id)));
-  }, [connected, refreshForServer]);
+    const connected = sections.filter((s) => s.status === 'connected');
+    await Promise.all(connected.map((s) => refreshForServer(s.savedConnection.id)));
+  }, [sections, refreshForServer]);
+
+  const toggleCollapse = useCallback((id: string) => {
+    setCollapsedIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  const openConnectionMenu = useCallback(
+    (conn: SavedConnection, status: ConnectionState) => {
+      const isConnected = status === 'connected';
+      const actionLabel = isConnected ? 'Disconnect' : 'Connect';
+      const options = [actionLabel, 'Forget Server', 'Cancel'];
+
+      const handle = (label: string) => {
+        if (label === 'Disconnect') disconnectServer(conn.id);
+        if (label === 'Connect') void connectServer(conn.id).catch(() => {});
+        if (label === 'Forget Server')
+          Alert.alert('Forget server?', `Remove "${conn.name}"?`, [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Forget', style: 'destructive', onPress: () => forgetServer(conn.id) },
+          ]);
+      };
+
+      if (Platform.OS === 'ios') {
+        ActionSheetIOS.showActionSheetWithOptions(
+          { options, destructiveButtonIndex: 1, cancelButtonIndex: 2, title: conn.name },
+          (i) => handle(options[i] ?? ''),
+        );
+      } else {
+        Alert.alert(conn.name, undefined, [
+          { text: actionLabel, onPress: () => handle(actionLabel) },
+          { text: 'Forget Server', style: 'destructive', onPress: () => handle('Forget Server') },
+          { text: 'Cancel', style: 'cancel' },
+        ]);
+      }
+    },
+    [connectServer, disconnectServer, forgetServer],
+  );
+
+  const toastConn = toastServerId ? savedConnections.find((c) => c.id === toastServerId) : null;
 
   return (
     <SafeAreaView style={styles.container}>
+      {toastConn ? <ReconnectToast serverName={toastConn.name} /> : null}
+
       <View style={styles.header}>
         <Text style={styles.title}>stavi</Text>
         <View style={styles.headerActions}>
@@ -113,113 +159,35 @@ export function SessionsHomeScreen() {
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           refreshControl={
-            <RefreshControl
-              refreshing={false}
-              onRefresh={handleRefresh}
-              tintColor={colors.accent.primary}
-            />
+            <RefreshControl refreshing={false} onRefresh={handleRefresh} tintColor={colors.accent.primary} />
           }
         >
-          {connected.map(({ savedConnection, status, sessions, error, loading }) => (
-            <View key={savedConnection.id} style={styles.serverCard}>
-              <View style={styles.serverHeader}>
-                <View style={styles.serverHeaderLeft}>
-                  <View style={[styles.statusDot, { backgroundColor: STATUS_COLORS[status] }]} />
-                  <View>
-                    <Text style={styles.serverName}>{savedConnection.name}</Text>
-                    <Text style={styles.serverMeta}>
-                      {savedConnection.host}:{savedConnection.port} · {status}
-                    </Text>
-                  </View>
-                </View>
-                <Pressable
-                  style={styles.toolsButton}
-                  onPress={() => setToolsServerId(savedConnection.id)}
-                >
-                  <Wrench size={16} color={colors.fg.secondary} />
-                </Pressable>
-              </View>
-
-              {error ? <Text style={styles.errorText}>{error}</Text> : null}
-              {loading && sessions.length === 0 ? (
-                <Text style={styles.metaText}>Loading sessions...</Text>
-              ) : null}
-
-              {sessions.length === 0 && !loading ? (
-                <Text style={styles.metaText}>No sessions yet.</Text>
-              ) : (
-                <View style={styles.listWrap}>
-                  <FlashList
-                    data={sessions}
-                    keyExtractor={(session) => session.id}
-                    scrollEnabled={false}
-                    renderItem={({ item: session }) => (
-                      <Pressable
-                        style={styles.sessionRow}
-                        onPress={() => navigation.navigate('Workspace', { sessionId: session.id })}
-                      >
-                        <View style={styles.sessionTextWrap}>
-                          <Text style={styles.sessionTitle} numberOfLines={1}>
-                            {session.title}
-                          </Text>
-                          <Text style={styles.sessionMeta} numberOfLines={1}>
-                            {session.folder}
-                          </Text>
-                        </View>
-                        <Text style={styles.sessionStatus}>{session.status}</Text>
-                      </Pressable>
-                    )}
-                  />
-                </View>
-              )}
-            </View>
+          {sections.map(({ savedConnection, status, sessions, error, loading }) => (
+            <SessionsHomeServerSection
+              key={savedConnection.id}
+              savedConnection={savedConnection}
+              status={status}
+              sessions={sessions}
+              error={error}
+              loading={loading}
+              isCollapsed={collapsedIds[savedConnection.id] ?? false}
+              onToggleCollapse={() => toggleCollapse(savedConnection.id)}
+              onOpenTools={() => setToolsServerId(savedConnection.id)}
+              onOpenMenu={() => openConnectionMenu(savedConnection, status)}
+              onNewSession={() => setShowNewSession(true)}
+            />
           ))}
-
-          {disconnected.length > 0 ? (
-            <View style={styles.savedSection}>
-              <Text style={styles.savedHeading}>Saved servers</Text>
-              {disconnected.map(({ savedConnection }) => (
-                <View key={savedConnection.id} style={styles.savedRow}>
-                  <View>
-                    <Text style={styles.serverName}>{savedConnection.name}</Text>
-                    <Text style={styles.serverMeta}>Disconnected</Text>
-                  </View>
-                  <Pressable
-                    style={styles.connectButton}
-                    onPress={() => {
-                      void connectServer(savedConnection.id).catch(() => {});
-                    }}
-                  >
-                    <Text style={styles.connectButtonText}>Connect</Text>
-                  </Pressable>
-                </View>
-              ))}
-            </View>
-          ) : null}
         </ScrollView>
       )}
 
-      <AddServerSheet
-        visible={showAddServer}
-        onClose={() => setShowAddServer(false)}
-        onComplete={() => setShowAddServer(false)}
-      />
-
+      <AddServerSheet visible={showAddServer} onClose={() => setShowAddServer(false)} onComplete={() => setShowAddServer(false)} />
       <NewSessionFlow
         visible={showNewSession}
         onClose={() => setShowNewSession(false)}
-        onCreated={(session) => {
-          setShowNewSession(false);
-          navigation.navigate('Workspace', { sessionId: session.id });
-        }}
+        onCreated={(session) => { setShowNewSession(false); navigation.navigate('Workspace', { sessionId: session.id }); }}
       />
-
       {toolsServerId ? (
-        <ServerToolsSheet
-          visible={toolsServerId != null}
-          serverId={toolsServerId}
-          onClose={() => setToolsServerId(null)}
-        />
+        <ServerToolsSheet visible serverId={toolsServerId} onClose={() => setToolsServerId(null)} />
       ) : null}
     </SafeAreaView>
   );
@@ -249,111 +217,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg.raised,
   },
   scroll: { flex: 1 },
-  scrollContent: { padding: spacing[4], gap: spacing[4] },
-  serverCard: {
-    backgroundColor: colors.bg.raised,
-    borderRadius: radii.lg,
-    padding: spacing[4],
-    gap: spacing[3],
-  },
-  serverHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  serverHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    flex: 1,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-  },
-  serverName: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-  },
-  serverMeta: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.tertiary,
-    marginTop: 2,
-  },
-  toolsButton: {
-    width: 32,
-    height: 32,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.bg.input,
-  },
-  listWrap: {
-    minHeight: 12,
-  },
-  metaText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.muted,
-  },
-  errorText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.semantic.error,
-  },
-  sessionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: colors.bg.input,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[3],
-    marginBottom: spacing[2],
-  },
-  sessionTextWrap: { flex: 1, marginRight: spacing[2] },
-  sessionTitle: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.primary,
-  },
-  sessionMeta: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.tertiary,
-    marginTop: 2,
-  },
-  sessionStatus: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.secondary,
-  },
-  savedSection: {
-    backgroundColor: colors.bg.raised,
-    borderRadius: radii.lg,
-    padding: spacing[4],
-    gap: spacing[3],
-  },
-  savedHeading: {
-    color: colors.fg.secondary,
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.semibold,
-    textTransform: 'uppercase',
-  },
-  savedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  connectButton: {
-    backgroundColor: colors.accent.primary,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-  },
-  connectButtonText: {
-    color: colors.fg.onAccent,
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.semibold,
-  },
+  scrollContent: { padding: spacing[4], gap: spacing[3] },
   emptyState: {
     flex: 1,
     alignItems: 'center',
@@ -366,11 +230,7 @@ const styles = StyleSheet.create({
     fontWeight: typography.fontWeight.semibold,
     color: colors.fg.primary,
   },
-  emptySubtitle: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.tertiary,
-    textAlign: 'center',
-  },
+  emptySubtitle: { fontSize: typography.fontSize.sm, color: colors.fg.tertiary, textAlign: 'center' },
   primaryButton: {
     marginTop: spacing[2],
     backgroundColor: colors.accent.primary,

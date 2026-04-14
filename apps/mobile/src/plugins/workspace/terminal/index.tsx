@@ -391,11 +391,14 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
 // ----------------------------------------------------------
 
 function terminalApi(): TerminalPluginAPI {
+  // Phase 5 audit: GPI createSession has no serverId context here — it falls back
+  // to the first server as a best-effort. Phase 7 should pass serverId to api() or
+  // use an event-bus call instead of direct client access.
   const getFallbackClient = () => {
     const firstServerId = useConnectionStore.getState().savedConnections[0]?.id;
-    return firstServerId
-      ? useConnectionStore.getState().getClientForServer(firstServerId)
-      : undefined;
+    if (!firstServerId) return undefined;
+    console.warn('[terminalApi] GPI createSession: serverId not scoped — using first server. Fix in Phase 7.');
+    return useConnectionStore.getState().getClientForServer(firstServerId);
   };
 
   return {
