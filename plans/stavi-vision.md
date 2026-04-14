@@ -54,24 +54,34 @@ without touching core code.
 
 ## Near-term Roadmap
 
-### Phase 1: Fix what's broken (NOW)
-See `architecture-analysis.md` for P0/P1 bugs.
-- Fix multi-turn Claude conversations
-- Fix CWD not being passed
-- Fix thread.created broadcast
+### Phase 1: Fix what's broken ✅ COMPLETE
+See `architecture-analysis.md`.
+- ✅ Fix multi-turn Claude conversations
+- ✅ Fix CWD not being passed
+- ✅ Fix thread.created broadcast
+- ✅ Compact model picker (ModelPopover)
+- ✅ Provider icons (ProviderIcon.tsx)
 
-### Phase 2: UI polish to match t3code quality
-See `ui-redesign.md`.
-- Compact model picker popover
-- Provider icons (`@lobehub/icons-rn`)
-- Better composer UI
+### Phase 2: UI feel & tab UX
+See `ui-redesign.md` for full phase breakdown.
+- Phase 2-1: AnimatedPressable (spring press), remove bottom bar border, haptics
+- Phase 2-2: Header tab strip for multi-instance switching, animated bottom indicator, proper bottom sheet
+- Phase 2-3: Reanimated drawer, ThinkingIndicator on native thread, fix scrollToEnd race
 
-### Phase 3: Feature parity with lunel
+### Phase 3: Composer & feature parity with lunel
+See `ui-redesign.md` Phase 4.
+- Fix Access chip icon
+- Voice input (expo-av + /api/transcribe)
 - File attachments in AI prompts
 - Session revert/unrevert
-- Voice input
 
-### Phase 4: Surpass both
+### Phase 4: Theme system
+See `ui-redesign.md` Phase 5.
+- Theme singleton adapter (useThemeColors hook)
+- Light theme tokens
+- System auto-switch + settings toggle
+
+### Phase 5: Surpass both
 - OpenCode adapter (all providers: GPT, Gemini, etc.)
 - Multi-agent workflows (AI plugin calls terminal plugin via GPI)
 - Offline mode with local models (Ollama)

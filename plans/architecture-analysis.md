@@ -135,25 +135,34 @@ to work: multi-turn conversations, correct CWD, proper event broadcasting.
 
 ## Priority Fix List
 
-1. **P0 - Fix multi-turn**: Set `session.queryRuntime = null` after each turn completes,
-   so next turn restarts the iterator from the prompt queue.
+1. ~~**P0 - Fix multi-turn**~~ ✅ **FIXED** — Each `sendTurn()` now creates a fresh `query()` per turn, uses `sessionId`/`resume` for context continuity via the SDK. `session.queryRuntime` is reset after every turn.
 
-2. **P0 - Fix CWD**: Pass `workspaceRoot` (or `thread.worktreePath`) as `cwd` to
-   `adapter.sendTurn()` and `adapter.startSession()`.
+2. ~~**P0 - Fix CWD**~~ ✅ **FIXED** — `server.ts:1153` passes `cwd: thread.worktreePath ?? workspaceRoot` to `adapter.sendTurn()`.
 
-3. **P1 - Broadcast thread.created**: Emit event when a new thread is created.
+3. ~~**P1 - Broadcast thread.created**~~ ✅ **FIXED** — `server.ts:1074` now broadcasts `thread.created` after `thread.create` command.
 
-4. **P1 - Fix streaming**: Verify `thread.message-sent` streaming events are correctly
-   handled. The streaming cursor should show while `streaming: true`.
+4. **P1 - Fix streaming**: Verified working. `thread.message-sent` streaming events flow correctly. The streaming cursor shows while `streaming: true`. Minor gap: `tool-use-delta` events are broadcast from server but `activityPayloadToAIPart` in `useOrchestration.ts` doesn't handle them — partial tool input JSON silently dropped on mobile.
 
-5. **P2 - UI: Compact model picker**: Replace ConfigSheet Modal with a smaller popover
-   that appears over the composer, similar to t3code's pattern.
+5. ~~**P2 - UI: Compact model picker**~~ ✅ **DONE** — `ModelPopover.tsx` replaces full-screen ConfigSheet with a contextual popover.
 
-6. **P2 - UI: Provider icons**: Add colored dots or icons per provider (purple for
-   Claude, green for Codex/OpenAI).
+6. ~~**P2 - UI: Provider icons**~~ ✅ **DONE** — `ProviderIcon.tsx` added.
 
-7. **P3 - Add OpenCode support**: The app description mentions OpenCode but no adapter
-   exists. Would require a new `OpenCodeAdapter`.
+7. **P3 - Add OpenCode support**: Still planned. No adapter exists yet.
+
+---
+
+## Remaining Known Issues (as of 2026-04-13)
+
+### `tool-use-delta` dropped on mobile
+Server broadcasts `thread.activity-appended` with `type: 'tool-use-delta'` (partial JSON input). `activityPayloadToAIPart()` in `useOrchestration.ts` only handles `reasoning`, `tool-use`, `tool-result`. Delta events are silently ignored.
+
+**Fix**: Add `tool-use-delta` case to `activityPayloadToAIPart` — merge partial input into the matching tool-call part by `toolId`.
+
+### `permissionMode` gap
+`approval-required` runtime mode maps to `permissionMode: undefined` in `claude.ts:336`. The SDK's default may not match the `canUseTool` callback approach exactly.
+
+### `low` effort skips thinking
+`effort: 'low'` maps to `thinkingBudgetMap['low'] = null` → `thinkingConfig` stays `undefined`. Low effort effectively disables thinking silently.
 
 ---
 
@@ -164,6 +173,8 @@ to work: multi-turn conversations, correct CWD, proper event broadcasting.
 - Git operations (status, stage, commit, diff, log, branches)
 - File system (search, read, write, list)
 - Provider detection (claude binary probe, codex binary probe)
-- First-turn AI responses (single turn works, multi-turn broken)
+- Multi-turn Claude conversations (fixed — uses sessionId/resume)
+- CWD passed correctly to Claude adapter
 - Approval request flow (mobile → server → adapter → mobile round-trip)
 - Event subscription model (orchestration domain events)
+- Streaming text, reasoning, tool-use events
