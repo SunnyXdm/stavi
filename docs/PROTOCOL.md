@@ -22,13 +22,15 @@ This document is the complete reference for the Stavi WebSocket RPC protocol as 
    - 5.6 [process.*](#56-process-namespace)
    - 5.7 [system.*](#57-system-namespace)
    - 5.8 [server.*](#58-server-namespace)
-   - 5.9 [auth.*](#59-auth-namespace)
+   - 5.9 [session.*](#59-session-namespace)
+   - 5.10 [auth.*](#510-auth-namespace)
 6. [Subscriptions (Streaming RPC)](#6-subscriptions-streaming-rpc)
    - 6.1 [subscribeTerminalEvents](#61-subscribeterminalevents)
    - 6.2 [subscribeOrchestrationDomainEvents](#62-subscribeorchestrationdomainevents)
    - 6.3 [subscribeGitStatus](#63-subscribegitstatusns-git-action-statusstream)
    - 6.4 [system.monitorStream](#64-systemmonitorstream)
-   - 6.5 [server.lifecycle](#65-serverlifecycle)
+   - 6.5 [subscribeSessions](#65-subscribesessions)
+   - 6.6 [server.lifecycle](#66-serverlifecycle)
 7. [Orchestration Domain Events (Detail)](#7-orchestration-domain-events-detail)
 8. [Orchestration Commands (Dispatch Payloads)](#8-orchestration-commands-dispatch-payloads)
 9. [Snapshot Format](#9-snapshot-format)
@@ -375,6 +377,7 @@ Fetches the current full state of the orchestration domain (all threads, project
   snapshotSequence: number;  // Monotonic sequence number of the snapshot
   threads: Array<{
     threadId: string;
+    sessionId: string;
     projectId: string;
     title: string;
     runtimeMode: 'approval-required' | 'auto-accept-edits' | 'full-access';
@@ -779,6 +782,7 @@ Returns server configuration including CWD and available AI providers with their
 ```typescript
 {
   cwd: string;                     // Server's current working directory
+  serverId: string;                // Stable server UUID from credentials.json
   providers: Array<{
     provider: 'claude' | 'codex';  // Provider identifier
     installed: boolean;            // true if the provider's requirements are met
@@ -859,7 +863,123 @@ Re-probes provider availability (re-checks API keys, re-runs `which codex`, re-i
 
 ---
 
-### 5.9 `auth` Namespace
+### 5.9 `session` Namespace
+
+#### `session.create`
+
+Creates a new Session.
+
+**Request payload:**
+
+```typescript
+{
+  folder: string;           // absolute folder path
+  title?: string;           // default: "Workspace"
+  agentRuntime?: 'claude' | 'codex';
+}
+```
+
+**Response (`exit.value`):** `Session`
+
+---
+
+#### `session.list`
+
+Lists sessions.
+
+**Request payload:**
+
+```typescript
+{ includeArchived?: boolean }
+```
+
+**Response (`exit.value`):**
+
+```typescript
+{ sessions: Session[] }
+```
+
+---
+
+#### `session.get`
+
+Fetch one session + its threads.
+
+**Request payload:**
+
+```typescript
+{ sessionId: string }
+```
+
+**Response (`exit.value`):**
+
+```typescript
+{ session: Session; threads: OrchestrationThread[] }
+```
+
+---
+
+#### `session.rename`
+
+Rename a session.
+
+**Request payload:**
+
+```typescript
+{ sessionId: string; title: string }
+```
+
+**Response (`exit.value`):**
+
+```typescript
+{ session: Session }
+```
+
+---
+
+#### `session.archive`
+
+Archive a session (status='archived').
+
+**Request payload:**
+
+```typescript
+{ sessionId: string }
+```
+
+**Response:** `{ ok: true }`
+
+---
+
+#### `session.delete`
+
+Hard delete a session (cascades threads/messages).
+
+**Request payload:**
+
+```typescript
+{ sessionId: string }
+```
+
+**Response:** `{ ok: true }`
+
+---
+
+#### `session.touch`
+
+Update lastActiveAt (and optionally status via server internals).
+
+**Request payload:**
+
+```typescript
+{ sessionId: string }
+```
+
+**Response:** `{ ok: true }`
+
+---
+
+### 5.10 `auth` Namespace
 
 | Tag | Purpose |
 |-----|---------|
@@ -1008,7 +1128,21 @@ Streams periodic system resource usage snapshots.
 
 ---
 
-### 6.5 `server.lifecycle`
+### 6.5 `subscribeSessions`
+
+Subscribes to session CRUD events.
+
+**Request payload:** `{}`
+
+**Chunk `values` element shape:**
+
+```typescript
+{ type: 'created' | 'updated' | 'archived' | 'deleted'; session: Session }
+```
+
+---
+
+### 6.6 `server.lifecycle`
 
 Streams server lifecycle events (e.g. ready, shutdown, config reload).
 
@@ -1153,6 +1287,26 @@ payload: {
 
 All commands are dispatched via `orchestration.dispatchCommand` with `{ command: <CommandObject> }`.
 
+### `thread.create` — Create a new thread
+
+```typescript
+{
+  type: 'thread.create';
+  commandId: string;
+  threadId: string;
+  sessionId: string;           // Required starting Phase 1
+  projectId: string;
+  title: string;
+  runtimeMode: 'approval-required' | 'auto-accept-edits' | 'full-access';
+  interactionMode: 'default' | 'plan';
+  branch: string;
+  worktreePath?: string | null;
+  createdAt: string;           // ISO-8601
+}
+```
+
+---
+
 ### `thread.turn.start` — Send a message / start an AI turn
 
 ```typescript
@@ -1160,6 +1314,7 @@ All commands are dispatched via `orchestration.dispatchCommand` with `{ command:
   type: 'thread.turn.start';
   commandId: string;           // Client-generated unique ID, e.g. "cmd-1744372800000-a2f"
   threadId: string;
+  sessionId: string;           // Required starting Phase 1
   message: {
     messageId: string;         // Client-generated, used for optimistic UI
     role: 'user';
@@ -1199,6 +1354,7 @@ All commands are dispatched via `orchestration.dispatchCommand` with `{ command:
   type: 'thread.turn.interrupt';
   commandId: string;
   threadId: string;
+  sessionId: string;           // Required starting Phase 1
   createdAt: string;           // ISO-8601
 }
 ```
@@ -1214,6 +1370,7 @@ All commands are dispatched via `orchestration.dispatchCommand` with `{ command:
   type: 'thread.approval.respond';
   commandId: string;
   threadId: string;
+  sessionId: string;           // Required starting Phase 1
   requestId: string;           // The approval request ID from the event
   decision: 'accept' | 'reject' | 'always-allow';
   createdAt: string;           // ISO-8601
