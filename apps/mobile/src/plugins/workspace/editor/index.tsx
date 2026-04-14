@@ -1,13 +1,13 @@
 // WHAT: Workspace Plugin — Editor (Acode-style IDE surface).
-// WHY:  Phase 4a introduces the file tree, tab bar, and event-bus plumbing.
-//       Replaces the Phase 3 plain-text viewer with a split-pane layout:
-//       left = FileTree, right = EditorTabs + EditorSurface (placeholder in 4a).
-//       Phase 4b will swap EditorSurface for a CodeMirror 6 WebView.
-// HOW:  Uses EditorStore (Zustand, persisted) for per-session open/active files.
-//       Subscribes to 'editor.openFile' cross-plugin events via eventBus.
-//       useWindowDimensions() drives tablet (pinned tree) vs phone (toggle tree) layout.
-// SEE:  apps/mobile/src/plugins/workspace/editor/store.ts,
-//       apps/mobile/src/plugins/workspace/editor/components/,
+// WHY:  Phase 4b upgrades the Phase 4a placeholder to a real CodeMirror 6 editor
+//       via a WebView bridge. Save/Undo/Redo/Find toolbar actions now route through
+//       the EditorBridgeHandle exposed by EditorSurface.
+// HOW:  bridgeRef (MutableRefObject<EditorBridgeHandle|null>) is created here and
+//       threaded down to EditorSurface, which populates it once the WebView is ready.
+//       handleAction() calls the appropriate bridge method. Cursor position returned
+//       via onCursorMoved callback and stored in local state for the toolbar.
+// SEE:  apps/mobile/src/plugins/workspace/editor/components/EditorSurface.tsx,
+//       apps/mobile/src/plugins/workspace/editor/store.ts,
 //       packages/shared/src/plugin-events.ts
 
 import React, { useCallback, useEffect, useState, useRef } from 'react';
@@ -27,6 +27,7 @@ import { useEditorStore } from './store';
 import { FileTree } from './components/FileTree';
 import { EditorTabs } from './components/EditorTabs';
 import { EditorSurface } from './components/EditorSurface';
+import type { EditorBridgeHandle } from './components/EditorSurface';
 import { EditorToolbar } from './components/EditorToolbar';
 import type { EditorAction } from './components/EditorToolbar';
 import { eventBus } from '../../../services/event-bus';
@@ -49,6 +50,12 @@ function EditorPanel({ instanceId, session, isActive }: WorkspacePluginPanelProp
   const [phoneTreeVisible, setPhoneTreeVisible] = useState(false);
   const treeVisible = isTablet || phoneTreeVisible;
 
+  // Bridge handle — populated by EditorSurface once the WebView is ready
+  const bridgeRef = useRef<EditorBridgeHandle | null>(null);
+
+  // Cursor position for toolbar display
+  const [cursor, setCursor] = useState<{ line: number; col: number } | undefined>(undefined);
+
   const openFiles = useEditorStore((s) => s.openFilesBySession[sessionId] ?? []);
   const activeFilePath = useEditorStore(
     (s) => s.activeFileBySession[sessionId] ?? null,
@@ -70,11 +77,33 @@ function EditorPanel({ instanceId, session, isActive }: WorkspacePluginPanelProp
   }, [sessionId, serverId, openFileInStore]);
 
   // -------------------------------------------------------
-  // Toolbar action handler (no-ops in 4a; bridge in 4b)
+  // Toolbar action handler — routes through WebView bridge
   // -------------------------------------------------------
-  const handleAction = useCallback((_action: EditorAction) => {
-    // Phase 4a: no-op. Phase 4b will wire Save/Undo/Redo/Find to the WebView bridge.
-    // Save: bridge.requestContent(requestId) → await contentResponse → fs.write
+  const handleAction = useCallback((action: EditorAction) => {
+    switch (action) {
+      case 'save':
+        void bridgeRef.current?.save();
+        break;
+      case 'undo':
+        bridgeRef.current?.undo();
+        break;
+      case 'redo':
+        bridgeRef.current?.redo();
+        break;
+      case 'find':
+        bridgeRef.current?.find();
+        break;
+      case 'format':
+        // Phase 4b: no formatter. No-op.
+        break;
+    }
+  }, []);
+
+  // -------------------------------------------------------
+  // Cursor moved callback from EditorSurface
+  // -------------------------------------------------------
+  const handleCursorMoved = useCallback((line: number, col: number) => {
+    setCursor({ line, col });
   }, []);
 
   // -------------------------------------------------------
@@ -98,6 +127,7 @@ function EditorPanel({ instanceId, session, isActive }: WorkspacePluginPanelProp
         onAction={handleAction}
         isDirty={isDirty}
         fileName={activeFilePath?.split('/').pop()}
+        cursor={cursor}
       />
 
       {/* Main area: tree + content */}
@@ -112,7 +142,14 @@ function EditorPanel({ instanceId, session, isActive }: WorkspacePluginPanelProp
         {/* Content area */}
         <View style={styles.content}>
           <EditorTabs sessionId={sessionId} />
-          <EditorSurface activeFile={activeFile} onAction={handleAction} />
+          <EditorSurface
+            activeFile={activeFile}
+            sessionId={sessionId}
+            serverId={serverId}
+            onAction={handleAction}
+            onCursorMoved={handleCursorMoved}
+            bridgeRef={bridgeRef}
+          />
         </View>
       </View>
     </View>
@@ -137,7 +174,8 @@ function editorApi(): EditorPluginAPI {
     },
 
     saveFile: async (_path: string) => {
-      // Phase 4a: no-op. Phase 4b wires through bridge.
+      // Phase 4b: save is handled via the toolbar action / Cmd+S shortcut inside the editor.
+      // Cross-plugin save-by-path is not implemented in Phase 4b.
     },
 
     getCurrentFile: () => {
