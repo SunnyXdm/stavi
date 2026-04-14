@@ -38,6 +38,10 @@ export interface Subscription {
   ws: WebSocket;
   requestId: string;
   tag: string;
+  /** For terminal subscriptions: only emit events matching this threadId. */
+  threadId?: string;
+  /** For terminal subscriptions: if set, only emit events for this terminalId. */
+  terminalId?: string;
 }
 
 // ----------------------------------------------------------

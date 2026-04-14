@@ -297,12 +297,30 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
     }),
     {
       name: 'stavi-plugin-registry',
+      version: 2,
       storage: createJSONStorage(() => AsyncStorage),
       // Only persist tab state, not definitions (those are registered at boot)
       partialize: (state) => ({
         openTabs: state.openTabs,
         activeTabId: state.activeTabId,
       }),
+      migrate: (persistedState: unknown, fromVersion: number) => {
+        if (!persistedState || typeof persistedState !== 'object') return persistedState;
+        const s = persistedState as Record<string, unknown>;
+
+        if (fromVersion < 2) {
+          // Rename pluginId 'search' → 'workspace-search'.
+          // Drop tabs whose pluginId will no longer be registered (guard against future renames).
+          if (Array.isArray(s.openTabs)) {
+            s.openTabs = s.openTabs.map((tab: any) => {
+              if (tab?.pluginId === 'search') return { ...tab, pluginId: 'workspace-search' };
+              return tab;
+            });
+          }
+        }
+
+        return s;
+      },
     },
   ),
 );

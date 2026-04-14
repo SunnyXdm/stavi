@@ -38,7 +38,7 @@ async function pingServer(host: string, port: number, tls?: boolean): Promise<bo
   const timeout = setTimeout(() => controller.abort(), 3000);
 
   try {
-    const response = await fetch(`${protocol}://${host}:${port}/api/health`, {
+    const response = await fetch(`${protocol}://${host}:${port}/health`, {
       method: 'GET',
       signal: controller.signal,
     });

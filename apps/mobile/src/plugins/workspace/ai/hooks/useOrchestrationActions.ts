@@ -4,10 +4,15 @@
 
 import { useCallback } from 'react';
 import { staviClient } from '../../../../stores/stavi-client';
+import { useConnectionStore } from '../../../../stores/connection';
+import { useAiBindingsStore } from '../../../../stores/ai-bindings-store';
 import type { OrchestrationState, Thread } from '../useOrchestration';
 
-/** Module-level map: instanceId → bound threadId (survives re-renders) */
-export const instanceThreadBindings = new Map<string, string>();
+// Phase 0: serverId comes from the active connection; sessionId is 'local' until Phase 3
+// introduces real Session IDs.
+function getServerId(): string {
+  return useConnectionStore.getState().activeConnection?.id ?? 'local';
+}
 
 interface ActionDeps {
   setState: React.Dispatch<React.SetStateAction<OrchestrationState>>;
@@ -135,7 +140,13 @@ export function useOrchestrationActions({
   );
 
   const setActiveThread = useCallback((threadId: string) => {
-    if (instanceId) instanceThreadBindings.set(instanceId, threadId);
+    if (instanceId) {
+      const serverId = getServerId();
+      useAiBindingsStore.getState().bind(
+        { serverId, sessionId: 'local', instanceId },
+        threadId,
+      );
+    }
     activeThreadIdRef.current = threadId;
     setState((prev) => ({ ...prev, activeThreadId: threadId }));
   }, [instanceId, activeThreadIdRef, setState]);

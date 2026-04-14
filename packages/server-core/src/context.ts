@@ -172,7 +172,13 @@ export function createServerContext(
   };
 
   const emitTerminalEvent = (event: Record<string, unknown>) => {
+    const eventThreadId = typeof event.threadId === 'string' ? event.threadId : undefined;
+    const eventTerminalId = typeof event.terminalId === 'string' ? event.terminalId : undefined;
     for (const sub of terminalSubscriptions.values()) {
+      // Subscriptions without a threadId filter receive nothing (no global broadcast).
+      if (!sub.threadId) continue;
+      if (sub.threadId !== eventThreadId) continue;
+      if (sub.terminalId !== undefined && sub.terminalId !== eventTerminalId) continue;
       sendJson(sub.ws, makeChunk(sub.requestId, [event]));
     }
   };
@@ -370,6 +376,7 @@ export function createServerContext(
     cols?: number,
     rows?: number,
   ): TerminalSession => {
+    if (!threadId) throw new Error('threadId is required');
     const key = `${threadId}:${terminalId}`;
     const existing = terminalSessions.get(key);
     if (existing) return existing;

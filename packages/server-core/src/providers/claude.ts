@@ -537,6 +537,7 @@ export class ClaudeAdapter implements ProviderAdapter {
               session.sessionId = (message as any).session_id;
             }
             session.hasStarted = true;
+            session.queryRuntime = null;
 
             return;
           }

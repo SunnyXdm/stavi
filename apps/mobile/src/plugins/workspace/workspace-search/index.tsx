@@ -161,8 +161,8 @@ function SearchPanel({ instanceId, isActive }: PluginPanelProps) {
 // Plugin Definition
 // ----------------------------------------------------------
 
-export const searchPlugin: PluginDefinition = {
-  id: 'search',
+export const workspaceSearchPlugin: PluginDefinition = {
+  id: 'workspace-search',
   name: 'Search',
   description: 'Search across all project files',
   kind: 'extra',
