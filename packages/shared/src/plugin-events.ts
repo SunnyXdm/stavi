@@ -40,6 +40,10 @@ export const PluginEvents = {
   // Return-when-done (the brainrot pattern)
   RETURN_WHEN_DONE_REGISTERED: 'ui:return:registered',
   RETURN_WHEN_DONE_TRIGGERED: 'ui:return:triggered',
+
+  // Editor cross-plugin events (Phase 4a)
+  EDITOR_OPEN_FILE: 'editor.openFile',
+  TERMINAL_OPEN_HERE: 'terminal.openHere',
 } as const;
 
 // Type-safe event payload map
@@ -73,6 +77,10 @@ export interface PluginEventPayloads {
 
   [PluginEvents.RETURN_WHEN_DONE_REGISTERED]: { sourcePluginId: string; targetPluginId: string };
   [PluginEvents.RETURN_WHEN_DONE_TRIGGERED]: { sourcePluginId: string; targetPluginId: string };
+
+  // Editor cross-plugin events (Phase 4a)
+  'editor.openFile': { sessionId: string; path: string; line?: number; column?: number };
+  'terminal.openHere': { sessionId: string; cwd: string };
 }
 
 // Utility type to extract payload for a given event

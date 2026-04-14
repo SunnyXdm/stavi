@@ -733,19 +733,107 @@ Writes content to a file in the project.
 
 ### 5.5 `fs` Namespace
 
-Full filesystem operations (defined in `NamespaceActions.fs`):
+Full filesystem operations:
 
 | Tag | Purpose |
 |-----|---------|
-| `fs.list` | List directory contents |
+| `fs.list` | List directory contents (see below for `showHidden` option) |
 | `fs.read` | Read a file |
 | `fs.write` | Write a file |
-| `fs.delete` | Delete a file or directory |
-| `fs.rename` | Rename a file |
-| `fs.move` | Move a file |
-| `fs.mkdir` | Create a directory |
-| `fs.stat` | Get file metadata |
-| `fs.search` | Search file contents |
+| `fs.create` | Create a new file or directory (Phase 4a) |
+| `fs.rename` | Rename or move a file / directory (Phase 4a) |
+| `fs.delete` | Delete a file or directory (Phase 4a) |
+| `fs.search` | Search file contents (fuzzy + exact-path) |
+| `fs.grep` | Full-text ripgrep search |
+
+#### `fs.list` (updated — Phase 4a)
+
+**Request payload:**
+
+```typescript
+{
+  path: string;          // Absolute or relative path
+  showHidden?: boolean;  // Default false. When true, HIDDEN_DIRS and dot-files
+                         // are NOT filtered — shows .git, node_modules, etc.
+}
+```
+
+**Response (`exit.value`):**
+
+```typescript
+{
+  path: string;
+  entries: Array<{
+    name: string;
+    type: 'file' | 'directory';
+    size?: number;  // Present for files
+  }>;
+}
+```
+
+Entries are sorted: directories first, then files, both alphabetically.
+
+---
+
+#### `fs.create` (new — Phase 4a)
+
+Creates a new file or directory. Rejects paths outside `workspaceRoot` and known Session folders (path-traversal guard).
+
+**Request payload:**
+
+```typescript
+{
+  path: string;                   // Absolute path
+  type: 'file' | 'directory';
+  content?: string;               // Initial content for files (default: empty)
+}
+```
+
+**Response (`exit.value`):** `{ ok: true }`
+
+---
+
+#### `fs.rename` (updated — Phase 4a)
+
+Renames or moves a file or directory. Rejects source/destination paths outside allowed roots.
+
+**Request payload:**
+
+```typescript
+{
+  from: string;   // Absolute source path
+  to: string;     // Absolute destination path
+}
+```
+
+**Response (`exit.value`):** `{ ok: true }`
+
+---
+
+#### `fs.delete` (updated — Phase 4a)
+
+Deletes a file or directory. Rejects paths outside allowed roots.
+
+**Request payload:**
+
+```typescript
+{
+  path: string;
+  recursive?: boolean;  // Required true to delete non-empty directories (default false)
+}
+```
+
+**Response (`exit.value`):** `{ ok: true }`
+
+---
+
+#### Path-traversal guard (all mutating fs RPCs)
+
+`fs.create`, `fs.rename`, and `fs.delete` validate that the target path falls within:
+1. `ctx.workspaceRoot`, OR
+2. A folder of any active (non-archived) Session in the database.
+
+Requests that fail this check receive `Exit.Failure` with `"Path is outside allowed workspace roots"`.
 
 ---
 
@@ -1917,6 +2005,10 @@ const PluginEvents = {
   // Return-when-done
   RETURN_WHEN_DONE_REGISTERED: 'ui:return:registered',
   RETURN_WHEN_DONE_TRIGGERED:  'ui:return:triggered',
+
+  // Editor cross-plugin events (Phase 4a)
+  EDITOR_OPEN_FILE:   'editor.openFile',
+  TERMINAL_OPEN_HERE: 'terminal.openHere',
 }
 ```
 
@@ -1953,6 +2045,10 @@ interface PluginEventPayloads {
 
   'ui:return:registered': { sourcePluginId: string; targetPluginId: string };
   'ui:return:triggered':  { sourcePluginId: string; targetPluginId: string };
+
+  // Cross-plugin editor/terminal events (Phase 4a)
+  'editor.openFile':  { sessionId: string; path: string; line?: number; column?: number };
+  'terminal.openHere': { sessionId: string; cwd: string };
 }
 ```
 

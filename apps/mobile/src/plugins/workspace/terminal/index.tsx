@@ -25,6 +25,7 @@ import NativeTerminal, { type NativeTerminalRef } from '../../../components/Nati
 import { TerminalToolbar } from '../../../components/TerminalToolbar';
 import { useConnectionStore } from '../../../stores/connection';
 import { useSessionRegistry } from '../../../stores/session-registry';
+import { eventBus } from '../../../services/event-bus';
 
 // ----------------------------------------------------------
 // Types
@@ -273,6 +274,16 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
       createSession(defaultCwd);
     }
   }, [connectionState, createSession, defaultCwd, sessions.length]);
+
+  // Subscribe to terminal.openHere cross-plugin event (Phase 4a)
+  useEffect(() => {
+    const unsub = eventBus.on('terminal.openHere', (payload) => {
+      if (payload.sessionId !== session.id) return;
+      if (connectionState !== 'connected') return;
+      createSession(payload.cwd);
+    });
+    return unsub;
+  }, [session.id, connectionState, createSession]);
 
   // Register sessions with SessionRegistry for PluginHeader / DrawerContent
   useEffect(() => {
