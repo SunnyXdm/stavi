@@ -252,7 +252,7 @@ function getClient(serverId?: string) {
 function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session }: WorkspacePluginPanelProps) {
   const connectionState = useConnectionStore((s) => s.getStatusForServer(session.serverId));
   const listRef = useRef<any>(null);
-  const worktreePath = (initialState?.directory as string | undefined) ?? session.folder;
+  const worktreePath = session.folder;
 
   const {
     threads,
@@ -265,7 +265,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
     interruptTurn,
     respondToApproval,
     setActiveThread,
-  } = useOrchestration({ instanceId, worktreePath, serverId: session.serverId });
+  } = useOrchestration({ instanceId, worktreePath, serverId: session.serverId, sessionId: session.id });
 
   // Register AI threads with SessionRegistry so DrawerContent can show them
   const registerSessions = useSessionRegistry((s) => s.register);
@@ -579,29 +579,15 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
     >
       {/* Messages */}
       {activeAIMessages.length === 0 ? (
-        worktreePath ? (
-          // Has a directory — show ready state with dir name
-          <View style={styles.emptyChat}>
-            <Sparkles size={40} color={colors.accent.primary} style={{ opacity: 0.3 }} />
-            <Text style={styles.emptyChatTitle}>
-              {worktreePath.split('/').filter(Boolean).pop()}
-            </Text>
-            <Text style={styles.emptyChatSubtitle}>
-              Select a model below and send a message to start.
-            </Text>
-          </View>
-        ) : (
-          // No directory — default placeholder tab, show "New Session" CTA
-          <View style={styles.emptyChat}>
-            <View style={styles.emptyChatIcon}>
-              <Sparkles size={28} color={colors.accent.primary} />
-            </View>
-            <Text style={styles.emptyChatTitle}>No AI session open</Text>
-            <Text style={styles.emptyChatSubtitle}>
-              Start a new session in a project directory.
-            </Text>
-          </View>
-        )
+        <View style={styles.emptyChat}>
+          <Sparkles size={40} color={colors.accent.primary} style={{ opacity: 0.3 }} />
+          <Text style={styles.emptyChatTitle}>
+            {worktreePath.split('/').filter(Boolean).pop()}
+          </Text>
+          <Text style={styles.emptyChatSubtitle}>
+            Select a model below and send a message to start.
+          </Text>
+        </View>
       ) : (
         <FlashList
           ref={listRef}
@@ -616,8 +602,8 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
         />
       )}
 
-      {/* Composer — hidden on the placeholder "no session" tab */}
-      {worktreePath !== null && <Composer
+      {/* Composer — always visible since session.folder is always available */}
+      <Composer
         onSend={handleSend}
         onInterrupt={handleInterrupt}
         onProviderPress={() => openPopover(providerLocked ? 'models' : 'providers')}
@@ -644,7 +630,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
               ?? null
             : null
         }
-      />}
+      />
 
       {/* Contextual popover */}
       <ModelPopover
@@ -793,15 +779,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing[8],
     gap: spacing[3],
-  },
-  emptyChatIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: radii.xl,
-    backgroundColor: colors.accent.subtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing[2],
   },
   emptyChatTitle: {
     fontSize: typography.fontSize.lg,

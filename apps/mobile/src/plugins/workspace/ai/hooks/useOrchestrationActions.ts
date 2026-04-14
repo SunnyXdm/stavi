@@ -13,6 +13,7 @@ function getOrchestrationClient(serverId: string) {
 
 interface ActionDeps {
   serverId: string;
+  sessionId: string;
   setState: React.Dispatch<React.SetStateAction<OrchestrationState>>;
   activeThreadIdRef: React.MutableRefObject<string | null>;
   instanceId: string | undefined;
@@ -22,6 +23,7 @@ interface ActionDeps {
 
 export function useOrchestrationActions({
   serverId,
+  sessionId,
   setState,
   activeThreadIdRef,
   instanceId,
@@ -141,13 +143,13 @@ export function useOrchestrationActions({
   const setActiveThread = useCallback((threadId: string) => {
     if (instanceId) {
       useAiBindingsStore.getState().bind(
-        { serverId, sessionId: 'local', instanceId },
+        { serverId, sessionId, instanceId },
         threadId,
       );
     }
     activeThreadIdRef.current = threadId;
     setState((prev) => ({ ...prev, activeThreadId: threadId }));
-  }, [instanceId, activeThreadIdRef, setState]);
+  }, [instanceId, serverId, sessionId, activeThreadIdRef, setState]);
 
   const updateSettings = useCallback(async (settings: Record<string, unknown>) => {
     const result = await getOrchestrationClient(serverId)?.request<{ providers?: any[] }>('server.updateSettings', settings);

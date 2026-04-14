@@ -60,6 +60,13 @@ interface PluginRegistryActions {
   /** Ensure default workspace plugins have tabs for a given session. */
   initialize(sessionId?: string): void;
 
+  // Phase 3 per-session named methods
+  /** Populate default workspace plugin tabs on first entry; restore prior state on subsequent entries. */
+  initializeForSession(sessionId: string): void;
+  openTabInSession(sessionId: string, pluginId: string, initialState?: Record<string, unknown>): string;
+  closeTabInSession(sessionId: string, instanceId: string): void;
+  setActiveTabInSession(sessionId: string, instanceId: string): void;
+
   getDefinition(pluginId: string): PluginDefinition | undefined;
   getCorePlugins(): PluginDefinition[];
   getExtraPlugins(): PluginDefinition[];
@@ -255,6 +262,12 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
           isReady: true,
         }));
       },
+
+      // Phase 3 per-session named methods — delegate to existing methods with swapped arg order
+      initializeForSession: (sessionId) => get().initialize(sessionId),
+      openTabInSession: (sessionId, pluginId, initialState) => get().openTab(pluginId, initialState, sessionId),
+      closeTabInSession: (sessionId, instanceId) => get().closeTab(instanceId, sessionId),
+      setActiveTabInSession: (sessionId, instanceId) => get().setActiveTab(instanceId, sessionId),
 
       getDefinition: (pluginId) => get().definitions[pluginId],
 

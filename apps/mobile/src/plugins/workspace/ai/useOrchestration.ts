@@ -104,9 +104,11 @@ export function useOrchestration(input?: {
   instanceId?: string;
   worktreePath?: string | null;
   serverId?: string;
+  sessionId?: string;
 }) {
   const instanceId = input?.instanceId;
   const preferredWorktreePath = input?.worktreePath ?? null;
+  const sessionId = input?.sessionId ?? 'local';
   const activeConnectionId = input?.serverId ?? useConnectionStore.getState().savedConnections[0]?.id ?? 'local';
   const connectionState = useConnectionStore.getState().getServerStatus(activeConnectionId);
   const client = useConnectionStore.getState().getClientForServer(activeConnectionId);
@@ -141,10 +143,10 @@ export function useOrchestration(input?: {
     return () => {
       coalescerRef.current?.destroy();
       if (instanceId) {
-        useAiBindingsStore.getState().unbind({ serverId: activeConnectionId, sessionId: 'local', instanceId });
+        useAiBindingsStore.getState().unbind({ serverId: activeConnectionId, sessionId, instanceId });
       }
     };
-  }, [instanceId, activeConnectionId]);
+  }, [instanceId, activeConnectionId, sessionId]);
 
   // ----------------------------------------------------------
   // Model resolution
@@ -182,7 +184,7 @@ export function useOrchestration(input?: {
 
   const ensureActiveThread = useCallback(async () => {
     const currentId = instanceId
-      ? useAiBindingsStore.getState().getBoundThreadId({ serverId: activeConnectionId, sessionId: 'local', instanceId }) ?? activeThreadIdRef.current
+      ? useAiBindingsStore.getState().getBoundThreadId({ serverId: activeConnectionId, sessionId, instanceId }) ?? activeThreadIdRef.current
       : activeThreadIdRef.current;
     if (currentId) return currentId;
 
@@ -205,6 +207,7 @@ export function useOrchestration(input?: {
         type: 'thread.create',
         commandId: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         threadId,
+        sessionId: sessionId !== 'local' ? sessionId : undefined,
         projectId: project.id,
         title,
         runtimeMode: 'approval-required',
@@ -216,7 +219,7 @@ export function useOrchestration(input?: {
     });
 
     if (instanceId) {
-      useAiBindingsStore.getState().bind({ serverId: activeConnectionId, sessionId: 'local', instanceId }, threadId);
+      useAiBindingsStore.getState().bind({ serverId: activeConnectionId, sessionId, instanceId }, threadId);
     }
     activeThreadIdRef.current = threadId;
     setState((prev) => ({
@@ -242,7 +245,7 @@ export function useOrchestration(input?: {
           ],
     }));
     return threadId;
-  }, [instanceId, preferredWorktreePath, activeConnectionId]);
+  }, [instanceId, preferredWorktreePath, activeConnectionId, sessionId, client]);
 
   // ----------------------------------------------------------
   // Event processing (pure state reducer)
@@ -269,7 +272,7 @@ export function useOrchestration(input?: {
         next.threads = prev.threads.some((item) => item.threadId === thread.threadId)
           ? prev.threads.map((item) => (item.threadId === thread.threadId ? thread : item))
           : [...prev.threads, thread];
-        if (instanceId && useAiBindingsStore.getState().getBoundThreadId({ serverId: activeConnectionId, sessionId: 'local', instanceId }) === thread.threadId) {
+        if (instanceId && useAiBindingsStore.getState().getBoundThreadId({ serverId: activeConnectionId, sessionId, instanceId }) === thread.threadId) {
           next.activeThreadId = thread.threadId;
           activeThreadIdRef.current = thread.threadId;
         }
@@ -390,7 +393,7 @@ export function useOrchestration(input?: {
       next.snapshotSequence = Math.max(next.snapshotSequence, event.sequence);
     }
     return next;
-  }, [instanceId, activeConnectionId]);
+  }, [instanceId, activeConnectionId, sessionId]);
 
   const processEvent = useCallback((event: any) => {
     const eventType = event.type;
@@ -490,10 +493,10 @@ export function useOrchestration(input?: {
 
         // Reconcile: drop any binding that points to a threadId no longer in the snapshot.
         const validThreadIds = new Set(threads.map((t) => t.threadId));
-        useAiBindingsStore.getState().reconcile(activeConnectionId, 'local', validThreadIds);
+        useAiBindingsStore.getState().reconcile(activeConnectionId, sessionId, validThreadIds);
 
         const boundThreadId = instanceId
-          ? useAiBindingsStore.getState().getBoundThreadId({ serverId: activeConnectionId, sessionId: 'local', instanceId }) ?? null
+          ? useAiBindingsStore.getState().getBoundThreadId({ serverId: activeConnectionId, sessionId, instanceId }) ?? null
           : null;
         const activeThreadId =
           boundThreadId && threads.some((t) => t.threadId === boundThreadId) ? boundThreadId : null;
@@ -525,7 +528,7 @@ export function useOrchestration(input?: {
       unsubRef.current?.();
       unsubRef.current = null;
     };
-  }, [connectionState, instanceId, processEvent, activeConnectionId, client]);
+  }, [connectionState, instanceId, processEvent, activeConnectionId, client, sessionId]);
 
   // ----------------------------------------------------------
   // Actions
@@ -533,6 +536,7 @@ export function useOrchestration(input?: {
 
   const actions = useOrchestrationActions({
     serverId: activeConnectionId,
+    sessionId,
     setState,
     activeThreadIdRef,
     instanceId,

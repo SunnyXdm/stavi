@@ -1,9 +1,11 @@
-// ============================================================
-// DirectoryPicker — Bottom-sheet folder browser
-// ============================================================
-// Navigable directory tree via the server's fs.list RPC.
-// Used by the AI tab to select a workspace directory and
-// reusable for the editor's folder picker.
+// WHAT: DirectoryPicker — Bottom-sheet folder browser for selecting workspace directories.
+// WHY:  Used during Session creation to pick the project folder.
+// HOW:  Navigable directory tree via the server's fs.list RPC.
+// SEE:  apps/mobile/src/components/NewSessionFlow.tsx
+//
+// IMPORTANT: The ONLY caller of this component is NewSessionFlow.tsx.
+// Phase 3 removed all other call sites (WorkspaceScreen, AI plugin, Editor plugin).
+// Do not add new callers — plugins receive session.folder from their Session prop.
 
 import React, { memo, useState, useCallback, useEffect } from 'react';
 import {

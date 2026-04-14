@@ -1,11 +1,8 @@
-// ============================================================
-// Core Plugin: Editor
-// ============================================================
-// Code viewer with file tabs. Opens files via GPI from Explorer
-// or AI file changes. Uses ScrollView with monospace text for
-// code display (WebView + CodeMirror planned for v2).
-//
-// Each plugin instance has its own file state keyed by instanceId.
+// WHAT: Workspace Plugin — Editor (code viewer with file tabs).
+// WHY:  Phase 3 makes the editor session-bound — receives session.folder, no folder prompts.
+// HOW:  Opens files via GPI from Explorer or AI. Uses ScrollView with monospace text
+//       for code display (WebView + CodeMirror planned for Phase 4b).
+// SEE:  apps/mobile/src/components/PluginRenderer.tsx, packages/shared/src/plugin-types.ts
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {

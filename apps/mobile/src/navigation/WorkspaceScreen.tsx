@@ -1,28 +1,36 @@
-// ============================================================
-// WorkspaceScreen — the main IDE layout
-// ============================================================
-// Drawer sidebar + PluginHeader + Plugin panels + bottom bar.
-// Creating a new AI or Editor instance opens DirectoryPicker first.
+// WHAT: WorkspaceScreen — the main IDE layout, now Session-bound.
+// WHY:  Phase 3 binds every workspace to a specific Session. Route takes sessionId,
+//       plugins receive session: Session as a prop, folder picker is gone.
+// HOW:  Resolves Session from sessions-store via route param. Calls session.touch
+//       on mount and re-focus. BackHandler routes to SessionsHome on Android.
+// SEE:  apps/mobile/src/stores/sessions-store.ts, apps/mobile/src/stores/plugin-registry.ts
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, StyleSheet, StatusBar, Animated, Pressable, Dimensions } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  StatusBar,
+  Animated,
+  Pressable,
+  Dimensions,
+  BackHandler,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { AlertTriangle, ArrowLeft } from 'lucide-react-native';
 import { PluginRenderer } from '../components/PluginRenderer';
 import { PluginBottomBar } from '../components/PluginBottomBar';
 import { PluginHeader } from '../components/PluginHeader';
 import { DrawerContent } from '../components/DrawerContent';
-import { DirectoryPicker } from '../components/DirectoryPicker';
 import { usePluginRegistry } from '../stores/plugin-registry';
 import { useSessionsStore } from '../stores/sessions-store';
-import { colors } from '../theme';
+import { useConnectionStore } from '../stores/connection';
+import { colors, typography, spacing, radii } from '../theme';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 340);
-
-// Plugins that require a directory to be chosen before creating an instance
-const DIRECTORY_SCOPED_PLUGINS = new Set(['ai', 'editor']);
 
 export function WorkspaceScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<any>>();
@@ -32,20 +40,21 @@ export function WorkspaceScreen() {
   const initialize = usePluginRegistry((s) => s.initialize);
   const openTab = usePluginRegistry((s) => s.openTab);
   const definitions = usePluginRegistry((s) => s.definitions);
-  const getSession = useSessionsStore((state) => state.getSession);
+
+  // Session resolution from route param
   const sessionId = route.params?.sessionId as string | undefined;
-  const session = sessionId ? getSession(sessionId) : undefined;
-  const serverId = session?.serverId ?? (route.params?.serverId as string | undefined);
+  const session = useSessionsStore((state) =>
+    sessionId ? state.getSession(sessionId) : undefined,
+  );
+  const serverId = session?.serverId;
+
+  // Per-session tab state
   const openTabs = usePluginRegistry((s) => s.getOpenTabs(sessionId));
   const activeTabId = usePluginRegistry((s) => s.getActiveTabId(sessionId));
 
   // Drawer animation
   const drawerAnim = useRef(new Animated.Value(0)).current;
   const [drawerOpen, setDrawerOpen] = useState(false);
-
-  // Directory picker state
-  const [dirPickerVisible, setDirPickerVisible] = useState(false);
-  const [pendingPluginId, setPendingPluginId] = useState<string | null>(null);
 
   const openDrawer = useCallback(() => {
     setDrawerOpen(true);
@@ -68,6 +77,7 @@ export function WorkspaceScreen() {
 
   const handleNavigateHome = useCallback(() => {
     closeDrawer();
+    // Navigate without disconnecting — WebSockets stay alive
     navigation.navigate('SessionsHome');
   }, [closeDrawer, navigation]);
 
@@ -78,45 +88,57 @@ export function WorkspaceScreen() {
 
   // Initialize plugin tabs for this session on mount
   useEffect(() => {
-    initialize(sessionId);
-  }, [initialize, sessionId]);
+    if (sessionId && session) {
+      initialize(sessionId);
+    }
+  }, [initialize, sessionId, session]);
+
+  // session.touch on mount (non-blocking, errors logged)
+  useEffect(() => {
+    if (!session || !serverId) return;
+    const client = useConnectionStore.getState().getClientForServer(serverId);
+    if (!client) return;
+    client.request('session.touch', { sessionId: session.id }).catch((err) => {
+      console.warn('[WorkspaceScreen] session.touch failed:', err);
+    });
+  }, [session, serverId]);
+
+  // session.touch on re-focus (after navigating back from Home)
+  useFocusEffect(
+    useCallback(() => {
+      if (!session || !serverId) return;
+      const client = useConnectionStore.getState().getClientForServer(serverId);
+      if (!client) return;
+      client.request('session.touch', { sessionId: session.id }).catch((err) => {
+        console.warn('[WorkspaceScreen] session.touch on re-focus failed:', err);
+      });
+    }, [session, serverId]),
+  );
+
+  // Hardware back (Android): consume event, navigate to SessionsHome
+  useFocusEffect(
+    useCallback(() => {
+      const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+        navigation.navigate('SessionsHome');
+        return true; // consume the event — do NOT exit the app
+      });
+      return () => handler.remove();
+    }, [navigation]),
+  );
 
   const handleBarHeightChange = useCallback((height: number) => {
     setBottomBarHeight(height);
   }, []);
 
-  // Create a new plugin instance — opens directory picker for scoped plugins
+  // Create a new plugin instance — no more directory picker
   const handleCreateInstance = useCallback(
     (pluginId: string) => {
-      if (DIRECTORY_SCOPED_PLUGINS.has(pluginId)) {
-        if (!serverId) return;
-        setPendingPluginId(pluginId);
-        setDirPickerVisible(true);
-      } else {
-        openTab(pluginId, undefined, sessionId);
-      }
+      openTab(pluginId, undefined, sessionId);
     },
-    [openTab, serverId, sessionId],
+    [openTab, sessionId],
   );
 
-  // Called when user selects a directory in the picker
-  const handleDirectorySelect = useCallback(
-    (path: string) => {
-      if (pendingPluginId && sessionId) {
-        openTab(pendingPluginId, { directory: path, sessionId, serverId });
-      }
-      setPendingPluginId(null);
-      setDirPickerVisible(false);
-    },
-    [pendingPluginId, openTab, serverId, sessionId],
-  );
-
-  const handleDirPickerClose = useCallback(() => {
-    setPendingPluginId(null);
-    setDirPickerVisible(false);
-  }, []);
-
-  // Active plugin's ID (for determining if we need directory picker on "+" press)
+  // Active plugin's ID
   const activePluginId = (openTabs ?? []).find((t) => t.id === activeTabId)?.pluginId ?? null;
   const activePluginAllowsMultiple = activePluginId
     ? (definitions[activePluginId]?.allowMultipleInstances ?? false)
@@ -127,6 +149,45 @@ export function WorkspaceScreen() {
       handleCreateInstance(activePluginId);
     }
   }, [activePluginId, handleCreateInstance]);
+
+  // Error state: session not found, archived, or deleted
+  if (!sessionId || (!session && sessionId)) {
+    return (
+      <View style={styles.errorContainer}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.bg.base} />
+        <SafeAreaView style={styles.errorContent} edges={['top', 'bottom']}>
+          <AlertTriangle size={48} color={colors.semantic.warning} />
+          <Text style={styles.errorTitle}>Session not found</Text>
+          <Text style={styles.errorSubtitle}>
+            This session may have been archived or deleted.
+          </Text>
+          <Pressable style={styles.errorButton} onPress={() => navigation.navigate('SessionsHome')}>
+            <ArrowLeft size={16} color={colors.fg.onAccent} />
+            <Text style={styles.errorButtonText}>Back to Home</Text>
+          </Pressable>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  if (session?.status === 'archived') {
+    return (
+      <View style={styles.errorContainer}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.bg.base} />
+        <SafeAreaView style={styles.errorContent} edges={['top', 'bottom']}>
+          <AlertTriangle size={48} color={colors.semantic.warning} />
+          <Text style={styles.errorTitle}>Session archived</Text>
+          <Text style={styles.errorSubtitle}>
+            This session has been archived and is no longer active.
+          </Text>
+          <Pressable style={styles.errorButton} onPress={() => navigation.navigate('SessionsHome')}>
+            <ArrowLeft size={16} color={colors.fg.onAccent} />
+            <Text style={styles.errorButtonText}>Back to Home</Text>
+          </Pressable>
+        </SafeAreaView>
+      </View>
+    );
+  }
 
   if (!isReady) {
     return (
@@ -213,14 +274,6 @@ export function WorkspaceScreen() {
           </Animated.View>
         )}
       </Animated.View>
-
-      {/* Directory picker modal */}
-      <DirectoryPicker
-        visible={dirPickerVisible}
-        onClose={handleDirPickerClose}
-        onSelect={handleDirectorySelect}
-        serverId={serverId ?? session?.serverId ?? ''}
-      />
     </View>
   );
 }
@@ -269,5 +322,44 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: '#000',
     zIndex: 5,
+  },
+
+  // Error state
+  errorContainer: {
+    flex: 1,
+    backgroundColor: colors.bg.base,
+  },
+  errorContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing[6],
+    gap: spacing[3],
+  },
+  errorTitle: {
+    fontSize: typography.fontSize.lg,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.fg.primary,
+  },
+  errorSubtitle: {
+    fontSize: typography.fontSize.base,
+    color: colors.fg.tertiary,
+    textAlign: 'center',
+    lineHeight: typography.fontSize.base * 1.5,
+  },
+  errorButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+    backgroundColor: colors.accent.primary,
+    paddingHorizontal: spacing[5],
+    paddingVertical: spacing[3],
+    borderRadius: radii.md,
+    marginTop: spacing[4],
+  },
+  errorButtonText: {
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.fg.onAccent,
   },
 });
