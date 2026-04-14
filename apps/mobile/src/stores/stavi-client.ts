@@ -561,7 +561,13 @@ export class StaviClient {
 }
 
 // ----------------------------------------------------------
-// Singleton instance
+// Factory
 // ----------------------------------------------------------
 
-export const staviClient = new StaviClient();
+export function createStaviClient(config?: StaviConnectionConfig): StaviClient {
+  const client = new StaviClient();
+  if (config) {
+    void client.connect(config);
+  }
+  return client;
+}

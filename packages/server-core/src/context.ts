@@ -13,6 +13,10 @@ import type {
 } from './types';
 import type { ProviderRegistry } from './providers/registry';
 import type { ModelSelection } from './providers/types';
+import { openDatabase } from './db';
+import { SessionRepository } from './repositories/session-repo';
+import { ThreadRepository } from './repositories/thread-repo';
+import { MessageRepository } from './repositories/message-repo';
 import {
   makeChunk,
   makeFailure,
@@ -42,6 +46,7 @@ export interface ServerContext {
   // Static config
   workspaceRoot: string;
   baseDir: string;
+  serverId: string;
 
   // Mutable primitive state (boxed in object so mutations are shared)
   state: {
@@ -62,6 +67,7 @@ export interface ServerContext {
   gitSubscriptions: Map<string, Subscription>;
   orchestrationSubscriptions: Map<string, Subscription>;
   processSubscriptions: Map<string, Subscription>;
+  sessionSubscriptions: Map<string, Subscription>;
   connectionSubscriptions: Map<WebSocket, Set<string>>;
 
   // Provider/AI
@@ -70,6 +76,12 @@ export interface ServerContext {
 
   // Orchestration defaults
   defaultThreadTemplate: OrchestrationThread;
+
+  // Persistence
+  db: import('bun:sqlite').Database;
+  sessionRepo: import('./repositories/session-repo').SessionRepository;
+  threadRepo: import('./repositories/thread-repo').ThreadRepository;
+  messageRepo: import('./repositories/message-repo').MessageRepository;
 
   // Broadcast helpers (each has its own subscriber set and fan-out logic)
   broadcastGitStatus: () => Promise<void>;
@@ -119,7 +131,13 @@ export function createServerContext(
   baseDir: string,
   providerRegistry: ProviderRegistry,
   getGitStatus: (cwd: string) => Promise<import('./types').GitStatusPayload>,
+  serverId: string,
 ): ServerContext {
+  const db = openDatabase(baseDir);
+  const sessionRepo = new SessionRepository(db, serverId);
+  const threadRepo = new ThreadRepository(db);
+  const messageRepo = new MessageRepository(db);
+
   const threads = new Map<string, OrchestrationThread>();
   const messages = new Map<string, OrchestrationMessage[]>();
   const managedProcesses = new Map<string, ManagedProcess>();
@@ -128,6 +146,7 @@ export function createServerContext(
   const gitSubscriptions = new Map<string, Subscription>();
   const orchestrationSubscriptions = new Map<string, Subscription>();
   const processSubscriptions = new Map<string, Subscription>();
+  const sessionSubscriptions = new Map<string, Subscription>();
   const connectionSubscriptions = new Map<WebSocket, Set<string>>();
   const activeTurnAdapters = new Map<string, string>();
 
@@ -140,6 +159,7 @@ export function createServerContext(
 
   const defaultThreadTemplate: OrchestrationThread = {
     threadId: 'thread-local',
+    sessionId: 'session-local',
     projectId: 'project-local',
     title: 'Local Assistant',
     runtimeMode: 'approval-required',
@@ -150,6 +170,15 @@ export function createServerContext(
     createdAt: nowIso(),
     updatedAt: nowIso(),
   };
+
+  // Warm caches from disk
+  for (const thread of threadRepo.listAll()) {
+    threads.set(thread.threadId, thread);
+  }
+  for (const thread of threads.values()) {
+    const list = messageRepo.listMessagesForThread(thread.threadId);
+    if (list.length > 0) messages.set(thread.threadId, list);
+  }
 
   // -- Broadcast helpers --
 
@@ -233,6 +262,10 @@ export function createServerContext(
     return {
       ...(existing ?? defaultThreadTemplate),
       threadId,
+      sessionId:
+        typeof command.sessionId === 'string' && command.sessionId.length > 0
+          ? command.sessionId
+          : existing?.sessionId ?? defaultThreadTemplate.sessionId,
       projectId:
         typeof command.projectId === 'string' && command.projectId.length > 0
           ? command.projectId
@@ -424,7 +457,12 @@ export function createServerContext(
   return {
     workspaceRoot,
     baseDir,
+    serverId,
     state,
+    db,
+    sessionRepo,
+    threadRepo,
+    messageRepo,
     threads,
     messages,
     managedProcesses,
@@ -433,6 +471,7 @@ export function createServerContext(
     gitSubscriptions,
     orchestrationSubscriptions,
     processSubscriptions,
+    sessionSubscriptions,
     connectionSubscriptions,
     activeTurnAdapters,
     providerRegistry,

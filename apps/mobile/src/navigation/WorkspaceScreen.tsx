@@ -7,7 +7,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, StyleSheet, StatusBar, Animated, Pressable, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { PluginRenderer } from '../components/PluginRenderer';
 import { PluginBottomBar } from '../components/PluginBottomBar';
@@ -15,7 +15,7 @@ import { PluginHeader } from '../components/PluginHeader';
 import { DrawerContent } from '../components/DrawerContent';
 import { DirectoryPicker } from '../components/DirectoryPicker';
 import { usePluginRegistry } from '../stores/plugin-registry';
-import { useConnectionStore } from '../stores/connection';
+import { useSessionsStore } from '../stores/sessions-store';
 import { colors } from '../theme';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -26,14 +26,18 @@ const DIRECTORY_SCOPED_PLUGINS = new Set(['ai', 'editor']);
 
 export function WorkspaceScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<any>>();
+  const route = useRoute<any>();
   const [bottomBarHeight, setBottomBarHeight] = useState(56);
   const isReady = usePluginRegistry((s) => s.isReady);
   const initialize = usePluginRegistry((s) => s.initialize);
   const openTab = usePluginRegistry((s) => s.openTab);
   const definitions = usePluginRegistry((s) => s.definitions);
-  const activeTabId = usePluginRegistry((s) => s.activeTabId);
-  const openTabs = usePluginRegistry((s) => s.openTabs);
-  const disconnect = useConnectionStore((s) => s.disconnect);
+  const getSession = useSessionsStore((state) => state.getSession);
+  const sessionId = route.params?.sessionId as string | undefined;
+  const session = sessionId ? getSession(sessionId) : undefined;
+  const serverId = session?.serverId ?? (route.params?.serverId as string | undefined);
+  const openTabs = usePluginRegistry((s) => s.getOpenTabs(sessionId));
+  const activeTabId = usePluginRegistry((s) => s.getActiveTabId(sessionId));
 
   // Drawer animation
   const drawerAnim = useRef(new Animated.Value(0)).current;
@@ -64,21 +68,18 @@ export function WorkspaceScreen() {
 
   const handleNavigateHome = useCallback(() => {
     closeDrawer();
-    disconnect();
-    navigation.navigate('Connect');
-  }, [closeDrawer, disconnect, navigation]);
+    navigation.navigate('SessionsHome');
+  }, [closeDrawer, navigation]);
 
   const handleNavigateSettings = useCallback(() => {
     closeDrawer();
     navigation.navigate('Settings');
   }, [closeDrawer, navigation]);
 
-  // Initialize plugin system on mount
+  // Initialize plugin tabs for this session on mount
   useEffect(() => {
-    if (!isReady) {
-      initialize();
-    }
-  }, [isReady, initialize]);
+    initialize(sessionId);
+  }, [initialize, sessionId]);
 
   const handleBarHeightChange = useCallback((height: number) => {
     setBottomBarHeight(height);
@@ -88,25 +89,26 @@ export function WorkspaceScreen() {
   const handleCreateInstance = useCallback(
     (pluginId: string) => {
       if (DIRECTORY_SCOPED_PLUGINS.has(pluginId)) {
+        if (!serverId) return;
         setPendingPluginId(pluginId);
         setDirPickerVisible(true);
       } else {
-        openTab(pluginId);
+        openTab(pluginId, undefined, sessionId);
       }
     },
-    [openTab],
+    [openTab, serverId, sessionId],
   );
 
   // Called when user selects a directory in the picker
   const handleDirectorySelect = useCallback(
     (path: string) => {
-      if (pendingPluginId) {
-        openTab(pendingPluginId, { directory: path });
+      if (pendingPluginId && sessionId) {
+        openTab(pendingPluginId, { directory: path, sessionId, serverId });
       }
       setPendingPluginId(null);
       setDirPickerVisible(false);
     },
-    [pendingPluginId, openTab],
+    [pendingPluginId, openTab, serverId, sessionId],
   );
 
   const handleDirPickerClose = useCallback(() => {
@@ -115,7 +117,7 @@ export function WorkspaceScreen() {
   }, []);
 
   // Active plugin's ID (for determining if we need directory picker on "+" press)
-  const activePluginId = openTabs.find((t) => t.id === activeTabId)?.pluginId ?? null;
+  const activePluginId = (openTabs ?? []).find((t) => t.id === activeTabId)?.pluginId ?? null;
   const activePluginAllowsMultiple = activePluginId
     ? (definitions[activePluginId]?.allowMultipleInstances ?? false)
     : false;
@@ -167,6 +169,7 @@ export function WorkspaceScreen() {
             onNavigateHome={handleNavigateHome}
             onNavigateSettings={handleNavigateSettings}
             onCreateInstance={handleCreateInstance}
+            sessionId={sessionId}
           />
         </Animated.View>
       )}
@@ -180,13 +183,15 @@ export function WorkspaceScreen() {
           <PluginHeader
             onOpenDrawer={openDrawer}
             onCreateInstance={activePluginAllowsMultiple ? handleHeaderCreateInstance : undefined}
+            sessionId={sessionId}
           />
 
           {/* Plugin panels */}
           <View style={[styles.content, { marginBottom: bottomBarHeight }]}>
             <PluginRenderer
               bottomBarHeight={bottomBarHeight}
-              onRequestNewSession={handleCreateInstance}
+              sessionId={sessionId}
+              session={session}
             />
           </View>
 
@@ -195,6 +200,8 @@ export function WorkspaceScreen() {
             <PluginBottomBar
               onHeightChange={handleBarHeightChange}
               onCreateInstance={handleCreateInstance}
+              sessionId={sessionId}
+              serverId={serverId}
             />
           </View>
         </SafeAreaView>
@@ -212,6 +219,7 @@ export function WorkspaceScreen() {
         visible={dirPickerVisible}
         onClose={handleDirPickerClose}
         onSelect={handleDirectorySelect}
+        serverId={serverId ?? session?.serverId ?? ''}
       />
     </View>
   );

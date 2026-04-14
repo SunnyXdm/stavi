@@ -15,7 +15,7 @@ import './plugins/load';
 
 // Screens
 import { WorkspaceScreen } from './navigation/WorkspaceScreen';
-import { ConnectScreen } from './navigation/ConnectScreen';
+import { SessionsHomeScreen } from './navigation/SessionsHomeScreen';
 import { SettingsScreen } from './navigation/SettingsScreen';
 
 import { colors, typography } from './theme';
@@ -52,7 +52,7 @@ export default function App() {
               contentStyle: { backgroundColor: colors.bg.base },
             }}
           >
-            <Stack.Screen name="Connect" component={ConnectScreen} />
+            <Stack.Screen name="SessionsHome" component={SessionsHomeScreen} />
             <Stack.Screen name="Workspace" component={WorkspaceScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
           </Stack.Navigator>

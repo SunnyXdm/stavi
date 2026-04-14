@@ -45,6 +45,7 @@ interface DrawerContentProps {
   onNavigateHome: () => void;
   onNavigateSettings?: () => void;
   onCreateInstance?: (pluginId: string) => void;
+  sessionId?: string;
 }
 
 // ----------------------------------------------------------
@@ -56,15 +57,19 @@ export const DrawerContent = memo(function DrawerContent({
   onNavigateHome,
   onNavigateSettings,
   onCreateInstance,
+  sessionId,
 }: DrawerContentProps) {
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState('');
 
-  const openTabs = usePluginRegistry((s) => s.openTabs);
-  const activeTabId = usePluginRegistry((s) => s.activeTabId);
+  const openTabs = usePluginRegistry((s) => s.getOpenTabs(sessionId));
+  const activeTabId = usePluginRegistry((s) => s.getActiveTabId(sessionId));
   const definitions = usePluginRegistry((s) => s.definitions);
   const registrations = useSessionRegistry((s) => s.registrations);
-  const connectionState = useConnectionStore((s) => s.state);
+  const savedConnections = useConnectionStore((s) => s.savedConnections);
+  const connectionState = savedConnections[0]
+    ? useConnectionStore.getState().getServerStatus(savedConnections[0].id)
+    : 'disconnected';
 
   // Determine active plugin
   const activeTab = openTabs.find((t) => t.id === activeTabId);

@@ -3,11 +3,16 @@
 
 // Plugin system
 export type {
+  PluginScope,
   PluginKind,
   PluginDefinition,
+  WorkspacePluginDefinition,
+  ServerPluginDefinition,
   PluginInstance,
   PluginStatus,
   PluginPanelProps,
+  WorkspacePluginPanelProps,
+  ServerPluginPanelProps,
   PluginPermission,
   PluginAPI,
   SessionRegistration,
@@ -62,4 +67,9 @@ export type {
   AIApprovalRequest,
   AICheckpoint,
   AICheckpointFile,
+  Session,
+  SessionWithThreads,
+  SessionStatus,
+  AgentRuntime,
+  OrchestrationThread,
 } from './domain-types';

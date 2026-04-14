@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import { ProviderRegistry } from './providers/registry';
@@ -21,6 +21,7 @@ import { createSystemHandlers } from './handlers/system';
 import { createProcessHandlers } from './handlers/process';
 import { createOrchestrationHandlers } from './handlers/orchestration/index';
 import { createServerConfigHandlers } from './handlers/server-config';
+import { createSessionHandlers } from './handlers/session';
 
 import type { RpcRequest, StartServerOptions, ServerConnectionConfig, StaviServer } from './types';
 
@@ -36,6 +37,7 @@ interface StoredCredentials {
   version: 1;
   bearerToken: string;
   createdAt: string;
+  serverId?: string;
 }
 
 function createToken(prefix: string) {
@@ -69,11 +71,40 @@ export function issueOrReadBearerToken(baseDir: string): string {
     version: 1,
     bearerToken: createToken('sk-stavi-'),
     createdAt: nowIso(),
+    serverId: randomUUID(),
   };
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tempPath, `${JSON.stringify(stored, null, 2)}\n`, 'utf-8');
   renameSync(tempPath, filePath);
   return stored.bearerToken;
+}
+
+export function issueOrReadServerId(baseDir: string): string {
+  const filePath = credentialsPath(baseDir);
+  ensureDirFor(filePath);
+
+  if (existsSync(filePath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(filePath, 'utf-8')) as StoredCredentials;
+      if (parsed.serverId) return parsed.serverId;
+      const withServerId = { ...parsed, serverId: randomUUID() } as StoredCredentials;
+      const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+      writeFileSync(tempPath, `${JSON.stringify(withServerId, null, 2)}\n`, 'utf-8');
+      renameSync(tempPath, filePath);
+      return withServerId.serverId!;
+    } catch { /* fall through */ }
+  }
+
+  const stored: StoredCredentials = {
+    version: 1,
+    bearerToken: createToken('sk-stavi-'),
+    createdAt: nowIso(),
+    serverId: randomUUID(),
+  };
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tempPath, `${JSON.stringify(stored, null, 2)}\n`, 'utf-8');
+  renameSync(tempPath, filePath);
+  return stored.serverId!;
 }
 
 export function createServerConnectionConfig(input: {
@@ -114,6 +145,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
   const host = options.host ?? '0.0.0.0';
   const port = options.port ?? DEFAULT_PORT;
   const bearerToken = issueOrReadBearerToken(baseDir);
+  const serverId = issueOrReadServerId(baseDir);
 
   const DEFAULT_WS_TOKEN_TTL_MS = 15 * 60 * 1000;
   const wsTokens = new Map<string, { sessionId: string; expiresAt: number }>();
@@ -123,7 +155,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
   await providerRegistry.initialize();
 
   // Build shared context
-  const ctx = createServerContext(workspaceRoot, baseDir, providerRegistry, getGitStatus);
+  const ctx = createServerContext(workspaceRoot, baseDir, providerRegistry, getGitStatus, serverId);
 
   // Wire Claude adapter's approval emitter into orchestration event broadcast
   const claudeAdapter = providerRegistry.getAdapter('claude');
@@ -148,6 +180,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
     ...createProcessHandlers(ctx),
     ...createOrchestrationHandlers(ctx),
     ...createServerConfigHandlers(ctx),
+    ...createSessionHandlers(ctx),
   };
 
   // -- HTTP server (health + WS token endpoint) --
@@ -207,6 +240,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
     ctx.gitSubscriptions.delete(requestId);
     ctx.orchestrationSubscriptions.delete(requestId);
     ctx.processSubscriptions.delete(requestId);
+    ctx.sessionSubscriptions.delete(requestId);
   };
 
   const cleanupSocket = (ws: WebSocket) => {

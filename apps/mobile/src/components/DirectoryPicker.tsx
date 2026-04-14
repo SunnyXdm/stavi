@@ -25,7 +25,7 @@ import {
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, typography, spacing, radii } from '../theme';
-import { staviClient } from '../stores/stavi-client';
+import { useConnectionStore } from '../stores/connection';
 
 // ----------------------------------------------------------
 // Types
@@ -42,6 +42,7 @@ export interface DirectoryPickerProps {
   onClose: () => void;
   onSelect: (path: string) => void;
   initialPath?: string;
+  serverId: string;
 }
 
 // ----------------------------------------------------------
@@ -229,7 +230,9 @@ export const DirectoryPicker = memo(function DirectoryPicker({
   onClose,
   onSelect,
   initialPath = '.',
+  serverId,
 }: DirectoryPickerProps) {
+  const getClientForServer = useConnectionStore((state) => state.getClientForServer);
   const insets = useSafeAreaInsets();
   const [currentPath, setCurrentPath] = useState(initialPath);
   const [entries, setEntries] = useState<DirEntry[]>([]);
@@ -241,7 +244,11 @@ export const DirectoryPicker = memo(function DirectoryPicker({
     setLoading(true);
     setError(null);
     try {
-      const result = await staviClient.request<{
+      const client = getClientForServer(serverId);
+      if (!client) {
+        throw new Error('Server is not connected');
+      }
+      const result = await client.request<{
         path: string;
         entries: DirEntry[];
       }>('fs.list', { path });
@@ -254,7 +261,7 @@ export const DirectoryPicker = memo(function DirectoryPicker({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getClientForServer, serverId]);
 
   // Fetch on open and when path changes
   useEffect(() => {

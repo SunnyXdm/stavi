@@ -1,0 +1,306 @@
+// WHAT: Three-step flow for creating a new Session.
+// WHY:  Phase 2 requires server selection, folder selection, then title/agent confirmation.
+// HOW:  Uses getClientForServer(serverId) for session.create and DirectoryPicker for folder selection.
+// SEE:  apps/mobile/src/stores/connection.ts, apps/mobile/src/stores/sessions-store.ts
+
+import React, { useCallback, useMemo, useState } from 'react';
+import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import type { Session } from '@stavi/shared';
+import { colors, radii, spacing, typography } from '../theme';
+import { useConnectionStore } from '../stores/connection';
+import { useSessionsStore } from '../stores/sessions-store';
+import { DirectoryPicker } from './DirectoryPicker';
+
+interface NewSessionFlowProps {
+  visible: boolean;
+  onClose: () => void;
+  onCreated: (session: Session) => void;
+}
+
+type Step = 1 | 2 | 3;
+
+function StepPill({ step, current }: { step: Step; current: Step }) {
+  const active = step <= current;
+  return (
+    <View style={[styles.stepPill, active && styles.stepPillActive]}>
+      <Text style={[styles.stepPillText, active && styles.stepPillTextActive]}>{step}</Text>
+    </View>
+  );
+}
+
+export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowProps) {
+  const savedConnections = useConnectionStore((state) => state.savedConnections);
+  const getClientForServer = useConnectionStore((state) => state.getClientForServer);
+  const refreshForServer = useSessionsStore((state) => state.refreshForServer);
+
+  const [step, setStep] = useState<Step>(1);
+  const [serverId, setServerId] = useState('');
+  const [folder, setFolder] = useState('');
+  const [title, setTitle] = useState('');
+  const [agentRuntime, setAgentRuntime] = useState<'claude' | 'codex'>('claude');
+  const [showDirectoryPicker, setShowDirectoryPicker] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selectedServer = useMemo(
+    () => savedConnections.find((connection) => connection.id === serverId) ?? null,
+    [savedConnections, serverId],
+  );
+
+  const reset = useCallback(() => {
+    setStep(1);
+    setServerId('');
+    setFolder('');
+    setTitle('');
+    setAgentRuntime('claude');
+    setError(null);
+  }, []);
+
+  const closeFlow = useCallback(() => {
+    reset();
+    onClose();
+  }, [onClose, reset]);
+
+  const moveNext = useCallback(() => {
+    if (step === 1 && !serverId) {
+      setError('Choose a server.');
+      return;
+    }
+    if (step === 2 && !folder) {
+      setError('Choose a folder.');
+      return;
+    }
+    setError(null);
+    setStep((prev) => (prev === 1 ? 2 : 3));
+  }, [folder, serverId, step]);
+
+  const moveBack = useCallback(() => {
+    setError(null);
+    setStep((prev) => (prev === 3 ? 2 : 1));
+  }, []);
+
+  const handleCreate = useCallback(async () => {
+    if (!serverId || !folder) {
+      setError('Server and folder are required.');
+      return;
+    }
+
+    const client = getClientForServer(serverId);
+    if (!client) {
+      setError('Server client is unavailable.');
+      return;
+    }
+
+    try {
+      const session = await client.request<Session>('session.create', {
+        folder,
+        title: title.trim() || folder.split('/').filter(Boolean).pop() || 'Session',
+        agentRuntime,
+      });
+      await refreshForServer(serverId);
+      reset();
+      onCreated(session);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create session');
+    }
+  }, [agentRuntime, folder, getClientForServer, onCreated, refreshForServer, reset, serverId, title]);
+
+  return (
+    <>
+      <Modal visible={visible} animationType="slide" transparent onRequestClose={closeFlow}>
+        <View style={styles.backdrop}>
+          <Pressable style={styles.backdropPress} onPress={closeFlow} />
+          <View style={styles.sheet}>
+            <Text style={styles.title}>New Session</Text>
+
+            <View style={styles.stepRow}>
+              <StepPill step={1} current={step} />
+              <StepPill step={2} current={step} />
+              <StepPill step={3} current={step} />
+            </View>
+
+            {step === 1 ? (
+              <>
+                <Text style={styles.label}>Pick server</Text>
+                <View style={styles.chips}>
+                  {savedConnections.map((connection) => (
+                    <Pressable
+                      key={connection.id}
+                      style={[styles.chip, serverId === connection.id && styles.chipActive]}
+                      onPress={() => {
+                        setServerId(connection.id);
+                        setError(null);
+                      }}
+                    >
+                      <Text style={[styles.chipText, serverId === connection.id && styles.chipTextActive]}>
+                        {connection.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </>
+            ) : null}
+
+            {step === 2 ? (
+              <>
+                <Text style={styles.label}>Pick folder</Text>
+                <Pressable style={styles.inputLike} onPress={() => setShowDirectoryPicker(true)}>
+                  <Text style={styles.inputLikeText}>{folder || 'Choose folder'}</Text>
+                </Pressable>
+                {selectedServer ? (
+                  <Text style={styles.meta}>Server: {selectedServer.host}:{selectedServer.port}</Text>
+                ) : null}
+              </>
+            ) : null}
+
+            {step === 3 ? (
+              <>
+                <Text style={styles.label}>Session title</Text>
+                <TextInput
+                  style={styles.input}
+                  value={title}
+                  onChangeText={setTitle}
+                  placeholder="My session"
+                  placeholderTextColor={colors.fg.muted}
+                />
+                <Text style={styles.label}>Agent</Text>
+                <View style={styles.chips}>
+                  {(['claude', 'codex'] as const).map((runtime) => (
+                    <Pressable
+                      key={runtime}
+                      style={[styles.chip, agentRuntime === runtime && styles.chipActive]}
+                      onPress={() => setAgentRuntime(runtime)}
+                    >
+                      <Text style={[styles.chipText, agentRuntime === runtime && styles.chipTextActive]}>
+                        {runtime}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </>
+            ) : null}
+
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+
+            <View style={styles.actions}>
+              {step > 1 ? (
+                <Pressable style={styles.secondaryButton} onPress={moveBack}>
+                  <Text style={styles.secondaryButtonText}>Back</Text>
+                </Pressable>
+              ) : (
+                <Pressable style={styles.secondaryButton} onPress={closeFlow}>
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </Pressable>
+              )}
+
+              {step < 3 ? (
+                <Pressable style={styles.primaryButton} onPress={moveNext}>
+                  <Text style={styles.primaryButtonText}>Next</Text>
+                </Pressable>
+              ) : (
+                <Pressable style={styles.primaryButton} onPress={handleCreate}>
+                  <Text style={styles.primaryButtonText}>Create</Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <DirectoryPicker
+        visible={showDirectoryPicker}
+        onClose={() => setShowDirectoryPicker(false)}
+        onSelect={(path) => {
+          setFolder(path);
+          setError(null);
+          setShowDirectoryPicker(false);
+        }}
+        serverId={serverId}
+      />
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: colors.bg.scrim, justifyContent: 'flex-end' },
+  backdropPress: { flex: 1 },
+  sheet: {
+    backgroundColor: colors.bg.overlay,
+    borderTopLeftRadius: radii.xl,
+    borderTopRightRadius: radii.xl,
+    padding: spacing[4],
+    gap: spacing[3],
+  },
+  title: {
+    fontSize: typography.fontSize.lg,
+    fontWeight: typography.fontWeight.semibold,
+    color: colors.fg.primary,
+  },
+  stepRow: { flexDirection: 'row', gap: spacing[2] },
+  stepPill: {
+    width: 24,
+    height: 24,
+    borderRadius: 999,
+    backgroundColor: colors.bg.input,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepPillActive: { backgroundColor: colors.accent.primary },
+  stepPillText: { color: colors.fg.secondary, fontSize: typography.fontSize.xs },
+  stepPillTextActive: { color: colors.fg.onAccent, fontWeight: typography.fontWeight.semibold },
+  label: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
+    color: colors.fg.secondary,
+  },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing[2] },
+  chip: {
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[2],
+    borderRadius: radii.full,
+    backgroundColor: colors.bg.input,
+  },
+  chipActive: { backgroundColor: colors.accent.primary },
+  chipText: { color: colors.fg.secondary, fontSize: typography.fontSize.sm },
+  chipTextActive: { color: colors.fg.onAccent },
+  inputLike: {
+    backgroundColor: colors.bg.input,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[3],
+  },
+  inputLikeText: { color: colors.fg.primary, fontSize: typography.fontSize.sm },
+  input: {
+    backgroundColor: colors.bg.input,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[3],
+    color: colors.fg.primary,
+  },
+  meta: { fontSize: typography.fontSize.xs, color: colors.fg.muted },
+  error: { fontSize: typography.fontSize.sm, color: colors.semantic.error },
+  actions: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing[2] },
+  secondaryButton: {
+    flex: 1,
+    backgroundColor: colors.bg.input,
+    borderRadius: radii.md,
+    alignItems: 'center',
+    paddingVertical: spacing[3],
+  },
+  secondaryButtonText: {
+    color: colors.fg.secondary,
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.medium,
+  },
+  primaryButton: {
+    flex: 1,
+    backgroundColor: colors.accent.primary,
+    borderRadius: radii.md,
+    alignItems: 'center',
+    paddingVertical: spacing[3],
+  },
+  primaryButtonText: {
+    color: colors.fg.onAccent,
+    fontSize: typography.fontSize.base,
+    fontWeight: typography.fontWeight.semibold,
+  },
+});

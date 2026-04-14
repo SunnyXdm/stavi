@@ -50,7 +50,7 @@ export function AddServerModal({ visible, onClose, onComplete }: AddServerModalP
   const portRef = useRef<TextInput>(null);
   const tokenRef = useRef<TextInput>(null);
 
-  const saveConnection = useConnectionStore((s) => s.saveConnection);
+  const addServer = useConnectionStore((s) => s.addServer);
 
   const resetForm = useCallback(() => {
     setName('');
@@ -92,7 +92,7 @@ export function AddServerModal({ visible, onClose, onComplete }: AddServerModalP
     setError(null);
 
     // Save and return
-    const connection = saveConnection({
+    const connection = addServer({
       name: name.trim() || `${trimmedHost}:${portNum}`,
       host: trimmedHost,
       port: portNum,
@@ -101,7 +101,7 @@ export function AddServerModal({ visible, onClose, onComplete }: AddServerModalP
 
     resetForm();
     onComplete(connection);
-  }, [name, host, port, token, saveConnection, resetForm, onComplete]);
+  }, [addServer, name, host, onComplete, port, resetForm, token]);
 
   return (
     <Modal

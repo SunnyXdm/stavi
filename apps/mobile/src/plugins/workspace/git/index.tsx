@@ -15,11 +15,14 @@ import {
   FileMinus, FileQuestion, FileCheck, RefreshCw, Plus, Minus,
   Undo2, ArrowUp, ArrowDown, History, Layers,
 } from 'lucide-react-native';
-import type { PluginDefinition, PluginPanelProps } from '@stavi/shared';
+import type {
+  WorkspacePluginDefinition,
+  WorkspacePluginPanelProps,
+} from '@stavi/shared';
 import type { GitPluginAPI } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
-import { staviClient } from '../../../stores/stavi-client';
+import { useConnectionStore } from '../../../stores/connection';
 import { useGit, type TabId, type GitFile } from './hooks/useGit';
 import { CommitSheet } from './components/CommitSheet';
 
@@ -117,9 +120,9 @@ const TABS: Array<{ id: TabId; label: string; icon: typeof Layers }> = [
 // Panel
 // ----------------------------------------------------------
 
-function GitPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
+function GitPanel({ session }: WorkspacePluginPanelProps) {
   const [activeTab, setActiveTab] = useState<TabId>('changes');
-  const git = useGit(activeTab);
+  const git = useGit(activeTab, session.serverId);
   const { status, stagedFiles, unstagedFiles, untrackedFiles } = git;
 
   if (git.connectionState !== 'connected') {
@@ -337,26 +340,33 @@ function GitPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
 // ----------------------------------------------------------
 
 function gitApi(): GitPluginAPI {
+  const getFallbackClient = () => {
+    const firstServerId = useConnectionStore.getState().savedConnections[0]?.id;
+    return firstServerId
+      ? useConnectionStore.getState().getClientForServer(firstServerId)
+      : undefined;
+  };
+
   return {
     getStatus: async () => {
-      const result = await staviClient.request<any>('git.status', {});
+      const result = await getFallbackClient()?.request<any>('git.status', {});
       return { branch: result.branch, staged: result.staged, unstaged: result.unstaged, untracked: result.untracked };
     },
-    stage: async (paths) => { await staviClient.request('git.stage', { paths }); },
+    stage: async (paths) => { await getFallbackClient()?.request('git.stage', { paths }); },
     commit: async (message) => {
-      const result = await staviClient.request<any>('git.commit', { message });
+      const result = await getFallbackClient()?.request<any>('git.commit', { message });
       return { hash: result.output ?? '' };
     },
     diff: async (path) => {
-      const result = await staviClient.request<any>('git.diffFile', { path });
+      const result = await getFallbackClient()?.request<any>('git.diffFile', { path });
       return result.diff ?? '';
     },
   };
 }
 
-export const gitPlugin: PluginDefinition<GitPluginAPI> = {
+export const gitPlugin: WorkspacePluginDefinition = {
   id: 'git', name: 'Git', description: 'Version control — stage, commit, push, branch',
-  kind: 'core', icon: GitBranch, component: GitPanel, navOrder: 3, api: gitApi,
+  scope: 'workspace', kind: 'core', icon: GitBranch, component: GitPanel, navOrder: 3, api: gitApi,
 };
 
 // ----------------------------------------------------------

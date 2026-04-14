@@ -136,11 +136,13 @@ const rowStyles = StyleSheet.create({
 
 export function SettingsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<any>>();
-  const activeConnection = useConnectionStore((s) => s.activeConnection);
-  const connectionState = useConnectionStore((s) => s.state);
   const savedConnections = useConnectionStore((s) => s.savedConnections);
-  const deleteConnection = useConnectionStore((s) => s.removeSavedConnection);
-  const disconnect = useConnectionStore((s) => s.disconnect);
+  const forgetServer = useConnectionStore((s) => s.forgetServer);
+  const disconnectServer = useConnectionStore((s) => s.disconnectServer);
+  const activeConnection = savedConnections[0] ?? null;
+  const connectionState = activeConnection
+    ? useConnectionStore.getState().getServerStatus(activeConnection.id)
+    : 'disconnected';
 
   const isConnected = connectionState === 'connected';
 
@@ -158,13 +160,15 @@ export function SettingsScreen() {
           text: 'Disconnect',
           style: 'destructive',
           onPress: () => {
-            disconnect();
-            navigation.navigate('Connect');
+            if (activeConnection) {
+              disconnectServer(activeConnection.id);
+            }
+            navigation.navigate('SessionsHome');
           },
         },
       ],
     );
-  }, [disconnect, navigation]);
+  }, [activeConnection, disconnectServer, navigation]);
 
   const handleDeleteConnection = useCallback((id: string, name: string) => {
     Alert.alert(
@@ -175,11 +179,11 @@ export function SettingsScreen() {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => deleteConnection(id),
+          onPress: () => forgetServer(id),
         },
       ],
     );
-  }, [deleteConnection]);
+  }, [forgetServer]);
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>

@@ -4,7 +4,6 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Alert } from 'react-native';
-import { staviClient } from '../../../../stores/stavi-client';
 import { useConnectionStore } from '../../../../stores/connection';
 
 // ----------------------------------------------------------
@@ -45,8 +44,13 @@ export type TabId = 'changes' | 'history' | 'branches';
 // Hook
 // ----------------------------------------------------------
 
-export function useGit(activeTab: TabId) {
-  const connectionState = useConnectionStore((s) => s.state);
+export function useGit(activeTab: TabId, serverId?: string) {
+  const connectionState = serverId
+    ? useConnectionStore.getState().getServerStatus(serverId)
+    : 'disconnected';
+  const client = serverId
+    ? useConnectionStore.getState().getClientForServer(serverId)
+    : undefined;
   const [status, setStatus] = useState<GitStatus>({
     branch: '', ahead: 0, behind: 0, files: [], loading: true,
   });
@@ -59,10 +63,10 @@ export function useGit(activeTab: TabId) {
 
   // Subscribe to git status
   useEffect(() => {
-    if (connectionState !== 'connected') return;
+    if (connectionState !== 'connected' || !client) return;
     setStatus((prev) => ({ ...prev, loading: true }));
 
-    unsubRef.current = staviClient.subscribe(
+    unsubRef.current = client.subscribe(
       'subscribeGitStatus',
       {},
       (event: any) => {
@@ -84,7 +88,7 @@ export function useGit(activeTab: TabId) {
           loading: false,
         });
       },
-      (error) => {
+      (error: Error) => {
         console.error('[Git] Subscription error:', error);
         setStatus((prev) => ({ ...prev, loading: false }));
       },
@@ -95,15 +99,15 @@ export function useGit(activeTab: TabId) {
 
   // Load history/branches when tab changes
   useEffect(() => {
-    if (connectionState !== 'connected') return;
+    if (connectionState !== 'connected' || !client) return;
     if (activeTab === 'history') {
-      staviClient.request<{ commits: Commit[] }>('git.log', { limit: 50 })
-        .then((r) => setCommits(r.commits || []))
+      client.request<{ commits: Commit[] }>('git.log', { limit: 50 })
+        .then((r: { commits: Commit[] }) => setCommits(r.commits || []))
         .catch(() => {});
     }
     if (activeTab === 'branches') {
-      staviClient.request<{ branches: Branch[] }>('git.branches', {})
-        .then((r) => setBranches(r.branches || []))
+      client.request<{ branches: Branch[] }>('git.branches', {})
+        .then((r: { branches: Branch[] }) => setBranches(r.branches || []))
         .catch(() => {});
     }
   }, [activeTab, connectionState]);
@@ -111,76 +115,84 @@ export function useGit(activeTab: TabId) {
   // -- Actions --
 
   const refresh = useCallback(async () => {
+    if (!client) return;
     setRefreshing(true);
-    try { await staviClient.request('git.refreshStatus', {}); } catch {}
+    try { await client.request('git.refreshStatus', {}); } catch {}
     setRefreshing(false);
-  }, []);
+  }, [client]);
 
   const stage = useCallback(async (paths: string[]) => {
+    if (!client) return;
     setActionLoading(paths[0]);
-    try { await staviClient.request('git.stage', { paths }); } catch (err) {
+    try { await client.request('git.stage', { paths }); } catch (err) {
       console.error('[Git] Stage error:', err);
     }
     setActionLoading(null);
-  }, []);
+  }, [client]);
 
   const unstage = useCallback(async (paths: string[]) => {
+    if (!client) return;
     setActionLoading(paths[0]);
-    try { await staviClient.request('git.unstage', { paths }); } catch (err) {
+    try { await client.request('git.unstage', { paths }); } catch (err) {
       console.error('[Git] Unstage error:', err);
     }
     setActionLoading(null);
-  }, []);
+  }, [client]);
 
   const discard = useCallback(async (paths: string[]) => {
+    if (!client) return;
     Alert.alert('Discard Changes', `Discard changes to ${paths.length} file(s)?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Discard', style: 'destructive',
         onPress: async () => {
           setActionLoading(paths[0]);
-          try { await staviClient.request('git.discard', { paths }); } catch (err) {
+          try { await client.request('git.discard', { paths }); } catch (err) {
             console.error('[Git] Discard error:', err);
           }
           setActionLoading(null);
         },
       },
     ]);
-  }, []);
+  }, [client]);
 
   const commit = useCallback(async (message: string) => {
-    await staviClient.request('git.commit', { message });
-  }, []);
+    if (!client) return;
+    await client.request('git.commit', { message });
+  }, [client]);
 
   const checkout = useCallback(async (branch: string) => {
+    if (!client) return;
     try {
-      await staviClient.request('git.checkout', { branch });
-      const r = await staviClient.request<{ branches: Branch[] }>('git.branches', {});
+      await client.request('git.checkout', { branch });
+      const r = await client.request<{ branches: Branch[] }>('git.branches', {});
       setBranches(r.branches || []);
     } catch (err) {
       Alert.alert('Checkout failed', err instanceof Error ? err.message : 'Unknown error');
     }
-  }, []);
+  }, [client]);
 
   const push = useCallback(async () => {
+    if (!client) return;
     setActionLoading('push');
     try {
-      await staviClient.request('git.push', {});
+      await client.request('git.push', {});
     } catch (err) {
       Alert.alert('Push failed', err instanceof Error ? err.message : 'Unknown error');
     }
     setActionLoading(null);
-  }, []);
+  }, [client]);
 
   const pull = useCallback(async () => {
+    if (!client) return;
     setActionLoading('pull');
     try {
-      await staviClient.request('git.pull', { rebase: true });
+      await client.request('git.pull', { rebase: true });
     } catch (err) {
       Alert.alert('Pull failed', err instanceof Error ? err.message : 'Unknown error');
     }
     setActionLoading(null);
-  }, []);
+  }, [client]);
 
   // -- Derived state --
 

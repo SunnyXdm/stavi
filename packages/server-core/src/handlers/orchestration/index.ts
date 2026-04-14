@@ -26,7 +26,14 @@ export function createOrchestrationHandlers(ctx: ServerContext): Record<string, 
           sendJson(ws, makeFailure(id, 'threadId is required'));
           return;
         }
+        const sessionId = String(command?.sessionId ?? '');
+        if (!sessionId) {
+          sendJson(ws, makeFailure(id, 'thread.create requires sessionId starting Phase 1'));
+          return;
+        }
         const thread = ctx.buildThreadFromCommand(threadId, command);
+        thread.sessionId = sessionId;
+        ctx.threadRepo.createThread({ sessionId, thread });
         threads.set(threadId, thread);
         if (!messages.has(threadId)) messages.set(threadId, []);
         ctx.broadcastOrchestrationEvent({
@@ -43,7 +50,12 @@ export function createOrchestrationHandlers(ctx: ServerContext): Record<string, 
           sendJson(ws, makeFailure(id, 'threadId is required'));
           return;
         }
-        const thread = ctx.buildThreadFromCommand(threadId, command, threads.get(threadId));
+        const existing = threads.get(threadId) ?? ctx.threadRepo.getThread(threadId);
+        if (!existing) {
+          sendJson(ws, makeFailure(id, `Thread not found: ${threadId}`));
+          return;
+        }
+        const thread = ctx.buildThreadFromCommand(threadId, command, existing);
         // handleTurnStart fires async and returns immediately — we send success below
         void handleTurnStart(ws, id, command, thread, ctx);
         sendJson(ws, makeSuccess(id, { ok: true }));

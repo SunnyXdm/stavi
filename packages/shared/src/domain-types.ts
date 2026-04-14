@@ -199,3 +199,50 @@ export interface AICheckpointFile {
   additions: number;
   deletions: number;
 }
+
+// ============================================================
+// Session Types
+// ============================================================
+
+export type SessionStatus = 'idle' | 'running' | 'errored' | 'archived';
+export type AgentRuntime = 'claude' | 'codex';
+
+export interface Session {
+  id: string;
+  serverId: string;
+  folder: string;
+  title: string;
+  agentRuntime: AgentRuntime;
+  status: SessionStatus;
+  createdAt: number;
+  updatedAt: number;
+  lastActiveAt: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OrchestrationThread {
+  threadId: string;
+  sessionId: string;
+  projectId: string;
+  title: string;
+  runtimeMode: 'approval-required' | 'auto-accept-edits' | 'full-access';
+  interactionMode: 'default' | 'plan';
+  branch: string;
+  worktreePath: string | null;
+  modelSelection?: {
+    provider: string;
+    modelId: string;
+    thinking?: boolean;
+    effort?: string;
+    fastMode?: boolean;
+    contextWindow?: string;
+  };
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionWithThreads {
+  session: Session;
+  threads: OrchestrationThread[];
+}

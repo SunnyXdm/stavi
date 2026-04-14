@@ -14,13 +14,15 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { SquareTerminal } from 'lucide-react-native';
-import type { PluginDefinition, PluginPanelProps } from '@stavi/shared';
+import type {
+  WorkspacePluginDefinition,
+  WorkspacePluginPanelProps,
+} from '@stavi/shared';
 import type { TerminalPluginAPI } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
 import NativeTerminal, { type NativeTerminalRef } from '../../../components/NativeTerminal';
 import { TerminalToolbar } from '../../../components/TerminalToolbar';
-import { staviClient } from '../../../stores/stavi-client';
 import { useConnectionStore } from '../../../stores/connection';
 import { useSessionRegistry } from '../../../stores/session-registry';
 
@@ -50,11 +52,18 @@ let serverCwd = '.';
 // Panel Component
 // ----------------------------------------------------------
 
-function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelProps) {
+function TerminalPanel({ session }: WorkspacePluginPanelProps) {
+  const serverId = session.serverId;
+  const defaultCwd = session.folder;
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const connectionState = useConnectionStore((s) => s.state);
+  const connectionState = useConnectionStore((s) => s.getStatusForServer(serverId));
   const registerSessions = useSessionRegistry((s) => s.register);
+
+  const getClient = useCallback(
+    () => useConnectionStore.getState().getClientForServer(serverId),
+    [serverId],
+  );
 
   // Get or create a ref for a session
   const getTerminalRef = useCallback((sessionKey: string) => {
@@ -67,7 +76,8 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
   // Create a new terminal session
   const createSession = useCallback(
     async (cwd?: string) => {
-      if (staviClient.getState() !== 'connected') return;
+      const client = getClient();
+      if (!client || client.getState() !== 'connected') return;
 
       const threadId = `stavi-term-${++sessionCounter}`;
       const terminalId = 'default';
@@ -85,7 +95,7 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
 
       try {
         // Open terminal on Stavi server
-        const snapshot = await staviClient.request<{
+        const snapshot = await client.request<{
           threadId: string;
           terminalId: string;
           history: string;
@@ -93,7 +103,7 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
         }>('terminal.open', {
           threadId,
           terminalId,
-          cwd: cwd || serverCwd,
+          cwd: cwd || defaultCwd || serverCwd,
           cols: 80,
           rows: 24,
         });
@@ -112,9 +122,9 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
         );
 
         // Subscribe to terminal events
-        const unsub = staviClient.subscribe(
+        const unsub = client.subscribe(
           'subscribeTerminalEvents',
-          {},
+          { threadId },
           (event: any) => {
             if (event.threadId !== threadId) return;
 
@@ -177,7 +187,7 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
         );
       }
     },
-    [getTerminalRef],
+    [defaultCwd, getClient, getTerminalRef],
   );
 
   // Close a terminal session
@@ -193,7 +203,8 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
 
       // Close on server
       try {
-        await staviClient.request('terminal.close', { threadId, terminalId });
+        const client = getClient();
+        await client?.request('terminal.close', { threadId, terminalId });
       } catch {
         // Ignore — session may already be closed
       }
@@ -214,29 +225,31 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
         });
       }
     },
-    [activeSessionId],
+    [activeSessionId, getClient],
   );
 
   // Handle terminal input (user typed something)
   const handleInput = useCallback(
     (threadId: string, data: string) => {
-      if (staviClient.getState() !== 'connected') return;
-      staviClient.request('terminal.write', { threadId, data }).catch((err) => {
+      const client = getClient();
+      if (!client || client.getState() !== 'connected') return;
+      client.request('terminal.write', { threadId, data }).catch((err) => {
         console.error('[Terminal] Write error:', err);
       });
     },
-    [],
+    [getClient],
   );
 
   // Handle terminal resize
   const handleResize = useCallback(
     (threadId: string, cols: number, rows: number) => {
-      if (staviClient.getState() !== 'connected') return;
-      staviClient.request('terminal.resize', { threadId, cols, rows }).catch((err) => {
+      const client = getClient();
+      if (!client || client.getState() !== 'connected') return;
+      client.request('terminal.resize', { threadId, cols, rows }).catch((err) => {
         console.error('[Terminal] Resize error:', err);
       });
     },
-    [],
+    [getClient],
   );
 
   // Clear sessions on disconnect so reconnect gets a fresh terminal
@@ -257,19 +270,9 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
   // Auto-create first session when connected
   useEffect(() => {
     if (connectionState === 'connected' && sessions.length === 0) {
-      staviClient
-        .request<{ cwd?: string }>('server.getConfig', {})
-        .then((config) => {
-          if (config.cwd) {
-            serverCwd = config.cwd;
-          }
-        })
-        .catch((err) => {
-          console.error('[Terminal] Failed to load server config:', err);
-        });
-      createSession();
+      createSession(defaultCwd);
     }
-  }, [connectionState, sessions.length, createSession]);
+  }, [connectionState, createSession, defaultCwd, sessions.length]);
 
   // Register sessions with SessionRegistry for PluginHeader / DrawerContent
   useEffect(() => {
@@ -377,13 +380,21 @@ function TerminalPanel({ instanceId, isActive, bottomBarHeight }: PluginPanelPro
 // ----------------------------------------------------------
 
 function terminalApi(): TerminalPluginAPI {
+  const getFallbackClient = () => {
+    const firstServerId = useConnectionStore.getState().savedConnections[0]?.id;
+    return firstServerId
+      ? useConnectionStore.getState().getClientForServer(firstServerId)
+      : undefined;
+  };
+
   return {
     createSession: async (workingDir) => {
-      if (staviClient.getState() !== 'connected') {
+      const client = getFallbackClient();
+      if (!client || client.getState() !== 'connected') {
         throw new Error('Not connected');
       }
       const threadId = `stavi-term-${++sessionCounter}`;
-      const snapshot = await staviClient.request<{ threadId: string }>('terminal.open', {
+      const snapshot = await client.request<{ threadId: string }>('terminal.open', {
         threadId,
         terminalId: 'default',
         cwd: workingDir || serverCwd,
@@ -396,7 +407,7 @@ function terminalApi(): TerminalPluginAPI {
     },
 
     sendInput: (sessionId, data) => {
-      staviClient.request('terminal.write', {
+      getFallbackClient()?.request('terminal.write', {
         threadId: sessionId,
         data,
       }).catch(console.error);
@@ -413,10 +424,11 @@ function terminalApi(): TerminalPluginAPI {
 // Plugin Definition
 // ----------------------------------------------------------
 
-export const terminalPlugin: PluginDefinition<TerminalPluginAPI> = {
+export const terminalPlugin: WorkspacePluginDefinition = {
   id: 'terminal',
   name: 'Terminal',
   description: 'Native terminal connected to Stavi server',
+  scope: 'workspace',
   kind: 'core',
   icon: SquareTerminal,
   component: TerminalPanel,

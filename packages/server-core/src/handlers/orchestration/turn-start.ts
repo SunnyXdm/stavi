@@ -28,7 +28,13 @@ export async function handleTurnStart(
   // Update thread from this command (runtime/interaction mode may change)
   const updatedThread = ctx.buildThreadFromCommand(threadId, command, thread);
   threads.set(threadId, updatedThread);
+  ctx.threadRepo.updateThread(threadId, updatedThread);
   if (!messages.has(threadId)) messages.set(threadId, []);
+
+  // Touch parent Session
+  if (updatedThread.sessionId) {
+    ctx.sessionRepo.touchSession(updatedThread.sessionId, 'running');
+  }
 
   // Build user message
   const msg = command.message as Record<string, unknown>;
@@ -40,6 +46,7 @@ export async function handleTurnStart(
     createdAt: String(command.createdAt ?? nowIso()),
   };
   messages.set(threadId, [...(messages.get(threadId) ?? []), userMessage]);
+  ctx.messageRepo.appendMessage(userMessage);
   updatedThread.updatedAt = nowIso();
   broadcastOrchestrationEvent({
     type: 'thread.message-sent',
@@ -60,6 +67,7 @@ export async function handleTurnStart(
     createdAt: nowIso(),
   };
   messages.set(threadId, [...(messages.get(threadId) ?? []), assistantStart]);
+  ctx.messageRepo.appendMessage(assistantStart);
   broadcastOrchestrationEvent({
     type: 'thread.message-sent',
     occurredAt: nowIso(),
@@ -85,6 +93,10 @@ export async function handleTurnStart(
         m.messageId === assistantMessageId ? finalMessage : m,
       );
       messages.set(threadId, next);
+      ctx.messageRepo.replaceMessage(assistantMessageId, finalMessage);
+      if (updatedThread.sessionId) {
+        ctx.sessionRepo.touchSession(updatedThread.sessionId, 'idle');
+      }
       broadcastOrchestrationEvent({
         type: 'thread.message-sent',
         occurredAt: nowIso(),
@@ -117,6 +129,7 @@ export async function handleTurnStart(
             messages.set(threadId, (messages.get(threadId) ?? []).map((m) =>
               m.messageId === assistantMessageId ? streamingMsg : m,
             ));
+            ctx.messageRepo.replaceMessage(assistantMessageId, streamingMsg);
             broadcastOrchestrationEvent({
               type: 'thread.message-sent',
               occurredAt: nowIso(),
@@ -197,6 +210,10 @@ export async function handleTurnStart(
             messages.set(threadId, (messages.get(threadId) ?? []).map((m) =>
               m.messageId === assistantMessageId ? finalMessage : m,
             ));
+            ctx.messageRepo.replaceMessage(assistantMessageId, finalMessage);
+            if (updatedThread.sessionId) {
+              ctx.sessionRepo.touchSession(updatedThread.sessionId, 'idle');
+            }
             broadcastOrchestrationEvent({
               type: 'thread.message-sent',
               occurredAt: nowIso(),
@@ -221,6 +238,10 @@ export async function handleTurnStart(
             messages.set(threadId, (messages.get(threadId) ?? []).map((m) =>
               m.messageId === assistantMessageId ? errorMessage : m,
             ));
+            ctx.messageRepo.replaceMessage(assistantMessageId, errorMessage);
+            if (updatedThread.sessionId) {
+              ctx.sessionRepo.touchSession(updatedThread.sessionId, 'errored');
+            }
             broadcastOrchestrationEvent({
               type: 'thread.message-sent',
               occurredAt: nowIso(),
@@ -241,6 +262,10 @@ export async function handleTurnStart(
       messages.set(threadId, (messages.get(threadId) ?? []).map((m) =>
         m.messageId === assistantMessageId ? errorMessage : m,
       ));
+      ctx.messageRepo.replaceMessage(assistantMessageId, errorMessage);
+      if (updatedThread.sessionId) {
+        ctx.sessionRepo.touchSession(updatedThread.sessionId, 'errored');
+      }
       broadcastOrchestrationEvent({
         type: 'thread.message-sent',
         occurredAt: nowIso(),

@@ -12,6 +12,7 @@ export function createServerConfigHandlers(ctx: ServerContext): Record<string, R
       sendJson(ws, makeSuccess(id, {
         cwd: ctx.workspaceRoot,
         providers: ctx.providerRegistry.getProviderInfos(),
+        serverId: ctx.serverId,
       }));
     },
 

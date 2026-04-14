@@ -14,8 +14,8 @@ import type { PluginInstance } from '@stavi/shared';
 
 interface PluginHeaderProps {
   onOpenDrawer: () => void;
-  /** Called when user presses "+" for a multi-instance plugin */
   onCreateInstance?: () => void;
+  sessionId?: string;
 }
 
 function instanceDisplayTitle(instance: PluginInstance, index: number): string {
@@ -37,9 +37,10 @@ function instanceDisplayTitle(instance: PluginInstance, index: number): string {
 export const PluginHeader = memo(function PluginHeader({
   onOpenDrawer,
   onCreateInstance,
+  sessionId,
 }: PluginHeaderProps) {
-  const openTabs = usePluginRegistry((s) => s.openTabs);
-  const activeTabId = usePluginRegistry((s) => s.activeTabId);
+  const openTabs = usePluginRegistry((s) => s.getOpenTabs(sessionId));
+  const activeTabId = usePluginRegistry((s) => s.getActiveTabId(sessionId));
   const definitions = usePluginRegistry((s) => s.definitions);
   const setActiveTab = usePluginRegistry((s) => s.setActiveTab);
   const closeTab = usePluginRegistry((s) => s.closeTab);
@@ -69,23 +70,23 @@ export const PluginHeader = memo(function PluginHeader({
 
   const handleTabPress = useCallback(
     (instanceId: string) => {
-      setActiveTab(instanceId);
+      setActiveTab(instanceId, sessionId);
     },
-    [setActiveTab],
+    [setActiveTab, sessionId],
   );
 
   const handleCloseTab = useCallback(
     (instanceId: string) => {
-      closeTab(instanceId);
+      closeTab(instanceId, sessionId);
     },
-    [closeTab],
+    [closeTab, sessionId],
   );
 
   const renderTab = useCallback(
     ({ item, index }: { item: PluginInstance; index: number }) => {
       const isActive = item.id === activeTabId;
       const title = instanceDisplayTitle(item, index);
-      const closeable = canCloseTab(item.id);
+      const closeable = canCloseTab(item.id, sessionId);
 
       return (
         <Pressable

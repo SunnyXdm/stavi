@@ -8,7 +8,12 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { staviClient, type StaviClientState, type StaviConnectionConfig } from './stavi-client';
+import {
+  createStaviClient,
+  type StaviClient,
+  type StaviClientState,
+  type StaviConnectionConfig,
+} from './stavi-client';
 
 // ----------------------------------------------------------
 // Types
@@ -34,35 +39,29 @@ export interface SavedConnection {
   lastConnectedAt?: number;
 }
 
-interface ConnectionStoreState {
-  /** Current connection state */
-  state: ConnectionState;
-
-  /** Active connection config */
-  activeConnection: SavedConnection | null;
-
-  /** Saved connections (persisted) */
-  savedConnections: SavedConnection[];
-
-  /** Error message if state is 'error' */
+export interface PerServerConnection {
+  serverId: string;
+  savedConnection: SavedConnection;
+  clientState: ConnectionState;
+  client: StaviClient;
   error: string | null;
 }
 
+interface ConnectionStoreState {
+  savedConnections: SavedConnection[];
+  connectionsById: Record<string, PerServerConnection>;
+}
+
 interface ConnectionStoreActions {
-  /** Connect to a Stavi server */
-  connect(connection: SavedConnection): Promise<void>;
-
-  /** Disconnect */
-  disconnect(): void;
-
-  /** Save a new connection */
-  saveConnection(conn: Omit<SavedConnection, 'id' | 'createdAt'>): SavedConnection;
-
-  /** Update a saved connection */
+  addServer(conn: Omit<SavedConnection, 'id' | 'createdAt'>): SavedConnection;
+  connectServer(serverId: string): Promise<void>;
+  disconnectServer(serverId: string): void;
+  getClientForServer(serverId: string): StaviClient | undefined;
+  getStatusForServer(serverId: string): ConnectionState;
+  getServerStatus(serverId: string): ConnectionState;
+  forgetServer(serverId: string): void;
   updateSavedConnection(id: string, updates: Partial<Omit<SavedConnection, 'id'>>): void;
-
-  /** Remove a saved connection */
-  removeSavedConnection(id: string): void;
+  autoConnectSavedServers(): void;
 }
 
 // ----------------------------------------------------------
@@ -93,91 +92,198 @@ function mapClientState(clientState: StaviClientState): ConnectionState {
 export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreActions>()(
   persist(
     (set, get) => {
-      // Listen to StaviClient state changes and sync to Zustand
-      staviClient.onStateChange((clientState, errorMsg) => {
-        const mapped = mapClientState(clientState);
-        set({
-          state: mapped,
-          error: errorMsg ?? null,
+      function ensureRuntimeConnection(savedConnection: SavedConnection): PerServerConnection {
+        const existing = get().connectionsById[savedConnection.id];
+        if (existing) {
+          return existing;
+        }
+
+        const client = createStaviClient();
+        const runtime: PerServerConnection = {
+          serverId: savedConnection.id,
+          savedConnection,
+          clientState: 'idle',
+          client,
+          error: null,
+        };
+
+        client.onStateChange((clientState, errorMsg) => {
+          set((state) => {
+            const current = state.connectionsById[savedConnection.id];
+            if (!current) {
+              return state;
+            }
+            return {
+              connectionsById: {
+                ...state.connectionsById,
+                [savedConnection.id]: {
+                  ...current,
+                  clientState: mapClientState(clientState),
+                  error: errorMsg ?? null,
+                },
+              },
+            };
+          });
         });
-      });
+
+        set((state) => ({
+          connectionsById: {
+            ...state.connectionsById,
+            [savedConnection.id]: runtime,
+          },
+        }));
+
+        return runtime;
+      }
 
       return {
-        // --- State ---
-        state: 'idle' as ConnectionState,
-        activeConnection: null,
         savedConnections: [],
-        error: null,
+        connectionsById: {},
 
-        // --- Actions ---
-
-        connect: async (connection) => {
-          set({
-            state: 'authenticating',
-            activeConnection: connection,
-            error: null,
-          });
-
-          try {
-            const config: StaviConnectionConfig = {
-              host: connection.host,
-              port: connection.port,
-              bearerToken: connection.bearerToken,
-              tls: connection.tls,
-            };
-
-            await staviClient.connect(config);
-
-            // Update lastConnectedAt
-            set((s) => ({
-              savedConnections: s.savedConnections.map((c) =>
-                c.id === connection.id
-                  ? { ...c, lastConnectedAt: Date.now() }
-                  : c,
-              ),
-            }));
-          } catch (err) {
-            set({
-              state: 'error',
-              error: err instanceof Error ? err.message : String(err),
-            });
-            throw err;
-          }
-        },
-
-        disconnect: () => {
-          staviClient.disconnect();
-          set({
-            state: 'disconnected',
-            activeConnection: null,
-            error: null,
-          });
-        },
-
-        saveConnection: (conn) => {
+        addServer: (conn) => {
           const saved: SavedConnection = {
             ...conn,
             id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
             createdAt: Date.now(),
           };
-          set((s) => ({
-            savedConnections: [...s.savedConnections, saved],
+          set((state) => ({
+            savedConnections: [...state.savedConnections, saved],
           }));
+          ensureRuntimeConnection(saved);
           return saved;
         },
 
-        updateSavedConnection: (id, updates) => {
-          set((s) => ({
-            savedConnections: s.savedConnections.map((c) =>
-              c.id === id ? { ...c, ...updates } : c,
-            ),
+        connectServer: async (serverId) => {
+          const savedConnection = get().savedConnections.find((conn) => conn.id === serverId);
+          if (!savedConnection) {
+            throw new Error(`Unknown server: ${serverId}`);
+          }
+
+          const runtime = ensureRuntimeConnection(savedConnection);
+          const config: StaviConnectionConfig = {
+            host: savedConnection.host,
+            port: savedConnection.port,
+            bearerToken: savedConnection.bearerToken,
+            tls: savedConnection.tls,
+          };
+
+          set((state) => ({
+            connectionsById: {
+              ...state.connectionsById,
+              [serverId]: {
+                ...runtime,
+                savedConnection,
+                clientState: 'authenticating',
+                error: null,
+              },
+            },
+          }));
+
+          try {
+            await runtime.client.connect(config);
+            set((state) => ({
+              savedConnections: state.savedConnections.map((conn) =>
+                conn.id === serverId ? { ...conn, lastConnectedAt: Date.now() } : conn,
+              ),
+              connectionsById: {
+                ...state.connectionsById,
+                [serverId]: {
+                  ...state.connectionsById[serverId],
+                  savedConnection: {
+                    ...savedConnection,
+                    lastConnectedAt: Date.now(),
+                  },
+                },
+              },
+            }));
+          } catch (err) {
+            set((state) => ({
+              connectionsById: {
+                ...state.connectionsById,
+                [serverId]: {
+                  ...state.connectionsById[serverId],
+                  clientState: 'error',
+                  error: err instanceof Error ? err.message : String(err),
+                },
+              },
+            }));
+            throw err;
+          }
+        },
+
+        disconnectServer: (serverId) => {
+          const runtime = get().connectionsById[serverId];
+          runtime?.client.disconnect();
+          set((state) => ({
+            connectionsById: {
+              ...state.connectionsById,
+              ...(runtime
+                ? {
+                    [serverId]: {
+                      ...runtime,
+                      clientState: 'disconnected',
+                      error: null,
+                    },
+                  }
+                : {}),
+            },
           }));
         },
 
-        removeSavedConnection: (id) => {
-          set((s) => ({
-            savedConnections: s.savedConnections.filter((c) => c.id !== id),
+        getClientForServer: (serverId) => {
+          const savedConnection = get().savedConnections.find((conn) => conn.id === serverId);
+          if (!savedConnection) {
+            return undefined;
+          }
+          return ensureRuntimeConnection(savedConnection).client;
+        },
+
+        getStatusForServer: (serverId) => {
+          return get().connectionsById[serverId]?.clientState ?? 'idle';
+        },
+
+        // Backward-compatible alias used by existing call sites.
+        getServerStatus: (serverId) => {
+          return get().getStatusForServer(serverId);
+        },
+
+        forgetServer: (serverId) => {
+          const runtime = get().connectionsById[serverId];
+          runtime?.client.disconnect();
+          set((state) => {
+            const nextConnections = { ...state.connectionsById };
+            delete nextConnections[serverId];
+            return {
+              savedConnections: state.savedConnections.filter((conn) => conn.id !== serverId),
+              connectionsById: nextConnections,
+            };
+          });
+        },
+
+        updateSavedConnection: (id, updates) => {
+          set((state) => ({
+            savedConnections: state.savedConnections.map((conn) =>
+              conn.id === id ? { ...conn, ...updates } : conn,
+            ),
+            connectionsById: state.connectionsById[id]
+              ? {
+                  ...state.connectionsById,
+                  [id]: {
+                    ...state.connectionsById[id],
+                    savedConnection: {
+                      ...state.connectionsById[id].savedConnection,
+                      ...updates,
+                    },
+                  },
+                }
+              : state.connectionsById,
           }));
+        },
+
+        autoConnectSavedServers: () => {
+          for (const connection of get().savedConnections) {
+            void get().connectServer(connection.id).catch(() => {});
+          }
         },
       };
     },
@@ -187,13 +293,14 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
       partialize: (state) => ({
         savedConnections: state.savedConnections,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        for (const connection of state.savedConnections) {
+          state.getClientForServer(connection.id);
+        }
+      },
     },
   ),
 );
 
-// ----------------------------------------------------------
-// Re-export staviClient for direct RPC access
-// ----------------------------------------------------------
-
-export { staviClient } from './stavi-client';
 export type { StaviConnectionConfig } from './stavi-client';
