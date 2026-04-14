@@ -1,0 +1,136 @@
+// ============================================================
+// types.ts — All shared server-side type interfaces
+// ============================================================
+
+import type { WebSocket } from 'ws';
+import type { ModelSelection } from './providers/types';
+
+// ----------------------------------------------------------
+// RPC wire protocol
+// ----------------------------------------------------------
+
+export interface RpcRequest {
+  _tag: 'Request';
+  id: string;
+  tag: string;
+  payload: Record<string, unknown>;
+}
+
+export interface RpcChunk {
+  _tag: 'Chunk';
+  requestId: string;
+  values: unknown[];
+}
+
+export interface RpcExit {
+  _tag: 'Exit';
+  requestId: string;
+  exit:
+    | { _tag: 'Success'; value?: unknown }
+    | { _tag: 'Failure'; cause: { _tag: 'Fail'; error: { message: string } } };
+}
+
+// ----------------------------------------------------------
+// Subscription tracking
+// ----------------------------------------------------------
+
+export interface Subscription {
+  ws: WebSocket;
+  requestId: string;
+  tag: string;
+}
+
+// ----------------------------------------------------------
+// Terminal
+// ----------------------------------------------------------
+
+export interface TerminalSession {
+  threadId: string;
+  terminalId: string;
+  cwd: string;
+  history: string;
+  proc: any; // Bun.Subprocess with terminal
+  status: 'running' | 'exited';
+}
+
+// ----------------------------------------------------------
+// Managed processes
+// ----------------------------------------------------------
+
+export interface ManagedProcess {
+  id: string;
+  command: string;
+  args: string[];
+  cwd: string;
+  pid: number;
+  status: 'running' | 'exited' | 'killed';
+  startTime: number;
+  output: string;
+  proc: any; // Bun.Subprocess
+}
+
+// ----------------------------------------------------------
+// Git
+// ----------------------------------------------------------
+
+export interface GitStatusPayload {
+  branch: string;
+  ahead: number;
+  behind: number;
+  staged: Array<{ path: string; status: string }>;
+  unstaged: Array<{ path: string; status: string }>;
+  untracked: string[];
+}
+
+// ----------------------------------------------------------
+// Orchestration
+// ----------------------------------------------------------
+
+export interface OrchestrationMessage {
+  messageId: string;
+  threadId: string;
+  role: 'user' | 'assistant';
+  text: string;
+  turnId?: string;
+  streaming?: boolean;
+  createdAt: string;
+}
+
+export interface OrchestrationThread {
+  threadId: string;
+  projectId: string;
+  title: string;
+  runtimeMode: 'approval-required' | 'auto-accept-edits' | 'full-access';
+  interactionMode: 'default' | 'plan';
+  branch: string;
+  worktreePath: string | null;
+  modelSelection?: ModelSelection;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ----------------------------------------------------------
+// Server public interfaces
+// ----------------------------------------------------------
+
+export interface StartServerOptions {
+  cwd: string;
+  host?: string;
+  port?: number;
+  baseDir: string;
+}
+
+export interface ServerConnectionConfig {
+  address: string;
+  host: string;
+  port: number;
+  token: string;
+}
+
+export interface StaviServer {
+  bearerToken: string;
+  port: number;
+  host: string;
+  stop: () => Promise<void>;
+}
