@@ -66,5 +66,7 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>Stavi uses the camera to scan server pairing QR codes.</string>
 </dict>
 </plist>
