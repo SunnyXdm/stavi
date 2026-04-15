@@ -46,7 +46,7 @@ export function WorkspaceScreen() {
   // Session resolution from route param
   const sessionId = route.params?.sessionId as string | undefined;
   const session = useSessionsStore((state) =>
-    sessionId ? state.getSession(sessionId) : undefined,
+    sessionId ? state.sessionsById[sessionId] : undefined,
   );
   const serverId = session?.serverId;
 
