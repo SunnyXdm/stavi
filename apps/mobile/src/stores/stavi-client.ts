@@ -186,20 +186,35 @@ export class StaviClient {
     const subId = generateId();
     const sub: ActiveSubscription = { tag, payload, onEvent, onError, requestId: '' };
     this.registeredSubscriptions.set(subId, sub);
-
-    if (this.engine) {
-      this.engine.sendSubscription(sub);
-    }
-
+    if (this.engine) this.engine.sendSubscription(sub);
     return () => {
       this.registeredSubscriptions.delete(subId);
-      if (sub.requestId && this.engine) {
-        this.engine.removeActiveSubscription(sub.requestId);
-      }
+      if (sub.requestId && this.engine) this.engine.removeActiveSubscription(sub.requestId);
     };
   }
 
-  // ----------------------------------------------------------
+  /** Streaming RPC → Promise. Resolves on Exit.Success, rejects on Failure. */
+  subscribeAsync(
+    tag: string,
+    payload: Record<string, unknown>,
+    onChunk: (event: unknown) => void,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const subId = generateId();
+      const sub: ActiveSubscription = {
+        tag, payload, onEvent: onChunk, requestId: '',
+        onError:    (err) => { this.registeredSubscriptions.delete(subId); reject(err); },
+        onComplete: ()    => { this.registeredSubscriptions.delete(subId); resolve(); },
+      };
+      this.registeredSubscriptions.set(subId, sub);
+      if (this.engine) {
+        this.engine.sendSubscription(sub);
+      } else {
+        this.registeredSubscriptions.delete(subId);
+        reject(new Error(`Not connected (state: ${this.state})`));
+      }
+    });
+  }
   // Internal: Connection
   // ----------------------------------------------------------
 

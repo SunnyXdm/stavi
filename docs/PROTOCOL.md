@@ -745,6 +745,12 @@ Full filesystem operations:
 | `fs.delete` | Delete a file or directory (Phase 4a) |
 | `fs.search` | Search file contents (fuzzy + exact-path) |
 | `fs.grep` | Full-text ripgrep search |
+| `fs.stat` | Get file/directory metadata (Phase 7c) |
+| `fs.batchDelete` | Delete multiple paths with streaming progress (Phase 7c) |
+| `fs.batchMove` | Move multiple paths to a destination directory (Phase 7c) |
+| `fs.batchCopy` | Copy multiple paths to a destination directory (Phase 7c) |
+| `fs.zip` | Create a zip archive from selected paths (Phase 7c) |
+| `fs.unzip` | Extract a zip archive (Phase 7c) |
 
 #### `fs.list` (updated — Phase 4a)
 
@@ -829,11 +835,180 @@ Deletes a file or directory. Rejects paths outside allowed roots.
 
 #### Path-traversal guard (all mutating fs RPCs)
 
-`fs.create`, `fs.rename`, and `fs.delete` validate that the target path falls within:
+`fs.create`, `fs.rename`, `fs.delete`, `fs.stat`, `fs.batchDelete`, `fs.batchMove`, `fs.batchCopy`, `fs.zip`, and `fs.unzip` validate that every target path falls within:
 1. `ctx.workspaceRoot`, OR
 2. A folder of any active (non-archived) Session in the database.
 
 Requests that fail this check receive `Exit.Failure` with `"Path is outside allowed workspace roots"`.
+
+---
+
+Returns metadata for a file or directory.
+
+**Request payload:**
+
+```typescript
+{
+  path: string;  // Absolute path
+}
+```
+
+**Response (`exit.value`):**
+
+```typescript
+{
+  size: number;          // File size in bytes (0 for directories)
+  mtime: number;         // Last modified time (Unix ms)
+  atime: number;         // Last accessed time (Unix ms)
+  mode: number;          // Permission bits (octal, e.g. 33188 = 0o100644)
+  isDirectory: boolean;
+  isFile: boolean;
+  isSymlink: boolean;
+}
+```
+
+Validated against the path-traversal guard before calling `fs.stat`.
+
+---
+
+#### `fs.batchDelete` (new — Phase 7c, streaming)
+
+Deletes multiple files or directories. Streams progress as Chunk messages; final Exit.Success confirms all deletions.
+
+**Request payload:**
+
+```typescript
+{
+  paths: string[];  // Absolute paths to delete
+}
+```
+
+**Chunk shape** (zero or more before Exit):
+
+```typescript
+// Progress
+{ type: 'progress'; path: string; index: number; total: number }
+
+// Per-item error (non-fatal — continues with remaining items)
+{ type: 'error'; path: string; error: string }
+
+// All items processed
+{ type: 'done'; deletedCount: number }
+```
+
+**Response (`exit.value`):** `null` (caller reads progress from Chunks)
+
+All `paths` are validated against the path-traversal guard before any deletion begins.
+
+---
+
+#### `fs.batchMove` (new — Phase 7c, streaming)
+
+Moves multiple files/directories to a destination directory.
+
+**Request payload:**
+
+```typescript
+{
+  paths: string[];       // Absolute source paths
+  destination: string;  // Absolute destination directory
+}
+```
+
+**Chunk shape:**
+
+```typescript
+{ type: 'progress'; path: string; index: number; total: number }
+| { type: 'error'; path: string; error: string }
+| { type: 'done'; movedCount: number }
+```
+
+All `paths` and `destination` are validated against the path-traversal guard.
+
+---
+
+#### `fs.batchCopy` (new — Phase 7c, streaming)
+
+Copies multiple files/directories to a destination directory. Supports recursive directory copy.
+
+**Request payload:**
+
+```typescript
+{
+  paths: string[];       // Absolute source paths
+  destination: string;  // Absolute destination directory
+}
+```
+
+**Chunk shape:**
+
+```typescript
+{ type: 'progress'; path: string; index: number; total: number }
+| { type: 'error'; path: string; error: string }
+| { type: 'done'; copiedCount: number }
+```
+
+---
+
+#### `fs.zip` (new — Phase 7c, streaming)
+
+Creates a zip archive from selected files and/or directories. Uses the `archiver` npm package for streaming creation.
+
+**Request payload:**
+
+```typescript
+{
+  paths: string[];       // Absolute paths to include in the archive
+  destination: string;  // Absolute path of the output .zip file
+}
+```
+
+**Chunk shape:**
+
+```typescript
+// Fired for each entry added to the archive
+{ type: 'progress'; path: string }
+
+// Archive finalized
+{ type: 'done'; destination: string; size: number }
+
+// Non-fatal error for a specific entry
+{ type: 'error'; error: string }
+```
+
+**Response (`exit.value`):** `null` (final destination and size are in the `done` Chunk)
+
+---
+
+#### `fs.unzip` (new — Phase 7c, streaming)
+
+Extracts a zip archive to a destination directory. Includes zip-slip protection: entries that would extract outside the destination directory are silently skipped.
+
+**Request payload:**
+
+```typescript
+{
+  source: string;       // Absolute path of the .zip file
+  destination: string;  // Absolute path of the extraction directory (created if absent)
+}
+```
+
+**Chunk shape:**
+
+```typescript
+// Fired for each entry extracted
+{ type: 'progress'; path: string }
+
+// Extraction complete
+{ type: 'done'; extractedCount: number }
+
+// Non-fatal error for a specific entry
+{ type: 'error'; error: string }
+```
+
+**Zip-slip protection:** Any archive entry whose resolved path does not begin with `destination + '/'` is skipped with a warning. This prevents malicious archives from writing outside the intended directory.
+
+---
 
 ---
 

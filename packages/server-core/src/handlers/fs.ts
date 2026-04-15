@@ -1,9 +1,11 @@
 // WHAT: RPC handlers for filesystem operations (fs.* + projects.* namespaces).
 // WHY:  Provides file read/write/list/search/grep plus create/rename/delete for
 //       the Phase 4 editor. All paths are guarded against traversal.
+//       Phase 7c batch/zip handlers live in fs-batch.ts (split to stay ≤400 lines).
 // HOW:  Thin wrappers over node:fs/promises. ctx.workspaceRoot + session folders
 //       define the allowed root set. Returns Exit.Success / Exit.Failure payloads.
-// SEE:  packages/server-core/src/context.ts, docs/PROTOCOL.md §5.5
+// SEE:  packages/server-core/src/handlers/fs-batch.ts (batch + zip ops),
+//       packages/server-core/src/context.ts, docs/PROTOCOL.md §5.5
 
 import {
   existsSync,
@@ -18,6 +20,7 @@ import {
 import { dirname, join, normalize, resolve } from 'node:path';
 import type { ServerContext, RpcHandler } from '../context';
 import { execFileAsync, resolveWorkspacePath, searchEntries } from '../utils';
+import { createFsBatchHandlers } from './fs-batch';
 
 const HIDDEN_DIRS = new Set([
   '.git', 'node_modules', '.turbo', 'dist', 'build',
@@ -33,8 +36,9 @@ function ensureDirFor(filePath: string) {
  * falls within workspaceRoot or one of the known session folders.
  *
  * Returns the normalized absolute path on success, or null on rejection.
+ * Exported so fs-batch.ts can receive it as a parameter.
  */
-function guardPath(
+export function guardPath(
   workspaceRoot: string,
   rawPath: string,
   sessionFolders: string[],
@@ -55,7 +59,7 @@ function guardPath(
 }
 
 export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler> {
-  const { workspaceRoot, sendJson, makeSuccess, makeFailure } = ctx;
+  const { workspaceRoot, sendJson, makeSuccess, makeFailure, makeChunk } = ctx;
 
   // Collect known session folders from the session repository
   function getSessionFolders(): string[] {
@@ -70,6 +74,10 @@ export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler>
   function guardedPath(rawPath: string): string | null {
     return guardPath(workspaceRoot, rawPath, getSessionFolders());
   }
+
+  // Merge in Phase 7c batch handlers, passing guardedPath so they share
+  // the same traversal logic without duplicating it.
+  const batchHandlers = createFsBatchHandlers(ctx, guardedPath);
 
   return {
     // -------------------------------------------------------
@@ -327,5 +335,9 @@ export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler>
         }
       }
     },
+
+    // Phase 7c batch + zip handlers (fs.stat, fs.batchDelete,
+    // fs.batchMove, fs.batchCopy, fs.zip, fs.unzip) — spread from fs-batch.ts
+    ...batchHandlers,
   };
 }

@@ -46,6 +46,7 @@ export interface ActiveSubscription {
   payload: Record<string, unknown>;
   onEvent: (event: unknown) => void;
   onError?: (error: Error) => void;
+  onComplete?: () => void;
   requestId: string;
 }
 
@@ -150,7 +151,7 @@ export class RpcEngine {
       return;
     }
 
-    // Subscription exit — report error and return the sub for re-registration
+    // Subscription exit — call onComplete or onError, then clean up
     const sub = this.activeSubscriptions.get(requestId);
     if (sub) {
       this.activeSubscriptions.delete(requestId);
@@ -159,6 +160,8 @@ export class RpcEngine {
           ? JSON.stringify(exit.cause.error)
           : 'Subscription failed';
         sub.onError?.(new Error(errorMsg));
+      } else {
+        sub.onComplete?.();
       }
     }
   }
