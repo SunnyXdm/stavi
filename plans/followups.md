@@ -8,8 +8,8 @@
 - ~~`apps/mobile/src/stores/stavi-client.ts` is 573 lines (over 400-line limit)~~ — **CLOSED in Phase 7a**: Split into stavi-client.ts (390) and rpc-engine.ts (203). RpcEngine owns request/response/subscription dispatch; StaviClient owns connection lifecycle and reconnect.
 
 ## From Phase 4 real-use testing
-- Overall visual design does not yet conform to DESIGN.md (Linear/Cursor/Intercom direction, token system, dark-mode-first). Address in Phase 7b — see DESIGN.md at repo root.
-- DirectoryPicker visually broken/ugly. Functional (NewSessionFlow works), but needs a pass. Phase 7b or earlier if it blocks new-session flow usability for testing.
+- ~~Overall visual design does not yet conform to DESIGN.md~~ — **CLOSED in Phase 7b**: tokens.ts aligned to DESIGN.md, accent changed from mint teal to indigo (#5e6ad2), all hardcoded colors swept, Inter font installed, lightColors export added as inert data.
+- DirectoryPicker visually broken/ugly. Token backdrop fixed in Phase 7b (rgba → colors.bg.scrim). Full layout pass deferred to Phase 7d (loading/empty/error states).
 
 ## From Phase 5
 - GPI `terminalApi()` and `gitApi()` fall back to `savedConnections[0]` because the `api()` factory receives no `serverId` context. Annotated with console.warn. Phase 7 should pass `serverId` through the GPI call or replace direct-client calls with event-bus calls.
@@ -21,6 +21,14 @@
 - **CLI tsc dom lib (fixed in Phase 6 fix commit)**: Phase 6 mistakenly added `"lib": ["ES2022", "dom"]` to `apps/cli/tsconfig.json`, which caused `ReadableStream<Uint8Array<ArrayBuffer>>` in `server-core/src/context.ts` to lose `Symbol.asyncIterator`. Fixed by removing `"dom"` — Node.js 18+ exposes TextEncoder as a global via `@types/node`, no dom lib needed.
 - **iOS build not verified**: Phase 6 adds `react-native-vision-camera` (PairServerScreen) and @stablelib packages. Expo/RN bare workflow iOS build not smoke-tested. Verify in Phase 7 or on first iOS device test; pay attention to vision-camera pod install and Hermes compatibility.
 
+## From Phase 7b
+- **Berkeley Mono not installed as TTF**: Berkeley Mono OTF files found on dev machine (in sibling project `litter`) but not available as TTF (Android RN requires TTF). JetBrains Mono retained as the monospace token. If Berkeley Mono TTF becomes available, update `typography.fontFamily.mono` in tokens.ts and re-run font linking — no component changes required since all code references the token.
+- **ApiKeySetup.tsx, CommitSheet.tsx, DirectoryPicker.tsx** had `rgba(0,0,0,0.5)` backdrop not listed in 7b's Files-touched table. Fixed in Phase 7b Commit 2 to satisfy done-criterion 4 (zero hardcoded colors). These were simple single-line substitutions (→ colors.bg.scrim), no functional or layout changes.
+- **PairServerScreen.tsx `'#fff'` camera values kept**: Three hardcoded `'#fff'`/`rgba(255,255,255,0.8)` values in the camera overlay are intentionally not tokenized — camera contrast requires pure white regardless of theme, and these elements overlay live camera feed, not app surfaces. Each has an inline comment explaining the intent.
+- **iOS build not smoke-tested after font swap**: IBMPlexSans → Inter swap updates Info.plist and project.pbxproj, but Xcode/pod install not re-run. Verify on iOS device/simulator before releasing. JetBrains Mono was untouched.
+- **LoadingView / ErrorView / EmptyView polish, reconnect toast, MENTAL-MODEL.md** remain deferred to Phase 7d as specified.
+- **Explorer rewrite and system-search real implementation** remain Phase 7c. system-search stub text updated from "Phase 7" → "Phase 7c" for clarity.
+
 ## From Phase 7a
-- `orchestration-helpers.ts` is a new seam not explicitly specified in 07-final-phases.md — it was needed to get context.ts under 300 lines. The seam is coherent (thread-building and snapshot logic) and stable. Phase 7b can locate it predictably.
+- `orchestration-helpers.ts` is a new seam not explicitly specified in 07-final-phases.md — it was needed to get context.ts under 300 lines. The seam is coherent (thread-building and snapshot logic) and stable. Phase 7c can locate it predictably.
 - `rpc-engine.ts` makeTransportEngine sends JSON strings via `JSON.parse(msg)` round-trip — the RpcEngine accepts a string-based send function but transport expects bytes. This works correctly (encodeJsonMessage handles it) but could be simplified. Low priority; no functional impact.
