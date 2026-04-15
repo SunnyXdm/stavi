@@ -26,6 +26,7 @@ import {
   ChevronDown,
   ChevronRight,
   Layers,
+  X,
 } from 'lucide-react-native';
 import type { WorkspacePluginDefinition, WorkspacePluginPanelProps } from '@stavi/shared';
 import type { AIPluginAPI } from '@stavi/shared';
@@ -468,6 +469,9 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
     }
   }, [renderItems.length, isActive]);
 
+  // Error banner state (dismissed by user, cleared on next successful send)
+  const [sendError, setSendError] = useState<string | null>(null);
+
   // Handle send
   const handleSend = useCallback(
     async (text: string) => {
@@ -478,6 +482,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
           return;
         }
 
+        setSendError(null); // clear previous error on new send attempt
         await sendMessage(text, undefined, {
           modelSelection: {
             provider: selection.provider,
@@ -491,7 +496,9 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
           accessLevel,
         });
       } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to send message';
         console.error('[AI] Send error:', err);
+        setSendError(msg);
       }
     },
     [sendMessage, configSelection, interactionMode, accessLevel, providers, openPopover, syncSelectionToModel],
@@ -600,6 +607,16 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
             listRef.current?.scrollToEnd({ animated: false });
           }}
         />
+      )}
+
+      {/* Error banner — shown when handleSend throws, dismissed by tapping X */}
+      {sendError && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText} numberOfLines={2}>{sendError}</Text>
+          <Pressable onPress={() => setSendError(null)} hitSlop={8} style={styles.errorBannerDismiss}>
+            <X size={14} color={colors.semantic.error} />
+          </Pressable>
+        </View>
       )}
 
       {/* Composer — always visible since session.folder is always available */}
@@ -795,5 +812,22 @@ const styles = StyleSheet.create({
   messageList: {
     paddingTop: spacing[4],
     paddingBottom: spacing[4],
+  },
+  // Error banner (shown between messages and composer on send failure)
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.semantic.errorSubtle,
+    paddingHorizontal: spacing[4],
+    paddingVertical: spacing[2],
+    gap: spacing[2],
+  },
+  errorBannerText: {
+    flex: 1,
+    fontSize: typography.fontSize.sm,
+    color: colors.semantic.error,
+  },
+  errorBannerDismiss: {
+    padding: spacing[1],
   },
 });

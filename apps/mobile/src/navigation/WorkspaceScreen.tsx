@@ -15,6 +15,7 @@ import {
   Pressable,
   Dimensions,
   BackHandler,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
@@ -193,6 +194,7 @@ export function WorkspaceScreen() {
     return (
       <View style={styles.loading}>
         <StatusBar barStyle="light-content" backgroundColor={colors.bg.base} />
+        <ActivityIndicator size="large" color={colors.accent.primary} />
       </View>
     );
   }

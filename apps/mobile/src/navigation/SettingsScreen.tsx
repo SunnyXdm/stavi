@@ -1,15 +1,19 @@
 // ============================================================
 // SettingsScreen — App and server settings
 // ============================================================
-// Accessible from the drawer's bottom nav "Settings" button.
-// Shows connection info, API key config, and app info.
+// WHAT: Per-server connection management plus app info.
+// WHY:  Phase 7a replaces the savedConnections[0] singleton with a list of all
+//       servers — each with its own status, disconnect, and forget buttons.
+// HOW:  Reads connectionsById from useConnectionStore; renders one section per
+//       server using FlatList with a settings header via ListHeaderComponent.
+// SEE:  apps/mobile/src/stores/connection.ts
 
 import React, { useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
+  FlatList,
   Pressable,
   Alert,
 } from 'react-native';
@@ -23,9 +27,8 @@ import {
   WifiOff,
   Trash2,
   Info,
-  ChevronRight,
 } from 'lucide-react-native';
-import { useConnectionStore } from '../stores/connection';
+import { useConnectionStore, type PerServerConnection } from '../stores/connection';
 import { colors, typography, spacing, radii } from '../theme';
 
 // ----------------------------------------------------------
@@ -59,7 +62,7 @@ function Row({ label, value, icon, onPress, danger, rightElement, last }: RowPro
         <Text style={[rowStyles.label, danger && rowStyles.dangerLabel]}>{label}</Text>
         {value !== undefined && <Text style={rowStyles.value} numberOfLines={1}>{value}</Text>}
       </View>
-      {rightElement ?? (onPress && <ChevronRight size={16} color={colors.fg.muted} />)}
+      {rightElement}
     </View>
   );
 
@@ -131,59 +134,107 @@ const rowStyles = StyleSheet.create({
 });
 
 // ----------------------------------------------------------
-// Main Screen
+// ServerSection — one section per connected or saved server
 // ----------------------------------------------------------
 
-export function SettingsScreen() {
-  const navigation = useNavigation<NativeStackNavigationProp<any>>();
-  const savedConnections = useConnectionStore((s) => s.savedConnections);
-  const forgetServer = useConnectionStore((s) => s.forgetServer);
+function ServerSection({ conn }: { conn: PerServerConnection }) {
   const disconnectServer = useConnectionStore((s) => s.disconnectServer);
-  const activeConnection = savedConnections[0] ?? null;
-  const connectionState = activeConnection
-    ? useConnectionStore.getState().getServerStatus(activeConnection.id)
-    : 'disconnected';
-
-  const isConnected = connectionState === 'connected';
-
-  const handleBack = useCallback(() => {
-    navigation.goBack();
-  }, [navigation]);
+  const forgetServer = useConnectionStore((s) => s.forgetServer);
+  const isConnected = conn.clientState === 'connected';
 
   const handleDisconnect = useCallback(() => {
     Alert.alert(
       'Disconnect',
-      'Disconnect from the current server?',
+      `Disconnect from "${conn.savedConnection.name}"?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Disconnect',
           style: 'destructive',
-          onPress: () => {
-            if (activeConnection) {
-              disconnectServer(activeConnection.id);
-            }
-            navigation.navigate('SessionsHome');
-          },
+          onPress: () => disconnectServer(conn.serverId),
         },
       ],
     );
-  }, [activeConnection, disconnectServer, navigation]);
+  }, [conn.serverId, conn.savedConnection.name, disconnectServer]);
 
-  const handleDeleteConnection = useCallback((id: string, name: string) => {
+  const handleForget = useCallback(() => {
     Alert.alert(
-      'Delete Connection',
-      `Remove "${name}" from saved connections?`,
+      'Remove Server',
+      `Remove "${conn.savedConnection.name}" from saved servers?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Remove',
           style: 'destructive',
-          onPress: () => forgetServer(id),
+          onPress: () => forgetServer(conn.serverId),
         },
       ],
     );
-  }, [forgetServer]);
+  }, [conn.serverId, conn.savedConnection.name, forgetServer]);
+
+  return (
+    <Section title={conn.savedConnection.name}>
+      <Row
+        icon={<Server size={16} color={isConnected ? colors.accent.primary : colors.fg.muted} />}
+        label={`${conn.savedConnection.host}:${conn.savedConnection.port}`}
+        value={conn.clientState}
+        last={false}
+      />
+      <Row
+        icon={
+          isConnected
+            ? <Wifi size={16} color={colors.semantic.success} />
+            : <WifiOff size={16} color={colors.fg.muted} />
+        }
+        label={isConnected ? 'Connected' : conn.error ?? conn.clientState}
+        last={!isConnected}
+      />
+      {isConnected && (
+        <Row
+          label="Disconnect"
+          danger
+          onPress={handleDisconnect}
+          last={false}
+        />
+      )}
+      <Row
+        label="Remove Server"
+        danger
+        onPress={handleForget}
+        rightElement={<Trash2 size={16} color={colors.semantic.error} />}
+        last
+      />
+    </Section>
+  );
+}
+
+// ----------------------------------------------------------
+// Main Screen
+// ----------------------------------------------------------
+
+export function SettingsScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<any>>();
+  const connectionsById = useConnectionStore((s) => s.connectionsById);
+  const connections = Object.values(connectionsById);
+
+  const handleBack = useCallback(() => {
+    navigation.goBack();
+  }, [navigation]);
+
+  const ListHeader = (
+    <View style={styles.headerPad} />
+  );
+
+  const ListFooter = (
+    <Section title="About">
+      <Row
+        icon={<Info size={16} color={colors.fg.muted} />}
+        label="Stavi"
+        value="Mobile AI IDE"
+        last
+      />
+    </Section>
+  );
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
@@ -196,76 +247,26 @@ export function SettingsScreen() {
         <View style={styles.backButton} />
       </View>
 
-      <ScrollView
+      <FlatList
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
-      >
-        {/* Connection section */}
-        <Section title="Current Connection">
-          {activeConnection ? (
-            <>
-              <Row
-                icon={<Server size={16} color={isConnected ? colors.accent.primary : colors.fg.muted} />}
-                label={activeConnection.name}
-                value={`${activeConnection.host}:${activeConnection.port}`}
-                last={false}
-              />
-              <Row
-                icon={
-                  isConnected
-                    ? <Wifi size={16} color={colors.semantic.success} />
-                    : <WifiOff size={16} color={colors.fg.muted} />
-                }
-                label={isConnected ? 'Connected' : connectionState}
-                last={isConnected}
-              />
-              {isConnected && (
-                <Row
-                  label="Disconnect"
-                  danger
-                  onPress={handleDisconnect}
-                  last
-                />
-              )}
-            </>
-          ) : (
+        data={connections}
+        keyExtractor={(item) => item.serverId}
+        renderItem={({ item }) => <ServerSection conn={item} />}
+        ListHeaderComponent={ListHeader}
+        ListEmptyComponent={
+          <Section title="Servers">
             <Row
               icon={<WifiOff size={16} color={colors.fg.muted} />}
-              label="Not connected"
-              value="Go to Servers to connect"
+              label="No servers added"
+              value="Go to Sessions Home to add a server"
               last
             />
-          )}
-        </Section>
-
-        {/* Saved connections */}
-        {savedConnections.length > 0 && (
-          <Section title="Saved Servers">
-            {savedConnections.map((conn, idx) => (
-              <Row
-                key={conn.id}
-                icon={<Server size={16} color={colors.fg.muted} />}
-                label={conn.name}
-                value={`${conn.host}:${conn.port}`}
-                onPress={() => handleDeleteConnection(conn.id, conn.name)}
-                rightElement={<Trash2 size={16} color={colors.semantic.error} />}
-                last={idx === savedConnections.length - 1}
-              />
-            ))}
           </Section>
-        )}
-
-        {/* About section */}
-        <Section title="About">
-          <Row
-            icon={<Info size={16} color={colors.fg.muted} />}
-            label="Stavi"
-            value="Mobile AI IDE"
-            last
-          />
-        </Section>
-      </ScrollView>
+        }
+        ListFooterComponent={ListFooter}
+      />
     </SafeAreaView>
   );
 }
@@ -305,7 +306,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingTop: spacing[6],
     paddingBottom: spacing[10],
+  },
+  headerPad: {
+    height: spacing[6],
   },
 });

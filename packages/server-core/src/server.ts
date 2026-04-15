@@ -294,6 +294,8 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
     port,
     host,
     stop: async () => {
+      // Flush any coalesced replaceMessage writes before closing the DB
+      ctx.messageRepo.flush();
       if (ctx.state.gitPollTimer) {
         clearInterval(ctx.state.gitPollTimer);
         ctx.state.gitPollTimer = null;

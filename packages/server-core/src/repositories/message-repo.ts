@@ -4,6 +4,9 @@
 // WHAT: Append/replace messages for streaming AI threads.
 // WHY:  Orchestration messages must survive server restarts.
 // HOW:  bun:sqlite queries with per-thread sequence numbers.
+//       replaceMessage() calls are coalesced: buffered for 50ms then flushed
+//       in a single BEGIN/COMMIT transaction to avoid write amplification
+//       during streaming (which can fire 20+ updates per second).
 // SEE:  db/index.ts, types.ts
 
 import type { Database } from 'bun:sqlite';
@@ -21,8 +24,65 @@ function toMessage(row: any): OrchestrationMessage {
   };
 }
 
+// ----------------------------------------------------------
+// PendingWrites — coalesces replaceMessage calls within 50ms window
+// ----------------------------------------------------------
+
+class PendingWrites {
+  private pending = new Map<string, OrchestrationMessage>(); // id → latest message
+  private timer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(
+    private db: Database,
+    private delayMs = 50,
+  ) {}
+
+  enqueue(id: string, next: OrchestrationMessage): void {
+    this.pending.set(id, next);
+    if (!this.timer) {
+      this.timer = setTimeout(() => this.flush(), this.delayMs);
+    }
+  }
+
+  flush(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.pending.size === 0) return;
+
+    const updates = Array.from(this.pending.entries());
+    this.pending.clear();
+
+    // Single transaction for all pending updates
+    const stmt = this.db.prepare(
+      'UPDATE messages SET text = ?, turn_id = ?, streaming = ?, created_at = ? WHERE id = ?',
+    );
+    this.db.transaction(() => {
+      for (const [id, next] of updates) {
+        const updatedAtMs = Date.parse(next.createdAt);
+        stmt.run(
+          next.text,
+          next.turnId ?? null,
+          next.streaming ? 1 : 0,
+          Number.isNaN(updatedAtMs) ? Date.now() : updatedAtMs,
+          id,
+        );
+      }
+    })();
+  }
+}
+
+// ----------------------------------------------------------
+// MessageRepository
+// ----------------------------------------------------------
+
 export class MessageRepository {
-  constructor(private db: Database) {}
+  private pendingWrites: PendingWrites;
+
+  constructor(private db: Database) {
+    this.pendingWrites = new PendingWrites(db);
+  }
 
   appendMessage(m: OrchestrationMessage): void {
     const createdAtMs = Date.parse(m.createdAt);
@@ -47,16 +107,16 @@ export class MessageRepository {
     return rows.map(toMessage);
   }
 
+  /**
+   * Coalesced update — multiple rapid calls within 50ms are batched into one
+   * DB transaction. Call flush() before server shutdown to commit any pending writes.
+   */
   replaceMessage(id: string, next: OrchestrationMessage): void {
-    const updatedAtMs = Date.parse(next.createdAt);
-    this.db.query(
-      'UPDATE messages SET text = ?, turn_id = ?, streaming = ?, created_at = ? WHERE id = ?',
-    ).run(
-      next.text,
-      next.turnId ?? null,
-      next.streaming ? 1 : 0,
-      Number.isNaN(updatedAtMs) ? Date.now() : updatedAtMs,
-      id,
-    );
+    this.pendingWrites.enqueue(id, next);
+  }
+
+  /** Flush all pending coalesced writes immediately. Call on server shutdown. */
+  flush(): void {
+    this.pendingWrites.flush();
   }
 }

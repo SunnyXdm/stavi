@@ -12,8 +12,8 @@
 // and DrawerContent to display per-instance tabs.
 
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
-import { SquareTerminal } from 'lucide-react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
+import { SquareTerminal, AlertTriangle, RefreshCw } from 'lucide-react-native';
 import type {
   WorkspacePluginDefinition,
   WorkspacePluginPanelProps,
@@ -336,6 +336,68 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
         {sessions.map((session) => {
           const key = `${session.threadId}:${session.terminalId}`;
           const isVisible = key === activeSessionId;
+
+          // Error banner overlay for failed sessions
+          if (session.status === 'error') {
+            return (
+              <View
+                key={key}
+                style={[
+                  styles.terminalWrapper,
+                  styles.errorBanner,
+                  { opacity: isVisible ? 1 : 0, pointerEvents: isVisible ? 'auto' : 'none' },
+                ]}
+              >
+                <AlertTriangle size={20} color={colors.semantic.error} />
+                <Text style={styles.errorText}>Terminal failed to start</Text>
+                <Pressable
+                  style={styles.retryButton}
+                  onPress={() => {
+                    // Replace the errored session: close and reopen
+                    setSessions((prev) =>
+                      prev.map((s) =>
+                        s.threadId === session.threadId
+                          ? { ...s, status: 'connecting' }
+                          : s,
+                      ),
+                    );
+                    const client = getClient();
+                    if (!client || client.getState() !== 'connected') return;
+                    client
+                      .request('terminal.open', {
+                        threadId: session.threadId,
+                        terminalId: session.terminalId,
+                        cwd: defaultCwd,
+                        cols: 80,
+                        rows: 24,
+                      })
+                      .then(() => {
+                        setSessions((prev) =>
+                          prev.map((s) =>
+                            s.threadId === session.threadId
+                              ? { ...s, status: 'running' }
+                              : s,
+                          ),
+                        );
+                      })
+                      .catch(() => {
+                        setSessions((prev) =>
+                          prev.map((s) =>
+                            s.threadId === session.threadId
+                              ? { ...s, status: 'error' }
+                              : s,
+                          ),
+                        );
+                      });
+                  }}
+                >
+                  <RefreshCw size={14} color={colors.semantic.error} />
+                  <Text style={styles.retryText}>Retry</Text>
+                </Pressable>
+              </View>
+            );
+          }
+
           return (
             <View
               key={key}
@@ -483,5 +545,34 @@ const styles = StyleSheet.create({
   },
   terminal: {
     flex: 1,
+  },
+  // Error banner (shown when session.status === 'error')
+  errorBanner: {
+    backgroundColor: colors.semantic.errorSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing[3],
+    padding: spacing[6],
+  },
+  errorText: {
+    fontSize: typography.fontSize.base,
+    color: colors.semantic.error,
+    textAlign: 'center',
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[2],
+    paddingHorizontal: spacing[4],
+    paddingVertical: spacing[2],
+    borderWidth: 1,
+    borderColor: colors.semantic.error,
+    borderRadius: radii.md,
+    marginTop: spacing[2],
+  },
+  retryText: {
+    fontSize: typography.fontSize.sm,
+    color: colors.semantic.error,
+    fontWeight: typography.fontWeight.medium,
   },
 });
