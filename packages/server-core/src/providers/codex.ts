@@ -375,15 +375,23 @@ export class CodexAdapter implements ProviderAdapter {
       session.activeTurnId = (turnResult as any)?.turn?.id ?? `turn-${Date.now()}`;
 
       // Drain the event buffer — process stdout handler pushes events in,
-      // we yield them out. Use a promise-based wait when the buffer is empty.
-      while (session.status === 'running') {
+      // we yield them out. The loop is controlled by observing terminal events
+      // (turn-complete / turn-error) in the buffer, NOT by session.status.
+      // This avoids a race where handleNotification processes turn/completed
+      // (setting status='ready') during the await sendRequest above, which
+      // would cause a status-based loop to exit before draining any events.
+      // Pattern: mirrors T3code's CodexAppServerManager — event handling is
+      // fully decoupled from the turn/start RPC response.
+      let drainDone = false;
+      while (!drainDone) {
         if (session.eventBuffer.length > 0) {
           const event = session.eventBuffer.shift()!;
           yield event;
 
           if (event.type === 'turn-complete' || event.type === 'turn-error') {
             session.status = 'ready';
-            break;
+            session.activeTurnId = null;
+            drainDone = true;
           }
         } else {
           await new Promise<void>((resolve) => {
@@ -391,7 +399,8 @@ export class CodexAdapter implements ProviderAdapter {
               session!.eventResolve = null;
               resolve();
             };
-            // Safety timeout — don't block forever
+            // Safety timeout — don't block forever if Codex subprocess dies
+            // without sending turn/completed.
             setTimeout(() => {
               if (session!.eventResolve) {
                 session!.eventResolve = undefined as any;
@@ -604,15 +613,17 @@ export class CodexAdapter implements ProviderAdapter {
         if (status === 'completed' || status === 'error') {
           this.emitEvent(session, turnComplete(threadId, turnId));
         }
-        session.status = 'ready';
-        session.activeTurnId = null;
+        // Do NOT set session.status here — the drain loop in sendTurn owns
+        // the status transition after it yields the turnComplete event.
+        // Setting status here caused a race: turn/completed arriving during
+        // await sendRequest('turn/start') would set status='ready' before
+        // the drain loop started, causing it to exit immediately.
         break;
       }
 
       case 'turn/aborted':
         this.emitEvent(session, turnError(threadId, 'Turn aborted', turnId));
-        session.status = 'ready';
-        session.activeTurnId = null;
+        // Do NOT set session.status here — drain loop owns status transition.
         break;
 
       case 'item/agentMessage/delta': {
@@ -693,6 +704,10 @@ export class CodexAdapter implements ProviderAdapter {
   // Event emission
   // ----------------------------------------------------------
 
+  // Pushes event to the buffer AND wakes the drain loop if it's blocked
+  // waiting for events. This is the only pathway for events to reach the
+  // sendTurn generator — handleNotification never directly affects the
+  // drain loop's control flow except through this method.
   private emitEvent(session: CodexSession, event: ProviderEvent): void {
     session.eventBuffer.push(event);
     if (session.eventResolve) {
