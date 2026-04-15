@@ -147,7 +147,7 @@ export function SessionsHomeScreen() {
         <View style={styles.emptyState}>
           <Server size={32} color={colors.fg.muted} />
           <Text style={styles.emptyTitle}>Add your first server</Text>
-          <Text style={styles.emptySubtitle}>Create a connection to start new sessions.</Text>
+          <Text style={styles.emptySubtitle}>Create a connection to start new workspaces.</Text>
           <Pressable style={styles.primaryButton} onPress={() => setShowAddServer(true)}>
             <Text style={styles.primaryButtonText}>Add Server</Text>
           </Pressable>

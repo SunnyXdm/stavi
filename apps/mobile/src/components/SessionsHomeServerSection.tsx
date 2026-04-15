@@ -100,7 +100,7 @@ export function ServerSection({
         <>
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
           {loading && sessions.length === 0 ? (
-            <Text style={styles.metaText}>Loading sessions…</Text>
+            <Text style={styles.metaText}>Loading workspaces…</Text>
           ) : null}
           {sessions.length === 0 && !loading && !error ? (
             <Pressable
@@ -109,7 +109,7 @@ export function ServerSection({
               disabled={status !== 'connected'}
             >
               <Plus size={14} color={colors.fg.muted} />
-              <Text style={styles.newSessionText}>Start a new session</Text>
+              <Text style={styles.newSessionText}>Start a new workspace</Text>
             </Pressable>
           ) : (
             <View style={styles.listWrap}>

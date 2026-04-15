@@ -48,3 +48,11 @@
 - **Explorer `ActivityIndicator` in progress banner intentionally kept**: The batch-operation progress banner (`progressText`) in `explorer/index.tsx` uses an inline `ActivityIndicator` alongside progress text — this is a contextual inline spinner, not a full-screen loading state, so it does not use `LoadingView`.
 - **Browser error state is per-navigation**: `webViewError` is cleared on each new navigation (`handleNavigate`). If a page loads partially and then errors, the error replaces the WebView until the user retries or navigates elsewhere.
 - **ReconnectToast onDismiss drives cleanup**: SessionsHomeScreen no longer uses a setTimeout to clear the toast. The toast itself manages its lifecycle (2.5s auto-dismiss + tap-to-dismiss) and calls `onDismiss` to clear the parent's `toastServerId` state.
+
+## From Phase 8a
+- **`useOrchestration.ts` line 118 reads connection state non-reactively** (`.getState().getServerStatus(activeConnectionId)`). Value is captured once on mount and becomes stale if the connection drops afterward. **FIX IN 8e/8f**: Replace with a Zustand selector (`useConnectionStore((s) => s.getServerStatus(activeConnectionId))`) when the AI panel is being modified for the sidebar/chat-first layout.
+
+## From Phase 8b
+- **`DrawerContent.tsx` comment header still says "session management"**: The comment on line 3 says "Left sidebar with session management". Not user-visible, so not renamed in 8b. Update the comment when the drawer is repurposed in Phase 8e.
+- **`terminal/index.tsx` still uses "session" terminology internally**: The `TerminalSession` interface, `sessions` state, `createSession`, `closeSession` — all internal code names. These are *terminal sessions* (PTY processes), not workspace sessions, so renaming would be semantically wrong. They stay as-is permanently.
+- **Telemetry event names unchanged**: `session.opened`, `session.created` etc. remain machine-readable. UI says "workspace"; telemetry retains "session" for log analysis stability. Document this distinction in any future analytics SDK integration.

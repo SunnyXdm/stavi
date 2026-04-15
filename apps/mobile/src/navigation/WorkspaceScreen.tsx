@@ -160,9 +160,9 @@ export function WorkspaceScreen() {
         <StatusBar barStyle="light-content" backgroundColor={colors.bg.base} />
         <SafeAreaView style={styles.errorContent} edges={['top', 'bottom']}>
           <AlertTriangle size={48} color={colors.semantic.warning} />
-          <Text style={styles.errorTitle}>Session not found</Text>
+          <Text style={styles.errorTitle}>Workspace not found</Text>
           <Text style={styles.errorSubtitle}>
-            This session may have been archived or deleted.
+            This workspace may have been archived or deleted.
           </Text>
           <Pressable style={styles.errorButton} onPress={() => navigation.navigate('SessionsHome')}>
             <ArrowLeft size={16} color={colors.fg.onAccent} />
@@ -179,9 +179,9 @@ export function WorkspaceScreen() {
         <StatusBar barStyle="light-content" backgroundColor={colors.bg.base} />
         <SafeAreaView style={styles.errorContent} edges={['top', 'bottom']}>
           <AlertTriangle size={48} color={colors.semantic.warning} />
-          <Text style={styles.errorTitle}>Session archived</Text>
+          <Text style={styles.errorTitle}>Workspace archived</Text>
           <Text style={styles.errorSubtitle}>
-            This session has been archived and is no longer active.
+            This workspace has been archived and is no longer active.
           </Text>
           <Pressable style={styles.errorButton} onPress={() => navigation.navigate('SessionsHome')}>
             <ArrowLeft size={16} color={colors.fg.onAccent} />

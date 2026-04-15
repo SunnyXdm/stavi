@@ -47,6 +47,10 @@ export interface Thread {
   updatedAt: string;
 }
 
+// UI terminology alias — displayed as "Chat" in the app. Phase 8b.
+// The underlying type and wire protocol remain "Thread".
+export type Chat = Thread;
+
 // Legacy flat-text Message — kept for backward compat during transition.
 export interface Message {
   messageId: string;
@@ -201,7 +205,7 @@ export function useOrchestration(input?: {
     const dirName = preferredWorktreePath
       ? preferredWorktreePath.split('/').filter(Boolean).pop()
       : null;
-    const title = dirName ? `${dirName} AI` : 'AI Session';
+    const title = dirName ? `${dirName} AI` : 'AI Chat';
 
     if (!client) {
       throw new Error('Client unavailable for active server');

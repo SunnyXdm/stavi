@@ -36,9 +36,9 @@
 |----------------|---------|
 | **Server**     | A remote (or local) machine running `stavi-server`. Identified by a persistent UUID. Has a keypair for Noise NK auth. |
 | **Connection** | A `StaviClient` instance connected to one server. Manages WebSocket lifecycle, reconnect backoff, and RPC dispatch. |
-| **Session**    | A workspace session on a server, tied to a folder (project root). Contains threads, terminals, editor state. Created via `sessions.create` RPC. |
-| **Thread**     | An AI conversation within a session. Each thread has a provider + model selection, message history, and approval state. |
-| **Workspace**  | The mobile UI for an active session. Hosts a tab bar of plugins (Editor, Terminal, AI, Git, Explorer, Browser). |
+| **Session**    | A workspace session on a server, tied to a folder (project root). Contains threads, terminals, editor state. Created via `sessions.create` RPC. *(Displayed as **"Workspace"** in the UI — Phase 8b rename.)* |
+| **Thread**     | An AI conversation within a session. Each thread has a provider + model selection, message history, and approval state. *(Displayed as **"Chat"** in the UI — Phase 8b rename.)* |
+| **Workspace**  | The mobile UI for an active session. Hosts a tab bar of plugins (Editor, Terminal, AI, Git, Explorer, Browser). Also the new user-facing term for a Session. |
 | **Plugin**     | A self-contained UI panel. Scope is `workspace` (needs a session) or `server` (server-wide). Each has an optional GPI API for cross-plugin calls. |
 | **GPI**        | Global Plugin Interface — the `api()` export on each plugin definition. Allows cross-plugin calls (e.g., AI plugin opens a file in Editor). |
 
@@ -92,6 +92,8 @@ EditorStore (Zustand)          ExplorerStore (Zustand)
 | 7b    | Design tokens aligned to DESIGN.md, Inter font, indigo accent |
 | 7c    | Explorer rewrite (batch ops, FlashList), system search |
 | 7d    | Final polish: StateViews, telemetry, toast, cleanup |
+| 8a    | Fix Codex multi-turn race condition; Claude dispatch chain verified |
+| 8b    | Terminology rename: Session→Workspace, Thread→Chat in all UI strings |
 
 ## 5 Entry Points
 

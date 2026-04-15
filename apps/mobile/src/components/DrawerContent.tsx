@@ -168,13 +168,13 @@ export const DrawerContent = memo(function DrawerContent({
                   <PluginIcon size={28} color={colors.fg.muted} />
                 )}
                 <Text style={styles.emptyTitle}>
-                  {search ? 'No results' : `No ${activePluginDef?.name ?? ''} sessions`}
+                  {search ? 'No results' : `No ${activePluginDef?.name ?? ''} chats`}
                 </Text>
                 {!search && canCreate && (
                   <Pressable style={styles.emptyCreateBtn} onPress={handleCreate}>
                     <PenLine size={14} color={colors.accent.primary} />
                     <Text style={styles.emptyCreateText}>
-                      {reg?.createLabel ?? 'New session'}
+                      {reg?.createLabel ?? 'New chat'}
                     </Text>
                   </Pressable>
                 )}

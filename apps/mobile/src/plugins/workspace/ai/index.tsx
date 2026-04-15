@@ -275,7 +275,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
     registerSessions('ai', {
       sessions: threads.map((t) => ({
         id: t.threadId,
-        title: t.title || t.worktreePath?.split('/').filter(Boolean).pop() || 'Session',
+        title: t.title || t.worktreePath?.split('/').filter(Boolean).pop() || 'Chat',
         subtitle: t.worktreePath ?? undefined,
         isActive: t.threadId === activeThreadId,
       })),
@@ -284,7 +284,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
         setActiveThread(sessionId);
       },
       onCreateSession: () => {},
-      createLabel: 'New AI Session',
+      createLabel: 'New AI Chat',
     });
   }, [threads, activeThreadId, registerSessions, setActiveThread]);
 
@@ -556,7 +556,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
       <EmptyView
         icon={Sparkles}
         title="No server connected"
-        subtitle="Connect to a server to start an AI session"
+        subtitle="Connect to a server to start an AI chat"
       />
     );
   }
@@ -564,7 +564,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
   // Loading
   if (loading) {
     return (
-      <LoadingView message="Loading sessions..." />
+      <LoadingView message="Loading chats..." />
     );
   }
 

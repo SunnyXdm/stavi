@@ -93,14 +93,14 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
     try {
       const session = await client.request<Session>('session.create', {
         folder,
-        title: title.trim() || folder.split('/').filter(Boolean).pop() || 'Session',
+        title: title.trim() || folder.split('/').filter(Boolean).pop() || 'Workspace',
         agentRuntime,
       });
       await refreshForServer(serverId);
       reset();
       onCreated(session);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create session');
+      setError(err instanceof Error ? err.message : 'Failed to create workspace');
     }
   }, [agentRuntime, folder, getClientForServer, onCreated, refreshForServer, reset, serverId, title]);
 
@@ -110,7 +110,7 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
         <View style={styles.backdrop}>
           <Pressable style={styles.backdropPress} onPress={closeFlow} />
           <View style={styles.sheet}>
-            <Text style={styles.title}>New Session</Text>
+            <Text style={styles.title}>New Workspace</Text>
 
             <View style={styles.stepRow}>
               <StepPill step={1} current={step} />
@@ -154,12 +154,12 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
 
             {step === 3 ? (
               <>
-                <Text style={styles.label}>Session title</Text>
+                <Text style={styles.label}>Workspace title</Text>
                 <TextInput
                   style={styles.input}
                   value={title}
                   onChangeText={setTitle}
-                  placeholder="My session"
+                  placeholder="My workspace"
                   placeholderTextColor={colors.fg.muted}
                 />
                 <Text style={styles.label}>Agent</Text>

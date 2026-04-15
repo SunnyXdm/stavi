@@ -260,7 +260,7 @@ export function SettingsScreen() {
             <Row
               icon={<WifiOff size={16} color={colors.fg.muted} />}
               label="No servers added"
-              value="Go to Sessions Home to add a server"
+              value="Go to Home to add a server"
               last
             />
           </Section>
