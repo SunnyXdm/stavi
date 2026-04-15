@@ -1,9 +1,11 @@
-// ============================================================
-// ModelPopover — contextual floating popover above the toolbar
-// ============================================================
-// Two rendering modes:
-//   Quick sections (effort, mode, access): small floating box above composer
-//   Selection sections (providers, models): bottom sheet
+// WHAT: ModelPopover — contextual floating popover above the toolbar.
+// WHY:  Effort, mode, access sections use a quick popover box above the composer.
+//       Provider/model selection uses a bottom sheet for more visual space.
+// HOW:  Two rendering modes gated by isQuick. Section content components are
+//       pure functions so the modal logic stays simple.
+// SEE:  plugins/workspace/ai/Composer.tsx (chip presses that open this),
+//       plugins/workspace/ai/ConfigSheet.tsx (alternative full-sheet selector),
+//       theme/provider-brands.ts (brand colors — NOT theme tokens)
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -16,6 +18,7 @@ import {
 } from 'react-native';
 import { Check, ChevronRight, ChevronLeft, Shield, ShieldCheck, ShieldOff } from 'lucide-react-native';
 import { colors, typography, spacing, radii } from '../../../theme';
+import { providerBrands } from '../../../theme/provider-brands';
 import type { ProviderInfo, ConfigSelection } from './ConfigSheet';
 import { ProviderIcon } from './ProviderIcon';
 
@@ -46,10 +49,12 @@ export interface ModelPopoverProps {
 // Provider metadata
 // ----------------------------------------------------------
 
+// Coming-soon provider entries rendered in the providers list.
+// Colors come from provider-brands.ts — these are brand assets, not theme tokens.
 const COMING_SOON_PROVIDERS = [
-  { key: 'cursor',   name: 'Cursor',   color: '#6B6B6B' },
-  { key: 'opencode', name: 'OpenCode', color: '#F97316' },
-  { key: 'gemini',   name: 'Gemini',   color: '#4285F4' },
+  { key: 'cursor'   as const, name: providerBrands.cursor.label,   color: providerBrands.cursor.color },
+  { key: 'opencode' as const, name: providerBrands.opencode.label, color: providerBrands.opencode.color },
+  { key: 'gemini'   as const, name: providerBrands.gemini.label,   color: providerBrands.gemini.color },
 ];
 
 function getCurrentModel(providers: ProviderInfo[], selection: ConfigSelection) {
@@ -307,8 +312,8 @@ function ProvidersContent({ providers, selection, onSelect, onShowModels }: {
       {COMING_SOON_PROVIDERS.map((p) => (
         <View key={p.key} style={s.row}>
           <View style={{ width: 20, height: 20, borderRadius: 6, backgroundColor: p.color, opacity: 0.35, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>{p.name[0]}</Text>
-          </View>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: colors.fg.onAccent }}>{p.name[0]}</Text>
+            </View>
           <Text style={[s.rowLabel, s.rowLabelMuted, { flex: 1 }]}>{p.name}</Text>
           <Text style={s.comingSoon}>COMING SOON</Text>
         </View>
@@ -460,11 +465,7 @@ const s = StyleSheet.create({
     borderRadius: radii.lg,
     maxHeight: 380,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.1)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
+    borderColor: colors.divider,
     elevation: 24,
   },
 
@@ -479,11 +480,7 @@ const s = StyleSheet.create({
     borderTopRightRadius: radii.xl,
     maxHeight: '65%',
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.08)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
+    borderColor: colors.divider,
     elevation: 20,
   },
 
@@ -492,11 +489,11 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing[3],
-    paddingVertical: 10,
+    paddingVertical: spacing[3], // was 10 (off-grid) → spacing[3] = 12
     gap: spacing[2],
   },
   rowPressed: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: colors.bg.active,
   },
   rowCheck: {
     width: 18,
@@ -541,7 +538,7 @@ const s = StyleSheet.create({
 
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: colors.divider,
     marginVertical: 4,
   },
 

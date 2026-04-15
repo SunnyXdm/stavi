@@ -121,7 +121,7 @@ export const CommitSheet = memo(function CommitSheet({
 });
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  backdrop: { flex: 1, backgroundColor: colors.bg.scrim, justifyContent: 'flex-end' },
   backdropPress: { flex: 1 },
   sheet: {
     backgroundColor: colors.bg.base,

@@ -369,9 +369,9 @@ const styles = StyleSheet.create({
   providerChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: spacing[1],
     paddingHorizontal: spacing[2],
-    paddingVertical: 5,
+    paddingVertical: spacing[1],   // was 5 (off-grid) → 4
     borderRadius: radii.sm,
     backgroundColor: colors.bg.input,
   },
@@ -383,9 +383,9 @@ const styles = StyleSheet.create({
   modelChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: spacing[1],
     paddingHorizontal: spacing[2],
-    paddingVertical: 5,
+    paddingVertical: spacing[1],   // was 5 (off-grid) → 4
     borderRadius: radii.sm,
     backgroundColor: colors.bg.input,
   },

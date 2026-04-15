@@ -9,7 +9,7 @@ import { Activity } from 'lucide-react-native';
 import type { ServerPluginDefinition, ServerPluginPanelProps } from '@stavi/shared';
 import { useConnectionStore } from '../../../stores/connection';
 import { useServerPluginsStore } from '../../../stores/server-plugins-store';
-import { colors, spacing, typography } from '../../../theme';
+import { colors, spacing, typography, radii } from '../../../theme';
 
 function MonitorPanel({ serverId }: ServerPluginPanelProps) {
   const stats = useServerPluginsStore((state) => state.getMonitorStats(serverId));
@@ -65,7 +65,7 @@ const styles = StyleSheet.create({
   heading: { fontSize: typography.fontSize.base, fontWeight: typography.fontWeight.semibold, color: colors.fg.primary },
   card: {
     backgroundColor: colors.bg.raised,
-    borderRadius: 8,
+    borderRadius: radii.md,
     padding: spacing[3],
     gap: spacing[1],
   },

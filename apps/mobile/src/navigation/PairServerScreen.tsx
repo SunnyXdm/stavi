@@ -240,7 +240,7 @@ const styles = StyleSheet.create({
   },
   cameraContainer: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: colors.bg.base,
   },
   overlay: {
     flex: 1,
@@ -251,11 +251,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing[4],
     paddingVertical: spacing[3],
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: colors.bg.scrim,
   },
   headerTitle: {
     fontSize: typography.fontSize.lg,
     fontWeight: typography.fontWeight.semibold,
+    // '#fff' is intentional: camera overlay text must contrast against live camera
+    // feed regardless of the app theme. Not a theme token.
     color: '#fff',
   },
   closeButton: {
@@ -264,7 +266,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: colors.bg.active,
   },
   viewfinderArea: {
     flex: 1,
@@ -280,6 +282,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: CORNER_SIZE,
     height: CORNER_SIZE,
+    // '#fff' is intentional: viewfinder corners must contrast against any camera
+    // background (bright or dark). Theme accent would disappear on bright scenes.
     borderColor: '#fff',
   },
   cornerTL: {
@@ -314,10 +318,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing[6],
     paddingVertical: spacing[5],
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: colors.bg.scrim,
   },
   hintText: {
     fontSize: typography.fontSize.sm,
+    // rgba white is intentional: hint text on live camera feed must stay legible
+    // on any background. Not a theme token.
     color: 'rgba(255,255,255,0.8)',
     textAlign: 'center',
   },

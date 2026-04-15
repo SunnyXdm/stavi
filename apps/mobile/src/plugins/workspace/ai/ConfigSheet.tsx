@@ -1,8 +1,10 @@
-// ============================================================
-// ConfigSheet — Bottom sheet for model/provider selection
-// ============================================================
-// Slide-up modal showing available providers and models.
-// Supports effort and thinking toggles for Claude models.
+// WHAT: ConfigSheet — bottom sheet for model/provider selection.
+// WHY:  Slide-up modal showing available providers and models. Supports effort
+//       and thinking toggles for models that expose those capabilities.
+// HOW:  Controlled by visible/onClose props from the AI plugin. Provider list
+//       comes from the orchestration layer (providers: ProviderInfo[]).
+// SEE:  plugins/workspace/ai/ModelPopover.tsx (quick-popover for effort/mode),
+//       theme/provider-brands.ts (provider brand colors — NOT theme tokens)
 
 import React, { memo, useCallback } from 'react';
 import {
@@ -21,6 +23,7 @@ import {
   Brain,
 } from 'lucide-react-native';
 import { colors, typography, spacing, radii } from '../../../theme';
+import { providerBrands } from '../../../theme/provider-brands';
 
 // ----------------------------------------------------------
 // Types
@@ -81,9 +84,12 @@ const EFFORT_OPTIONS: Array<{ value: 'low' | 'medium' | 'high' | 'max'; label: s
   { value: 'max', label: 'Extra High', icon: Sparkles },
 ];
 
+// Provider brand color map — keyed by provider id.
+// These are brand assets from provider-brands.ts, NOT theme tokens.
 const PROVIDER_ACCENT: Record<string, string> = {
-  claude: '#7C3AED',
-  codex: '#10B981',
+  claude:   providerBrands.claude.color,
+  codex:    providerBrands.codex.color,
+  opencode: providerBrands.opencode.color,
 };
 
 // ----------------------------------------------------------
@@ -215,7 +221,7 @@ export const ConfigSheet = memo(function ConfigSheet({
             <View style={styles.providerSection}>
               <View style={styles.providerHeader}>
                 <View style={styles.providerNameRow}>
-                  <View style={[styles.providerAccentDot, { backgroundColor: '#F97316' }]} />
+                  <View style={[styles.providerAccentDot, { backgroundColor: providerBrands.opencode.color }]} />
                   <Text style={[styles.providerName, styles.providerNameMuted]}>OpenCode</Text>
                 </View>
                 <View style={styles.comingSoonBadge}>
@@ -290,7 +296,7 @@ export const ConfigSheet = memo(function ConfigSheet({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: colors.bg.scrim,
     justifyContent: 'flex-end',
   },
   backdropPress: {

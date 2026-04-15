@@ -1,14 +1,13 @@
-// ============================================================
-// NativeTerminal — Native terminal surface
-// ============================================================
-// On Android: renders the Fabric NativeTerminalView (Termux
-// TerminalView). Imperative write/resize/reset commands are
-// forwarded via codegen Commands to the native view.
-//
-// On iOS: renders an xterm.js terminal inside a WebView.
-// Messages are passed via postMessage / onMessage bridge.
-//
-// The plugin layer always sees the same NativeTerminalRef API.
+// WHAT: NativeTerminal — unified terminal surface for Android and iOS.
+// WHY:  Android uses the Fabric NativeTerminalView (Termux TerminalView) for
+//       native performance. iOS uses xterm.js in a WebView as an equivalent.
+//       Both expose the same NativeTerminalRef API to the plugin layer.
+// HOW:  Android: Fabric codegen Commands forwarded to native view.
+//       iOS: HTML built with token-interpolated colors and font at module load
+//       time (static — no runtime theme switching), passed to WebView as source.
+//       Messages bridge input/resize/ready events via postMessage/onMessage.
+// SEE:  apps/mobile/src/theme/tokens.ts (terminal color tokens),
+//       apps/mobile/src/plugins/workspace/terminal/index.tsx (plugin layer)
 
 import React, {
   useRef,
@@ -28,6 +27,7 @@ import NativeTerminalViewComponent, {
   Commands,
   type NativeTerminalViewProps,
 } from '../specs/NativeTerminalViewNativeComponent';
+import { colors, typography } from '../theme';
 
 // ----------------------------------------------------------
 // Public types
@@ -114,15 +114,31 @@ AndroidTerminal.displayName = 'AndroidTerminal';
 //   RN → WebView: postMessage({ type: 'write'|'reset', data })
 //   WebView → RN: onMessage with { type: 'input'|'resize'|'ready', ... }
 
-// Build HTML with inlined scripts/styles — no CDN dependency, works offline
+// iOS — xterm.js terminal via WebView
+// Architecture:
+//   RN → WebView: postMessage({ type: 'write'|'reset'|'fit', data })
+//   WebView → RN: onMessage with { type: 'input'|'resize'|'ready', ... }
+//
+// HTML is built once at module load from token values. Token values are static
+// (no runtime theme switching), so interpolation is safe. The '#fff' values
+// below are intentional: '#fff' for the bright-white ANSI colour is a terminal
+// convention, not a UI design choice.
 function buildXtermHtml(): string {
+  const bg = colors.bg.base;
+  const fg = colors.terminal.white;
+  const cursor = colors.fg.secondary;
+  const { black, red, green, yellow, blue, magenta, cyan, white } = colors.terminal;
+  const { brightBlack, brightRed, brightGreen, brightYellow, brightBlue, brightMagenta, brightCyan, brightWhite } = colors.terminal;
+  // Mono font: token name first, then platform fallbacks
+  const fontFamily = `${typography.fontFamily.mono}, ${typography.fontFamily.monoFallback}, Menlo, Monaco, monospace`;
+
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; background: #161616; overflow: hidden; }
+  html, body { width: 100%; height: 100%; background: ${bg}; overflow: hidden; }
   #terminal { width: 100%; height: 100%; }
   .xterm { padding: 4px; }
   ${XTERM_CSS}
@@ -135,17 +151,15 @@ function buildXtermHtml(): string {
 <script>
 const term = new Terminal({
   theme: {
-    background: '#161616',
-    foreground: '#e0e0e0',
-    cursor: '#e0e0e0',
-    black: '#1e1e1e', red: '#f44747', green: '#6a9955',
-    yellow: '#d7ba7d', blue: '#569cd6', magenta: '#c586c0',
-    cyan: '#4ec9b0', white: '#d4d4d4',
-    brightBlack: '#808080', brightRed: '#f44747', brightGreen: '#b5cea8',
-    brightYellow: '#d7ba7d', brightBlue: '#9cdcfe', brightMagenta: '#c586c0',
-    brightCyan: '#4ec9b0', brightWhite: '#ffffff',
+    background: '${bg}', foreground: '${fg}', cursor: '${cursor}',
+    black: '${black}', red: '${red}', green: '${green}',
+    yellow: '${yellow}', blue: '${blue}', magenta: '${magenta}',
+    cyan: '${cyan}', white: '${white}',
+    brightBlack: '${brightBlack}', brightRed: '${brightRed}', brightGreen: '${brightGreen}',
+    brightYellow: '${brightYellow}', brightBlue: '${brightBlue}', brightMagenta: '${brightMagenta}',
+    brightCyan: '${brightCyan}', brightWhite: '${brightWhite}',
   },
-  fontFamily: 'Menlo, Monaco, monospace',
+  fontFamily: '${fontFamily}',
   fontSize: 13,
   lineHeight: 1.2,
   cursorBlink: true,
@@ -156,41 +170,25 @@ const fitAddon = new FitAddon.FitAddon();
 term.loadAddon(fitAddon);
 term.open(document.getElementById('terminal'));
 fitAddon.fit();
-
-// Send input from terminal to RN
 term.onData(function(data) {
   window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'input', data: data }));
 });
-
-// Send resize events to RN
 term.onResize(function(size) {
   window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
 });
-
-// Handle resize when window changes
-window.addEventListener('resize', function() {
-  fitAddon.fit();
-});
-
-// Signal ready with initial dimensions
+window.addEventListener('resize', function() { fitAddon.fit(); });
 setTimeout(function() {
   fitAddon.fit();
   window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready', cols: term.cols, rows: term.rows }));
 }, 100);
-
-// Handle messages from RN
 document.addEventListener('message', handleMessage);
 window.addEventListener('message', handleMessage);
 function handleMessage(event) {
   try {
     const msg = JSON.parse(event.data);
-    if (msg.type === 'write') {
-      term.write(msg.data);
-    } else if (msg.type === 'reset') {
-      term.reset();
-    } else if (msg.type === 'fit') {
-      fitAddon.fit();
-    }
+    if (msg.type === 'write') term.write(msg.data);
+    else if (msg.type === 'reset') term.reset();
+    else if (msg.type === 'fit') fitAddon.fit();
   } catch(e) {}
 }
 </script>
@@ -286,12 +284,7 @@ export type { NativeTerminalProps };
 // ----------------------------------------------------------
 
 const styles = StyleSheet.create({
-  nativeTerminal: {
-    flex: 1,
-    backgroundColor: '#161616', // bg.base — must match Kotlin initSession background
-  },
-  iosTerminal: {
-    flex: 1,
-    backgroundColor: '#161616',
-  },
+  // bg.base must match the Kotlin TerminalView background color set in initSession
+  nativeTerminal: { flex: 1, backgroundColor: colors.bg.base },
+  iosTerminal:    { flex: 1, backgroundColor: colors.bg.base },
 });
