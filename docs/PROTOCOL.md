@@ -843,6 +843,8 @@ Requests that fail this check receive `Exit.Failure` with `"Path is outside allo
 
 ---
 
+#### `fs.stat` (new — Phase 7c)
+
 Returns metadata for a file or directory.
 
 **Request payload:**
