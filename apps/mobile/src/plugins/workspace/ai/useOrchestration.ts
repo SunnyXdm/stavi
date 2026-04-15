@@ -34,6 +34,8 @@ export interface Thread {
   interactionMode: 'default' | 'plan';
   branch: string;
   worktreePath: string | null;
+  /** Phase 8c: per-chat provider. Undefined = inherit from workspace at turn time. */
+  agentRuntime?: 'claude' | 'codex';
   modelSelection?: {
     provider: string;
     modelId: string;
@@ -191,7 +193,7 @@ export function useOrchestration(input?: {
   // Thread creation
   // ----------------------------------------------------------
 
-  const ensureActiveThread = useCallback(async () => {
+  const ensureActiveThread = useCallback(async (agentRuntime?: 'claude' | 'codex') => {
     const currentId = instanceId
       ? useAiBindingsStore.getState().getBoundThreadId({ serverId: activeConnectionId, sessionId, instanceId }) ?? activeThreadIdRef.current
       : activeThreadIdRef.current;
@@ -223,6 +225,8 @@ export function useOrchestration(input?: {
         interactionMode: 'default',
         branch: null,
         worktreePath: preferredWorktreePath,
+        // Phase 8c: per-chat provider chosen in the AI composer
+        agentRuntime: agentRuntime ?? null,
         createdAt,
       },
     });
@@ -246,6 +250,7 @@ export function useOrchestration(input?: {
               interactionMode: 'default',
               branch: '',
               worktreePath: preferredWorktreePath,
+              agentRuntime,
               modelSelection: undefined,
               archived: false,
               createdAt,
@@ -273,6 +278,7 @@ export function useOrchestration(input?: {
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch || '',
           worktreePath: event.payload.worktreePath,
+          agentRuntime: event.payload.agentRuntime ?? undefined,
           modelSelection: event.payload.modelSelection,
           archived: false,
           createdAt: event.payload.createdAt,
@@ -465,6 +471,7 @@ export function useOrchestration(input?: {
           interactionMode: t.interactionMode || 'default',
           branch: t.branch || '',
           worktreePath: t.worktreePath,
+          agentRuntime: t.agentRuntime ?? undefined,
           modelSelection: t.modelSelection,
           archived: t.archived || false,
           createdAt: t.createdAt,

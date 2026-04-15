@@ -18,7 +18,7 @@ interface ActionDeps {
   setState: React.Dispatch<React.SetStateAction<OrchestrationState>>;
   activeThreadIdRef: React.MutableRefObject<string | null>;
   instanceId: string | undefined;
-  ensureActiveThread: () => Promise<string>;
+  ensureActiveThread: (agentRuntime?: 'claude' | 'codex') => Promise<string>;
   resolveThreadModelSelection: () => NonNullable<Thread['modelSelection']>;
 }
 
@@ -39,9 +39,11 @@ export function useOrchestrationActions({
         modelSelection?: Thread['modelSelection'];
         interactionMode?: 'default' | 'plan';
         accessLevel?: string;
+        /** Phase 8c: provider to use for this chat (written to thread on first create) */
+        agentRuntime?: 'claude' | 'codex';
       },
     ) => {
-      const tid = threadId || (await ensureActiveThread());
+      const tid = threadId || (await ensureActiveThread(options?.agentRuntime));
       const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const commandId = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const modelSel = options?.modelSelection ?? resolveThreadModelSelection();

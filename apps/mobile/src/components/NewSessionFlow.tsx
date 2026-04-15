@@ -1,5 +1,6 @@
-// WHAT: Three-step flow for creating a new Session.
-// WHY:  Phase 2 requires server selection, folder selection, then title/agent confirmation.
+// WHAT: Three-step flow for creating a new Workspace.
+// WHY:  Phase 2 requires server selection, folder selection, then title confirmation.
+//       Phase 8c: removed agent picker — provider is now chosen per-chat in the AI composer.
 // HOW:  Uses getClientForServer(serverId) for session.create and DirectoryPicker for folder selection.
 // SEE:  apps/mobile/src/stores/connection.ts, apps/mobile/src/stores/sessions-store.ts
 
@@ -37,7 +38,6 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
   const [serverId, setServerId] = useState('');
   const [folder, setFolder] = useState('');
   const [title, setTitle] = useState('');
-  const [agentRuntime, setAgentRuntime] = useState<'claude' | 'codex'>('claude');
   const [showDirectoryPicker, setShowDirectoryPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,7 +51,6 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
     setServerId('');
     setFolder('');
     setTitle('');
-    setAgentRuntime('claude');
     setError(null);
   }, []);
 
@@ -94,7 +93,7 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
       const session = await client.request<Session>('session.create', {
         folder,
         title: title.trim() || folder.split('/').filter(Boolean).pop() || 'Workspace',
-        agentRuntime,
+        // agentRuntime omitted — defaults to 'claude' on server; provider is chosen per-chat
       });
       await refreshForServer(serverId);
       reset();
@@ -102,7 +101,7 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create workspace');
     }
-  }, [agentRuntime, folder, getClientForServer, onCreated, refreshForServer, reset, serverId, title]);
+  }, [folder, getClientForServer, onCreated, refreshForServer, reset, serverId, title]);
 
   return (
     <>
@@ -161,21 +160,9 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
                   onChangeText={setTitle}
                   placeholder="My workspace"
                   placeholderTextColor={colors.fg.muted}
+                  autoFocus
                 />
-                <Text style={styles.label}>Agent</Text>
-                <View style={styles.chips}>
-                  {(['claude', 'codex'] as const).map((runtime) => (
-                    <Pressable
-                      key={runtime}
-                      style={[styles.chip, agentRuntime === runtime && styles.chipActive]}
-                      onPress={() => setAgentRuntime(runtime)}
-                    >
-                      <Text style={[styles.chipText, agentRuntime === runtime && styles.chipTextActive]}>
-                        {runtime}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
+                <Text style={styles.meta}>Provider is selected per-chat in the AI composer.</Text>
               </>
             ) : null}
 

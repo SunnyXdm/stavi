@@ -28,6 +28,7 @@ function toThread(row: any): OrchestrationThread {
     interactionMode: row.interaction_mode,
     branch: row.branch,
     worktreePath: row.worktree_path,
+    agentRuntime: row.agent_runtime ?? undefined,
     modelSelection: parseModelSelection(row.model_selection),
     archived: !!row.archived,
     createdAt: new Date(row.created_at).toISOString(),
@@ -46,7 +47,7 @@ export class ThreadRepository {
     const createdAtMs = Date.parse(t.createdAt);
     const updatedAtMs = Date.parse(t.updatedAt);
     this.db.query(
-      'INSERT INTO threads (id, session_id, project_id, title, runtime_mode, interaction_mode, branch, worktree_path, model_selection, archived, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO threads (id, session_id, project_id, title, runtime_mode, interaction_mode, branch, worktree_path, model_selection, agent_runtime, archived, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     ).run(
       t.threadId,
       input.sessionId,
@@ -57,6 +58,7 @@ export class ThreadRepository {
       t.branch,
       t.worktreePath,
       t.modelSelection ? JSON.stringify(t.modelSelection) : null,
+      t.agentRuntime ?? null,
       t.archived ? 1 : 0,
       Number.isNaN(createdAtMs) ? Date.now() : createdAtMs,
       Number.isNaN(updatedAtMs) ? Date.now() : updatedAtMs,
@@ -86,7 +88,7 @@ export class ThreadRepository {
     const next: OrchestrationThread = { ...current, ...patch, updatedAt: new Date().toISOString() };
     const updatedAtMs = Date.parse(next.updatedAt);
     this.db.query(
-      'UPDATE threads SET title = ?, runtime_mode = ?, interaction_mode = ?, branch = ?, worktree_path = ?, model_selection = ?, archived = ?, updated_at = ? WHERE id = ?',
+      'UPDATE threads SET title = ?, runtime_mode = ?, interaction_mode = ?, branch = ?, worktree_path = ?, model_selection = ?, agent_runtime = ?, archived = ?, updated_at = ? WHERE id = ?',
     ).run(
       next.title,
       next.runtimeMode,
@@ -94,6 +96,7 @@ export class ThreadRepository {
       next.branch,
       next.worktreePath,
       next.modelSelection ? JSON.stringify(next.modelSelection) : null,
+      next.agentRuntime ?? null,
       next.archived ? 1 : 0,
       Number.isNaN(updatedAtMs) ? Date.now() : updatedAtMs,
       id,

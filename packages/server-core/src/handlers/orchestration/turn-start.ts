@@ -75,8 +75,12 @@ export async function handleTurnStart(
   });
 
   // Resolve provider
+  // Phase 8c fallback chain: modelSelection.provider > thread.agentRuntime > session.agentRuntime > default adapter
   const modelSelection = command.modelSelection as import('../../providers/types').ModelSelection | undefined;
-  const providerKind = modelSelection?.provider;
+  const providerKind: import('../../providers/types').ProviderKind | undefined =
+    (modelSelection?.provider as import('../../providers/types').ProviderKind | undefined) ??
+    updatedThread.agentRuntime ??
+    (updatedThread.sessionId ? ctx.sessionRepo.getSession(updatedThread.sessionId)?.agentRuntime : undefined);
   const adapter = providerKind
     ? providerRegistry.getAdapter(providerKind)
     : providerRegistry.getDefaultAdapter();

@@ -321,6 +321,15 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
     [threads, activeThreadId],
   );
   const providerLocked = Boolean(activeThread?.modelSelection?.provider);
+
+  // Phase 8c: provider selector is hidden when ≤1 installed+authenticated provider is available.
+  // This avoids showing a useless single-option picker. When hidden, the provider chip still shows
+  // the current provider name but tapping it opens the models list instead.
+  const availableProviders = useMemo(
+    () => (providers as ProviderInfo[]).filter((p) => p.installed && p.authenticated),
+    [providers],
+  );
+  const showProviderSelector = availableProviders.length > 1;
   const selectedProvider = useMemo(
     () => (providers as ProviderInfo[]).find((provider) => provider.provider === configSelection.provider) ?? null,
     [providers, configSelection.provider],
@@ -483,6 +492,13 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
           return;
         }
 
+        // Phase 8c: derive agentRuntime from the selected provider for per-chat binding.
+        // Only 'claude' and 'codex' are valid AgentRuntime values; anything else falls back to undefined.
+        const agentRuntimeForChat: 'claude' | 'codex' | undefined =
+          selection.provider === 'claude' || selection.provider === 'codex'
+            ? selection.provider
+            : undefined;
+
         setSendError(null); // clear previous error on new send attempt
         await sendMessage(text, undefined, {
           modelSelection: {
@@ -495,6 +511,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
           },
           interactionMode,
           accessLevel,
+          agentRuntime: agentRuntimeForChat,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to send message';
@@ -615,7 +632,11 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
       <Composer
         onSend={handleSend}
         onInterrupt={handleInterrupt}
-        onProviderPress={() => openPopover(providerLocked ? 'models' : 'providers')}
+        onProviderPress={
+          // Phase 8c: if only one provider available, skip provider list and go straight to models.
+          // If multiple available and not locked, show providers list.
+          () => openPopover(providerLocked || !showProviderSelector ? 'models' : 'providers')
+        }
         onModelPress={() => openPopover(configSelection.provider ? 'models' : 'providers')}
         onEffortPress={modelCapabilities?.reasoningEffortLevels.length ? () => openPopover('effort') : undefined}
         onThinkingPress={modelCapabilities?.supportsThinkingToggle ? () => openPopover('thinking') : undefined}

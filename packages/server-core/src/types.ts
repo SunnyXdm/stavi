@@ -114,6 +114,7 @@ export interface Session {
   serverId: string;
   folder: string;
   title: string;
+  /** Phase 8c: workspace-level fallback. New threads with NULL agent_runtime inherit this. */
   agentRuntime: AgentRuntime;
   status: SessionStatus;
   createdAt: number;

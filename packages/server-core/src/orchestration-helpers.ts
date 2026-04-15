@@ -74,6 +74,11 @@ export function createOrchestrationHelpers(
         'worktreePath' in command
           ? resolveThreadWorktreePath(command.worktreePath)
           : existing?.worktreePath ?? workspaceRoot,
+      // Phase 8c: per-thread provider. Explicit command value wins, then existing, then undefined (NULL in DB).
+      agentRuntime:
+        typeof command.agentRuntime === 'string' && (command.agentRuntime === 'claude' || command.agentRuntime === 'codex')
+          ? command.agentRuntime
+          : existing?.agentRuntime,
       modelSelection: rawModelSelection ?? existing?.modelSelection,
       archived: existing?.archived ?? false,
       createdAt,

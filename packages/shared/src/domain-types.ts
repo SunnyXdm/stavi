@@ -212,6 +212,8 @@ export interface Session {
   serverId: string;
   folder: string;
   title: string;
+  /** Phase 8c: becomes optional — defaults to 'claude' when not supplied.
+   *  Acts as a workspace-level fallback for threads whose own agentRuntime is NULL. */
   agentRuntime: AgentRuntime;
   status: SessionStatus;
   createdAt: number;
@@ -229,6 +231,8 @@ export interface OrchestrationThread {
   interactionMode: 'default' | 'plan';
   branch: string;
   worktreePath: string | null;
+  /** Phase 8c: per-chat provider. NULL means inherit from parent session at turn-start time. */
+  agentRuntime?: AgentRuntime;
   modelSelection?: {
     provider: string;
     modelId: string;
