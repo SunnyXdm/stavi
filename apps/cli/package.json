@@ -16,11 +16,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@stavi/server-core": "*"
+    "@stavi/crypto": "*",
+    "@stavi/server-core": "*",
+    "qrcode-terminal": "^0.12.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "typescript": "^5.8.3",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "@types/ws": "^8.5.14",
+    "typescript": "^5.8.3"
   },
   "engines": {
     "node": ">= 22.11.0"

@@ -12,6 +12,10 @@
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/native": "7.2.2",
+    "@stablelib/chacha20poly1305": "^2.0.1",
+    "@stablelib/hkdf": "^2.0.1",
+    "@stablelib/sha256": "^2.0.1",
+    "@stablelib/x25519": "^2.0.1",
     "@react-navigation/native-stack": "7.14.10",
     "@shopify/flash-list": "^2.3.1",
     "@stavi/crypto": "*",

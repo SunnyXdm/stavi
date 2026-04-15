@@ -17,6 +17,7 @@ import './plugins/load';
 import { WorkspaceScreen } from './navigation/WorkspaceScreen';
 import { SessionsHomeScreen } from './navigation/SessionsHomeScreen';
 import { SettingsScreen } from './navigation/SettingsScreen';
+import { PairServerScreen } from './navigation/PairServerScreen';
 
 import { colors, typography } from './theme';
 
@@ -55,6 +56,11 @@ export default function App() {
             <Stack.Screen name="SessionsHome" component={SessionsHomeScreen} />
             <Stack.Screen name="Workspace" component={WorkspaceScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen
+              name="PairServer"
+              component={PairServerScreen}
+              options={{ animation: 'slide_from_bottom', presentation: 'fullScreenModal' }}
+            />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>

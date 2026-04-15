@@ -73,11 +73,11 @@ export interface CryptoPrimitives {
   /** Compute X25519 ECDH shared secret */
   ecdh(mySecret: Uint8Array, theirPublic: Uint8Array): Uint8Array;
 
-  /** Encrypt with ChaCha20-Poly1305 */
-  encrypt(key: Uint8Array, nonce: Uint8Array, plaintext: Uint8Array): Uint8Array;
+  /** Encrypt with ChaCha20-Poly1305. associatedData defaults to empty. */
+  encrypt(key: Uint8Array, nonce: Uint8Array, plaintext: Uint8Array, associatedData?: Uint8Array): Uint8Array;
 
-  /** Decrypt with ChaCha20-Poly1305 */
-  decrypt(key: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array): Uint8Array | null;
+  /** Decrypt with ChaCha20-Poly1305. associatedData defaults to empty. */
+  decrypt(key: Uint8Array, nonce: Uint8Array, ciphertext: Uint8Array, associatedData?: Uint8Array): Uint8Array | null;
 
   /** HKDF-SHA256 key derivation */
   hkdf(ikm: Uint8Array, salt: Uint8Array, info: Uint8Array, length: number): Uint8Array;
@@ -133,3 +133,15 @@ export function parseFrameHeader(data: Uint8Array): { type: FrameType; nonce: nu
   const payload = data.slice(FRAME_HEADER_SIZE);
   return { type, nonce, payload };
 }
+
+// ----------------------------------------------------------
+// Noise NK state machine — re-exported from noise.ts
+// ----------------------------------------------------------
+export type { HandshakeInitiatorState } from './noise';
+export {
+  initiateHandshake,
+  completeHandshake,
+  respondHandshake,
+  noiseEncrypt,
+  noiseDecrypt,
+} from './noise';

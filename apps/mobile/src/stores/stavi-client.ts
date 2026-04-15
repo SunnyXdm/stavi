@@ -8,9 +8,13 @@
 //   Server → Client: { _tag: "Chunk", requestId, values }   (streaming)
 //                    { _tag: "Exit", requestId, exit }       (final)
 //
-// Auth flow:
+// Auth flow (direct LAN):
 //   1. POST /api/auth/ws-token with Bearer token → { token, expiresAt }
 //   2. Connect ws://<host>:<port>/ws?wsToken=<token>
+//
+// Auth flow (relay tunnel):
+//   Use connectViaTransport(RelayTransport) — skips the HTTP auth step;
+//   the Noise NK handshake inside RelayTransport authenticates the server.
 
 // ----------------------------------------------------------
 // Types
@@ -58,6 +62,10 @@ interface RpcExit {
 type ServerMessage = RpcChunk | RpcExit | { _tag: string; [key: string]: unknown };
 type WebSocketCloseLike = { code?: number; wasClean?: boolean };
 type WebSocketMessageLike = { data?: string | ArrayBuffer };
+
+// Transport interface (used by connectViaTransport for relay tunnels)
+import type { Transport } from '../transports/LocalWebSocketTransport';
+import { encodeJsonMessage, decodeJsonMessage } from '../transports/LocalWebSocketTransport';
 
 /** Pending one-shot request */
 interface PendingRequest {
@@ -127,6 +135,9 @@ export class StaviClient {
   private wsToken: string | null = null;
   private wsTokenExpiresAt: Date | null = null;
 
+  // Transport abstraction (set when using connectViaTransport)
+  private _transport: Transport | null = null;
+
   // ----------------------------------------------------------
   // Public API
   // ----------------------------------------------------------
@@ -150,10 +161,64 @@ export class StaviClient {
    */
   async connect(config: StaviConnectionConfig): Promise<void> {
     this.config = config;
+    this._transport = null; // clear any previous transport path
     this.isIntentionalClose = false;
     this.reconnectAttempts = 0;
 
     await this._doConnect();
+  }
+
+  /**
+   * Connect via a pre-constructed Transport (e.g. RelayTransport for tunnel mode).
+   * Bypasses the HTTP auth step — the transport's own protocol authenticates the peer.
+   * Call transport.connect() BEFORE calling this method.
+   */
+  async connectViaTransport(transport: Transport): Promise<void> {
+    this._transport = transport;
+    this.config = null;
+    this.isIntentionalClose = false;
+    this.reconnectAttempts = 0;
+
+    this._setState('connecting');
+
+    transport.onStateChange((state, error) => {
+      if (state === 'closed') {
+        // Reject pending requests
+        for (const [, pending] of this.pendingRequests) {
+          clearTimeout(pending.timeout);
+          pending.reject(new Error('Transport closed'));
+        }
+        this.pendingRequests.clear();
+        this.activeSubscriptions.clear();
+
+        if (!this.isIntentionalClose) {
+          this._setState('reconnecting');
+          // Caller (connection.ts) owns reconnect for relay transports
+        } else {
+          this._setState('disconnected');
+        }
+      } else if (state === 'error') {
+        this._setState('disconnected', error);
+      }
+    });
+
+    transport.onMessage((data) => {
+      let msg: ServerMessage;
+      try {
+        msg = decodeJsonMessage(data) as ServerMessage;
+      } catch {
+        console.error('[StaviClient] Failed to parse transport message');
+        return;
+      }
+      switch (msg._tag) {
+        case 'Exit': this._handleExit(msg as RpcExit); break;
+        case 'Chunk': this._handleChunk(msg as RpcChunk); break;
+        default: console.warn('[StaviClient] Unhandled message type:', msg._tag);
+      }
+    });
+
+    this._setState('connected');
+    this._resubscribeAll();
   }
 
   /**
@@ -184,6 +249,11 @@ export class StaviClient {
       this.ws = null;
     }
 
+    if (this._transport) {
+      this._transport.close();
+      this._transport = null;
+    }
+
     this._setState('disconnected');
   }
 
@@ -195,7 +265,10 @@ export class StaviClient {
     payload: Record<string, unknown> = {},
     timeoutMs = 30000,
   ): Promise<T> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    const hasDirectWs = this.ws && this.ws.readyState === WebSocket.OPEN;
+    const hasTransport = !!this._transport;
+
+    if (!hasDirectWs && !hasTransport) {
       throw new Error(`Not connected (state: ${this.state})`);
     }
 
@@ -219,7 +292,11 @@ export class StaviClient {
         timeout,
       });
 
-      this.ws!.send(JSON.stringify(msg));
+      if (this._transport) {
+        this._transport.send(encodeJsonMessage(msg));
+      } else {
+        this.ws!.send(JSON.stringify(msg));
+      }
     });
   }
 
@@ -248,7 +325,7 @@ export class StaviClient {
     this.registeredSubscriptions.set(subId, sub);
 
     // If connected, start the subscription immediately
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    if ((this.ws && this.ws.readyState === WebSocket.OPEN) || this._transport) {
       this._sendSubscription(subId, sub);
     }
 
@@ -502,7 +579,11 @@ export class StaviClient {
       payload: sub.payload,
     };
 
-    this.ws!.send(JSON.stringify(msg));
+    if (this._transport) {
+      this._transport.send(encodeJsonMessage(msg));
+    } else {
+      this.ws!.send(JSON.stringify(msg));
+    }
   }
 
   private _resubscribeAll(): void {

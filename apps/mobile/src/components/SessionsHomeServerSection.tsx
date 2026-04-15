@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   Plus,
   Wrench,
+  Wifi,
 } from 'lucide-react-native';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -72,9 +73,14 @@ export function ServerSection({
         </Pressable>
         <View style={[styles.statusDot, { backgroundColor: STATUS_COLORS[status] }]} />
         <View style={styles.serverNameWrap}>
-          <Text style={[styles.serverName, isInactive && styles.serverNameInactive]}>
-            {savedConnection.name}
-          </Text>
+          <View style={styles.serverNameRow}>
+            <Text style={[styles.serverName, isInactive && styles.serverNameInactive]}>
+              {savedConnection.name}
+            </Text>
+            {savedConnection.relayUrl ? (
+              <Wifi size={12} color={colors.fg.secondary} style={styles.tunnelIcon} />
+            ) : null}
+          </View>
           <Text style={styles.serverMeta}>
             {savedConnection.host}:{savedConnection.port} · {status}
           </Text>
@@ -148,6 +154,8 @@ const styles = StyleSheet.create({
   collapseToggle: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
   statusDot: { width: 7, height: 7, borderRadius: 999 },
   serverNameWrap: { flex: 1 },
+  serverNameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[1] },
+  tunnelIcon: { marginTop: 1 },
   serverName: {
     fontSize: typography.fontSize.base,
     fontWeight: typography.fontWeight.semibold,

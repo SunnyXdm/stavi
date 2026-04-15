@@ -2142,4 +2142,116 @@ interface SavedConnection {
 
 ---
 
-*Generated from source: `apps/mobile/src/stores/t3-client.ts`, `apps/mobile/src/stores/connection.ts`, `apps/mobile/src/plugins/core/terminal/index.tsx`, `apps/mobile/src/plugins/core/ai/useOrchestration.ts`, `apps/mobile/src/plugins/core/git/index.tsx`, `apps/mobile/src/plugins/core/editor/index.tsx`, `apps/mobile/src/plugins/extra/explorer/index.tsx`, `packages/protocol/src/index.ts`, `packages/shared/src/`, `apps/relay/src/index.ts`*
+## Phase 6 — Noise NK Tunnel Mode
+
+Phase 6 promotes the relay pipe to a full E2E-encrypted transport using the [Noise NK handshake pattern](https://noiseprotocol.org/noise.html#interactive-patterns).
+
+### Binary Frame Format
+
+All tunnel-mode messages use the following binary frame layout (replacing JSON text messages over the relay WebSocket):
+
+```
+Byte  0-1  : magic = 0x53 0x54  ("ST")
+Byte  2    : version = 0x01
+Byte  3    : type
+              0x01 = HANDSHAKE  (key exchange, plaintext payload)
+              0x02 = DATA       (encrypted application payload)
+              0x03 = PING
+              0x04 = CLOSE
+Bytes 4-11 : nonce (uint64 little-endian)
+Bytes 12+  : payload
+```
+
+Header size is fixed at 12 bytes (`FRAME_HEADER_SIZE`).
+
+### Noise NK Handshake
+
+Protocol name: `Noise_NK_25519_ChaChaPoly_SHA256`
+
+The mobile (initiator) knows the server's static X25519 public key from the QR code (`PairingPayload.serverPublicKey`). The server (responder) has a persistent static keypair stored at `~/.stavi/userdata/server-keypair.json`.
+
+**Handshake flow:**
+
+```
+h = SHA256("Noise_NK_25519_ChaChaPoly_SHA256")
+ck = h
+
+# Initiator side (mobile)
+MixHash(rs)           # h = SHA256(h || server_static_pubkey)
+e = generateKeyPair()
+MixHash(e.public)     # h = SHA256(h || e.public)
+es = ECDH(e.secret, rs)
+MixKey(es)            # ck, k = HKDF(ck, es); n = 0
+msg1 = e.public || EncryptWithHash(empty, k, 0, h)
+    → msg1 frame: HANDSHAKE type, nonce=0, payload=msg1
+
+# Responder side (server) receives msg1:
+MixHash(re.public)    # re = parsed 32 bytes from msg1 payload
+es = ECDH(s.secret, re.public)
+MixKey(es)
+DecryptWithHash(tag, k, 0, h)   # verify 16-byte auth tag
+
+# Responder generates response:
+e2 = generateKeyPair()
+MixHash(e2.public)
+ee = ECDH(e2.secret, re.public)
+MixKey(ee)
+msg2 = e2.public || EncryptWithHash(empty, k, 0, h)
+    → msg2 frame: HANDSHAKE type, nonce=0, payload=msg2
+
+# Initiator receives msg2:
+MixHash(e2.public)
+ee = ECDH(e.secret, e2.public)
+MixKey(ee)
+DecryptWithHash(tag, k, 0, h)   # verify auth tag
+
+# Both sides call Split():
+k1, k2 = HKDF(ck, b"", length=64)[0:32] / [32:64]
+# Initiator: txKey = k1, rxKey = k2
+# Responder: txKey = k2, rxKey = k1
+```
+
+**AEAD during handshake**: ChaCha20-Poly1305 with the current hash `h` as associated data, nonce = 12 zero bytes.
+
+**HKDF**: `HKDF-SHA256(ikm, salt=ck, info=b"", length=64)` — first 32 bytes are new `ck`, last 32 bytes are temp key `k`.
+
+### Nonce Convention (Data Phase)
+
+After handshake, each direction has an independent counter starting at 0:
+
+- `mobile.txNonce` counts messages mobile → server (increments on each send)
+- `mobile.rxNonce` counts messages server → mobile (verified then incremented on each receive)
+- `server.txKey == mobile.rxKey`; `server.rxKey == mobile.txKey`
+
+The 8-byte little-endian nonce counter in the frame header is zero-padded to 12 bytes for ChaCha20-Poly1305.
+
+**Replay protection**: receiving a nonce that does not equal the expected `rxNonce` is a hard error. On every reconnect the Noise handshake is run fresh — session state is never reused.
+
+### PairingPayload QR Code
+
+The server prints a `PairingPayload` encoded as base64url JSON in the QR code:
+
+```typescript
+interface PairingPayload {
+  relay?: string;          // Relay server URL (e.g. "wss://relay.stavi.app")
+  roomId: string;          // UUID for relay room routing
+  serverPublicKey: string; // Server static X25519 public key (base64)
+  token: string;           // Bearer token for StaviClient auth
+  lanHost?: string;        // LAN IP for direct fallback
+  port: number;            // Server port
+}
+```
+
+### Crypto Primitives
+
+| Primitive | Implementation |
+|-----------|----------------|
+| X25519 keygen + ECDH | `@stablelib/x25519` |
+| ChaCha20-Poly1305 | `@stablelib/chacha20poly1305` |
+| HKDF-SHA256 | `@stablelib/hkdf` + `@stablelib/sha256` |
+| Random bytes (Node) | `node:crypto.randomBytes` |
+| Random bytes (RN) | `react-native-quick-crypto` |
+
+---
+
+*Generated from source: `apps/mobile/src/stores/t3-client.ts`, `apps/mobile/src/stores/connection.ts`, `apps/mobile/src/plugins/core/terminal/index.tsx`, `apps/mobile/src/plugins/core/ai/useOrchestration.ts`, `apps/mobile/src/plugins/core/git/index.tsx`, `apps/mobile/src/plugins/core/editor/index.tsx`, `apps/mobile/src/plugins/extra/explorer/index.tsx`, `packages/protocol/src/index.ts`, `packages/shared/src/`, `apps/relay/src/index.ts`, `packages/crypto/src/noise.ts`*

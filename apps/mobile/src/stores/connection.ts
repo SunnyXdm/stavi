@@ -16,6 +16,7 @@ import {
   type StaviConnectionConfig,
 } from './stavi-client';
 import { prefetchServerId } from './connection-preflight';
+import { RelayTransport } from '../transports/RelayTransport';
 
 // Re-export for consumers that import SavedConnection from this file.
 export type { SavedConnection } from '@stavi/shared';
@@ -238,12 +239,6 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
           }
 
           const runtime = ensureRuntimeConnection(savedConnection);
-          const config: StaviConnectionConfig = {
-            host: savedConnection.host,
-            port: savedConnection.port,
-            bearerToken: savedConnection.bearerToken,
-            tls: savedConnection.tls,
-          };
 
           set((state) => ({
             connectionsById: {
@@ -258,7 +253,26 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
           }));
 
           try {
-            await runtime.client.connect(config);
+            if (savedConnection.relayUrl && savedConnection.serverPublicKey && savedConnection.roomId) {
+              // Tunnel mode: use RelayTransport (Noise NK E2E encrypted)
+              const transport = new RelayTransport({
+                relayUrl: savedConnection.relayUrl,
+                roomId: savedConnection.roomId,
+                serverPublicKey: savedConnection.serverPublicKey,
+                bearerToken: savedConnection.bearerToken,
+              });
+              await transport.connect();
+              await runtime.client.connectViaTransport(transport);
+            } else {
+              // Direct LAN mode: existing bearer→wsToken→WebSocket flow
+              const config: StaviConnectionConfig = {
+                host: savedConnection.host,
+                port: savedConnection.port,
+                bearerToken: savedConnection.bearerToken,
+                tls: savedConnection.tls,
+              };
+              await runtime.client.connect(config);
+            }
 
             // Bind remote serverId after connect (best-effort).
             void runtime.client

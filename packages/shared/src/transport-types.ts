@@ -39,6 +39,12 @@ export interface SavedConnection {
   lastConnectedAt?: number;
   /** Bound after first successful connect via server.getConfig.serverId. */
   serverId?: string;
+  /** Relay server URL — set when connection was created via QR pairing. */
+  relayUrl?: string;
+  /** Server's static X25519 public key (base64) — required when relayUrl is set. */
+  serverPublicKey?: string;
+  /** Relay room ID — required when relayUrl is set. */
+  roomId?: string;
 }
 
 /** @deprecated Use SavedConnection. Kept for reference during Phase 6 relay work. */
