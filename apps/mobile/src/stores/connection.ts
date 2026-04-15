@@ -1,6 +1,8 @@
 // WHAT: Per-server connection store for all Stavi server connections.
 // WHY:  Phase 5 adds serverId dedup on addServer, reconnect UX callbacks, and
 //       imports SavedConnection from @stavi/shared (unified shape).
+//       Phase 6 adds relay-transport path and relay reconnect (fresh handshake
+//       on every drop — session state is NEVER reused across reconnects).
 // HOW:  Zustand + AsyncStorage. StaviClient per server; addServer pre-flights
 //       server.getConfig for serverId dedup (1s→64s backoff per StaviClient).
 // SEE:  stores/stavi-client.ts, stores/connection-preflight.ts, @stavi/shared
@@ -83,6 +85,49 @@ function mapClientState(s: StaviClientState): ConnectionState {
 // Reconnect listeners (module-level; not persisted)
 // ----------------------------------------------------------
 const _reconnectListeners = new Set<ReconnectListener>();
+
+// ----------------------------------------------------------
+// Relay reconnect state (module-level; not persisted)
+// ----------------------------------------------------------
+// Tracks per-server relay reconnect attempt counts and pending timers.
+// INVARIANT: every relay reconnect MUST create a fresh RelayTransport and
+// run a new Noise NK handshake. No session state is ever resumed.
+// This map is cleared on successful connect and on intentional disconnect.
+const _relayReconnectAttempts = new Map<string, number>();
+const _relayReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+const MAX_RELAY_RECONNECT_ATTEMPTS = 7;
+
+function scheduleRelayReconnect(serverId: string, connectServer: (id: string) => Promise<void>): void {
+  // Cancel any pending timer for this server.
+  const existing = _relayReconnectTimers.get(serverId);
+  if (existing) clearTimeout(existing);
+
+  const attempts = _relayReconnectAttempts.get(serverId) ?? 0;
+  if (attempts >= MAX_RELAY_RECONNECT_ATTEMPTS) {
+    console.warn(`[relay reconnect] Max attempts (${MAX_RELAY_RECONNECT_ATTEMPTS}) reached for ${serverId}`);
+    _relayReconnectAttempts.delete(serverId);
+    return;
+  }
+
+  // Same exponential backoff as StaviClient._scheduleReconnect: 1s * 2^n, cap 64s.
+  const delay = Math.min(1000 * Math.pow(2, attempts), 64000);
+  _relayReconnectAttempts.set(serverId, attempts + 1);
+
+  console.log(`[relay reconnect] Scheduling reconnect for ${serverId} in ${delay}ms (attempt ${attempts + 1}/${MAX_RELAY_RECONNECT_ATTEMPTS})`);
+
+  const timer = setTimeout(() => {
+    _relayReconnectTimers.delete(serverId);
+    // connectServer creates a NEW RelayTransport → NEW Noise NK handshake.
+    // REQUIREMENT (master plan): every reconnect MUST renegotiate keys.
+    // Do NOT cache or resume any prior NoiseSession here.
+    void connectServer(serverId).catch((err: unknown) => {
+      console.warn(`[relay reconnect] connectServer failed for ${serverId}:`, err);
+    });
+  }, delay);
+
+  _relayReconnectTimers.set(serverId, timer);
+}
 // ----------------------------------------------------------
 // Store
 // ----------------------------------------------------------
@@ -119,6 +164,26 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
                   listener(savedConnection.id);
                 } catch {}
               }
+            }
+
+            // Relay reconnect: when the transport drops unexpectedly (state →
+            // 'reconnecting'), schedule a new connectServer call that creates a
+            // FRESH RelayTransport and runs a NEW Noise NK handshake.
+            // REQUIREMENT: session state is NEVER reused across reconnects.
+            // Only fire for relay connections (relayUrl present); LAN reconnect
+            // is owned by StaviClient._scheduleReconnect internally.
+            if (
+              mapped === 'reconnecting' &&
+              savedConnection.relayUrl
+            ) {
+              scheduleRelayReconnect(savedConnection.id, (id) => get().connectServer(id));
+            }
+
+            // Clear relay reconnect counter once successfully connected.
+            if (mapped === 'connected') {
+              _relayReconnectAttempts.delete(savedConnection.id);
+              const t = _relayReconnectTimers.get(savedConnection.id);
+              if (t) { clearTimeout(t); _relayReconnectTimers.delete(savedConnection.id); }
             }
 
             return {
@@ -315,6 +380,11 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
         },
 
         disconnectServer: (serverId) => {
+          // Cancel any pending relay reconnect — intentional disconnect must not re-trigger.
+          const relayTimer = _relayReconnectTimers.get(serverId);
+          if (relayTimer) { clearTimeout(relayTimer); _relayReconnectTimers.delete(serverId); }
+          _relayReconnectAttempts.delete(serverId);
+
           const runtime = get().connectionsById[serverId];
           runtime?.client.disconnect();
           set((state) => ({
@@ -350,6 +420,11 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
         getServerStatus: (serverId) => get().getStatusForServer(serverId),
 
         forgetServer: (serverId) => {
+          // Cancel any pending relay reconnect.
+          const relayTimer = _relayReconnectTimers.get(serverId);
+          if (relayTimer) { clearTimeout(relayTimer); _relayReconnectTimers.delete(serverId); }
+          _relayReconnectAttempts.delete(serverId);
+
           const runtime = get().connectionsById[serverId];
           runtime?.client.disconnect();
           set((state) => {

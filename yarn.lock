@@ -1678,6 +1678,122 @@
   resolved "https://registry.npmjs.org/@sinclair/typebox/-/typebox-0.27.10.tgz"
   integrity sha512-MTBk/3jGLNB2tVxv6uLlFh1iu64iYOQ2PbdOSK3NW8JZsmlaOh2q6sdtKowBhfw8QFLmYNzTW4/oK4uATIi6ZA==
 
+"@stablelib/aead@^2.0.0":
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/@stablelib/aead/-/aead-2.0.0.tgz#473d19ec0ae8e61b89f7959fdddc3a4789ea9aa6"
+  integrity sha512-U/RMANRxbT/ahIpYsPSiFwDFNjADHdnCFfmo09MO1ai2XmerPAOPtMl0qmX7XVvygnACC6ijKDyHBoT2rGyElg==
+
+"@stablelib/binary@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/binary/-/binary-2.0.1.tgz#65c36a24e2c65f375e4c5c4cb340b9112d9badb6"
+  integrity sha512-U9iAO8lXgEDONsA0zPPSgcf3HUBNAqHiJmSHgZz62OvC3Hi2Bhc5kTnQ3S1/L+sthDTHtCMhcEiklmIly6uQ3w==
+  dependencies:
+    "@stablelib/int" "^2.0.1"
+
+"@stablelib/bytes@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/bytes/-/bytes-2.0.1.tgz#370f2cc74ab9db326c6b13a16acc04ae9a159c36"
+  integrity sha512-QIzI6V7nkJA5CjOZ7GoceBd4CIKrJoC471VaI6jh1xPQ2cMhkhQK4HddyzCXOR2y+fBF3/5B2HO3FXXI9C+Xzg==
+
+"@stablelib/chacha20poly1305@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/chacha20poly1305/-/chacha20poly1305-2.0.1.tgz#f402617702d764c0c853fd73d20945c51d78a305"
+  integrity sha512-kOoBsXbDPVRlelzXl+5WViycgM19lD7lF3Bc3KWI+DzId0Stc2HlxAfSc+Xpn3RgqSCl1ZNTXr33LegqBhBBaw==
+  dependencies:
+    "@stablelib/aead" "^2.0.0"
+    "@stablelib/binary" "^2.0.1"
+    "@stablelib/chacha" "^2.0.1"
+    "@stablelib/constant-time" "^2.0.1"
+    "@stablelib/poly1305" "^2.0.1"
+    "@stablelib/wipe" "^2.0.1"
+
+"@stablelib/chacha@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/chacha/-/chacha-2.0.1.tgz#072e9d2e335bfb37af0617c554408881fba2fa23"
+  integrity sha512-lS1FqtNqofxe2vLkRsLli2m3x/XanUyAYRphLhdHumKeIsLbjbCXdCq3Pf/eWiO7G3QlSG5ViqnoVjktzfLWMg==
+  dependencies:
+    "@stablelib/binary" "^2.0.1"
+    "@stablelib/wipe" "^2.0.1"
+
+"@stablelib/constant-time@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/constant-time/-/constant-time-2.0.1.tgz#038acebf25fe2ddd52c31a789dd27aa201251319"
+  integrity sha512-0NWPogffRm+UWBH0+iM5otZmNrVe5OHFIvyoNIVankMAYOQzMwcdVALOVPrB5Ho0dST+Oc3H8/hPh65Z8R/uew==
+
+"@stablelib/hash@^2.0.0":
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/@stablelib/hash/-/hash-2.0.0.tgz#7b74c372dc07187e273844e970a475f1338e92cf"
+  integrity sha512-u3WPSqGido8lwJuMcrBgM5K54LrPGhkWAdtsyccf7dGsLixAZUds77zOAbu7bvKPwQlmoByH0txBi5rTmEKuHg==
+
+"@stablelib/hkdf@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/hkdf/-/hkdf-2.0.1.tgz#e9b75bf9be2cdf90292637477c1693aee3bc6862"
+  integrity sha512-R8w5r43QpM92FhyGPsQAhd4KOKwhmMFgvihoRJjiEi/YNwwXlluQoYruNQxyBA1fEMmJ8QHtQvEZEX/Uyr6MwQ==
+  dependencies:
+    "@stablelib/hash" "^2.0.0"
+    "@stablelib/hmac" "^2.0.1"
+    "@stablelib/wipe" "^2.0.1"
+
+"@stablelib/hmac@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/hmac/-/hmac-2.0.1.tgz#582c6ae79f56d01180c6c51d8556957ada6439ae"
+  integrity sha512-YDMEmogYNDWESU8ggMiTi4VDMfHt2XG+pgVskJCHuKVlmWwXxYKZ6bn5dq24/jU3vzZSajwKzRCU6iafT2OKUA==
+  dependencies:
+    "@stablelib/constant-time" "^2.0.1"
+    "@stablelib/hash" "^2.0.0"
+    "@stablelib/wipe" "^2.0.1"
+
+"@stablelib/int@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/int/-/int-2.0.1.tgz#daf262843b158e6bb99ec029a14378ecdda2230f"
+  integrity sha512-Ht63fQp3wz/F8U4AlXEPb7hfJOIILs8Lq55jgtD7KueWtyjhVuzcsGLSTAWtZs3XJDZYdF1WcSKn+kBtbzupww==
+
+"@stablelib/keyagreement@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/keyagreement/-/keyagreement-2.0.1.tgz#5d8fb2e8b7ded21d1b7ae4feb55cb90e78bce818"
+  integrity sha512-2+tWBLCMtWlHQ7GqjD5L+lQRyWtun4Lou0IOdTML8zuTuAS0EgihnHFx+4uMZwYU1In40J/WlpyKSLidHfStRQ==
+  dependencies:
+    "@stablelib/bytes" "^2.0.1"
+
+"@stablelib/poly1305@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/poly1305/-/poly1305-2.0.1.tgz#9560bb0db5c9d37c2d74a3637cbc861f53110930"
+  integrity sha512-D8xfZcL/5zeVARJ9I2fZOUCnZvsJx8G4JDQvD+ecsnaCildPtqZDwqqjtOc4cfHAdScrMjOzUVsssjXUTBw3YQ==
+  dependencies:
+    "@stablelib/constant-time" "^2.0.1"
+    "@stablelib/wipe" "^2.0.1"
+
+"@stablelib/random@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/random/-/random-2.0.1.tgz#b082eee976684a970d5f28ffbdea074a83ad2475"
+  integrity sha512-W6GAtXEEs7r+dSbuBsvoFmlyL3gLxle41tQkjKu17dDWtDdjhVUbtRfRCQcCUeczwkgjQxMPopgwYEvxXtHXGw==
+  dependencies:
+    "@stablelib/binary" "^2.0.1"
+    "@stablelib/wipe" "^2.0.1"
+
+"@stablelib/sha256@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/sha256/-/sha256-2.0.1.tgz#9455c64e3d14d3ebd59523ab6424f728a0fd8347"
+  integrity sha512-LA1PaLDc6Lv72ppA4PEZ7abDE741KfG7k7QhBiUyIfViMqrwWv8HqQQFPeuPfS4k2OxFv++IAgc8HlvdBatD+w==
+  dependencies:
+    "@stablelib/binary" "^2.0.1"
+    "@stablelib/hash" "^2.0.0"
+    "@stablelib/wipe" "^2.0.1"
+
+"@stablelib/wipe@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/wipe/-/wipe-2.0.1.tgz#9bc1d20519aa4fc513fe1992cf8061bab33c3049"
+  integrity sha512-1eU2K9EgOcV4qc9jcP6G72xxZxEm5PfeI5H55l08W95b4oRJaqhmlWRc4xZAm6IVSKhVNxMi66V67hCzzuMTAg==
+
+"@stablelib/x25519@^2.0.1":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@stablelib/x25519/-/x25519-2.0.1.tgz#c825b0000de6e03138221e5ea22b34d5f27fd597"
+  integrity sha512-qi04HS2puHaBf50kM/kes5QcZFGsx8yF0YmCjLCOa/LPmnBaKEKX9ZR82OnnCwMn72YH13R/bBZgr/UP0aPFfA==
+  dependencies:
+    "@stablelib/keyagreement" "^2.0.1"
+    "@stablelib/random" "^2.0.1"
+    "@stablelib/wipe" "^2.0.1"
+
 "@turbo/darwin-64@2.9.6":
   version "2.9.6"
   resolved "https://registry.yarnpkg.com/@turbo/darwin-64/-/darwin-64-2.9.6.tgz#f244275f56285418c2ddc3297d6cc429db2ef7c6"
@@ -1761,6 +1877,11 @@
   dependencies:
     undici-types "~5.26.4"
 
+"@types/qrcode-terminal@^0.12.2":
+  version "0.12.2"
+  resolved "https://registry.yarnpkg.com/@types/qrcode-terminal/-/qrcode-terminal-0.12.2.tgz#8d7de3aa41f2d3c724bbc74a157ef3209abf8c75"
+  integrity sha512-v+RcIEJ+Uhd6ygSQ0u5YYY7ZM+la7GgPbs0V/7l/kFs2uO4S8BcIUEMoP7za4DNIqNnUD5npf0A/7kBhrCKG5Q==
+
 "@types/react-test-renderer@^19.1.0":
   version "19.1.0"
   resolved "https://registry.npmjs.org/@types/react-test-renderer/-/react-test-renderer-19.1.0.tgz"
@@ -1775,7 +1896,7 @@
   dependencies:
     csstype "^3.2.2"
 
-"@types/ws@^8.5.13":
+"@types/ws@^8.5.13", "@types/ws@^8.5.14":
   version "8.18.1"
   resolved "https://registry.npmjs.org/@types/ws/-/ws-8.18.1.tgz"
   integrity sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==
@@ -5139,6 +5260,11 @@ punycode@^2.1.0:
   resolved "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz"
   integrity sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==
 
+qrcode-terminal@^0.12.0:
+  version "0.12.0"
+  resolved "https://registry.yarnpkg.com/qrcode-terminal/-/qrcode-terminal-0.12.0.tgz#bb5b699ef7f9f0505092a3748be4464fe71b5819"
+  integrity sha512-EXtzRZmC+YGmGlDFbXKxQiMZNwCLEO6BANKXG4iCtSIM0yqc/pappSx3RIKr4r0uh5JsBckOXeKrB3Iz7mdQpQ==
+
 qs@^6.14.0, qs@^6.14.1, qs@~6.14.0:
   version "6.14.2"
   resolved "https://registry.npmjs.org/qs/-/qs-6.14.2.tgz"
@@ -6400,7 +6526,7 @@ ws@^7, ws@^7.5.10:
   resolved "https://registry.npmjs.org/ws/-/ws-7.5.10.tgz"
   integrity sha512-+dbF1tHwZpXcbOJdVOkzLDxZP1ailvSxM6ZweXTegylPny803bFhA+vqBYw4s31NSAk4S2Qz+AKXK9a4wkdjcQ==
 
-ws@^8.18.3:
+ws@^8.18.0, ws@^8.18.3:
   version "8.20.0"
   resolved "https://registry.npmjs.org/ws/-/ws-8.20.0.tgz"
   integrity sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==

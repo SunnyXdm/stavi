@@ -172,3 +172,37 @@ test('Noise NK: keys differ for different server keypairs', () => {
     'Different servers must produce different session keys',
   );
 });
+
+// ----------------------------------------------------------
+// Fresh keys on reconnect
+// ----------------------------------------------------------
+
+test('Noise NK: two successive handshakes with the same responder keypair produce different session keys', () => {
+  // This pins the "fresh keys every reconnect" invariant required by the master plan.
+  // Same server static keypair, but each handshake generates a new initiator ephemeral
+  // (inside initiateHandshake via generateKeypair()) — the resulting session keys MUST differ.
+  // If this test fails, something is caching or reusing ephemeral or session state.
+  const serverKeypair = nodePrimitives.generateKeypair();
+
+  // First handshake
+  const { msg1: msg1a, state: stateA } = initiateHandshake(nodePrimitives, serverKeypair.publicKey);
+  const { msg2: msg2a } = respondHandshake(nodePrimitives, serverKeypair, msg1a);
+  const sessionA = completeHandshake(nodePrimitives, stateA, msg2a);
+
+  // Second handshake — simulates a reconnect. New RelayTransport would call
+  // initiateHandshake again, generating a fresh ephemeral keypair.
+  const { msg1: msg1b, state: stateB } = initiateHandshake(nodePrimitives, serverKeypair.publicKey);
+  const { msg2: msg2b } = respondHandshake(nodePrimitives, serverKeypair, msg1b);
+  const sessionB = completeHandshake(nodePrimitives, stateB, msg2b);
+
+  assert.notDeepEqual(
+    Buffer.from(sessionA.txKey!).toString('hex'),
+    Buffer.from(sessionB.txKey!).toString('hex'),
+    'Two successive handshakes must produce different txKeys (fresh ephemeral each time)',
+  );
+  assert.notDeepEqual(
+    Buffer.from(sessionA.rxKey!).toString('hex'),
+    Buffer.from(sessionB.rxKey!).toString('hex'),
+    'Two successive handshakes must produce different rxKeys (fresh ephemeral each time)',
+  );
+});
