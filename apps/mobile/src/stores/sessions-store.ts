@@ -19,6 +19,7 @@ type SessionEvent =
 
 interface SessionsStoreState {
   sessionsByServer: Record<string, Session[]>;
+  sessionsById: Record<string, Session>;
   isLoadingByServer: Record<string, boolean>;
   errorByServer: Record<string, string | null>;
   unsubscribesByServer: Record<string, () => void>;
@@ -45,6 +46,7 @@ function upsertSession(sessions: Session[], nextSession: Session): Session[] {
 
 export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions>((set, get) => ({
   sessionsByServer: {},
+  sessionsById: {},
   isLoadingByServer: {},
   errorByServer: {},
   unsubscribesByServer: {},
@@ -62,13 +64,19 @@ export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions
 
     try {
       const result = await client.request<{ sessions?: Session[] }>('session.list', {});
-      set((state) => ({
-        sessionsByServer: {
-          ...state.sessionsByServer,
-          [serverId]: (result.sessions ?? []).sort((a, b) => b.lastActiveAt - a.lastActiveAt),
-        },
-        isLoadingByServer: { ...state.isLoadingByServer, [serverId]: false },
-      }));
+      const normalized = (result.sessions ?? [])
+        .map((s) => ({ ...s, serverId }))
+        .sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+      set((state) => {
+        const nextByServer = { ...state.sessionsByServer, [serverId]: normalized };
+        const nextById = { ...state.sessionsById };
+        for (const s of normalized) nextById[s.id] = s;
+        return {
+          sessionsByServer: nextByServer,
+          sessionsById: nextById,
+          isLoadingByServer: { ...state.isLoadingByServer, [serverId]: false },
+        };
+      });
     } catch (err) {
       set((state) => ({
         isLoadingByServer: { ...state.isLoadingByServer, [serverId]: false },
@@ -82,15 +90,7 @@ export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions
 
   getSessionsForServer: (serverId) => get().sessionsByServer[serverId] ?? [],
 
-  getSession: (sessionId) => {
-    for (const sessions of Object.values(get().sessionsByServer)) {
-      const match = sessions.find((session) => session.id === sessionId);
-      if (match) {
-        return match;
-      }
-    }
-    return undefined;
-  },
+  getSession: (sessionId) => get().sessionsById[sessionId],
 
   startSubscription: (serverId) => {
     const existing = get().unsubscribesByServer[serverId];
@@ -111,37 +111,50 @@ export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions
       (event: unknown) => {
         const typed = event as SessionEvent;
         if (typed.type === 'snapshot') {
-          set((state) => ({
-            sessionsByServer: {
-              ...state.sessionsByServer,
-              [serverId]: (typed.payload?.sessions ?? []).sort((a, b) => b.lastActiveAt - a.lastActiveAt),
-            },
-            errorByServer: { ...state.errorByServer, [serverId]: null },
-          }));
+          const normalized = (typed.payload?.sessions ?? [])
+            .map((s) => ({ ...s, serverId }))
+            .sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+          set((state) => {
+            const nextByServer = { ...state.sessionsByServer, [serverId]: normalized };
+            const nextById = { ...state.sessionsById };
+            for (const s of normalized) nextById[s.id] = s;
+            return {
+              sessionsByServer: nextByServer,
+              sessionsById: nextById,
+              errorByServer: { ...state.errorByServer, [serverId]: null },
+            };
+          });
           return;
         }
         if (typed.type === 'created' || typed.type === 'updated' || typed.type === 'archived') {
           if (typed.type === 'created') {
             logEvent('session.created', { sessionId: typed.session.id, serverId, folder: typed.session.folder });
           }
-          set((state) => ({
-            sessionsByServer: {
-              ...state.sessionsByServer,
-              [serverId]: upsertSession(state.sessionsByServer[serverId] ?? [], typed.session),
-            },
-            errorByServer: { ...state.errorByServer, [serverId]: null },
-          }));
+          const normalized = { ...typed.session, serverId };
+          set((state) => {
+            const nextList = upsertSession(state.sessionsByServer[serverId] ?? [], normalized);
+            return {
+              sessionsByServer: { ...state.sessionsByServer, [serverId]: nextList },
+              sessionsById: { ...state.sessionsById, [normalized.id]: normalized },
+              errorByServer: { ...state.errorByServer, [serverId]: null },
+            };
+          });
           return;
         }
         if (typed.type === 'deleted') {
-          set((state) => ({
-            sessionsByServer: {
-              ...state.sessionsByServer,
-              [serverId]: (state.sessionsByServer[serverId] ?? []).filter(
-                (session) => session.id !== typed.session.id,
-              ),
-            },
-          }));
+          set((state) => {
+            const nextById = { ...state.sessionsById };
+            delete nextById[typed.session.id];
+            return {
+              sessionsByServer: {
+                ...state.sessionsByServer,
+                [serverId]: (state.sessionsByServer[serverId] ?? []).filter(
+                  (session) => session.id !== typed.session.id,
+                ),
+              },
+              sessionsById: nextById,
+            };
+          });
         }
       },
       (error) => {
@@ -174,6 +187,11 @@ export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions
       const nextUnsubs = { ...state.unsubscribesByServer };
       delete nextUnsubs[serverId];
       const nextSessions = { ...state.sessionsByServer };
+      // Remove from sessionsById any sessions that belonged to this server.
+      const nextById = { ...state.sessionsById };
+      for (const s of state.sessionsByServer[serverId] ?? []) {
+        delete nextById[s.id];
+      }
       delete nextSessions[serverId];
       const nextLoading = { ...state.isLoadingByServer };
       delete nextLoading[serverId];
@@ -181,6 +199,7 @@ export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions
       delete nextErrors[serverId];
       return {
         sessionsByServer: nextSessions,
+        sessionsById: nextById,
         isLoadingByServer: nextLoading,
         errorByServer: nextErrors,
         unsubscribesByServer: nextUnsubs,
