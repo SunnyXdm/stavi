@@ -17,8 +17,9 @@ import {
   TextInput,
   StyleSheet,
   Pressable,
+  Text,
 } from 'react-native';
-import { Globe, ArrowLeft, ArrowRight, RotateCw, X } from 'lucide-react-native';
+import { Globe, ArrowLeft, ArrowRight, RotateCw, X, AlertTriangle } from 'lucide-react-native';
 import { WebView, type WebViewNavigation } from 'react-native-webview';
 import type {
   WorkspacePluginDefinition,
@@ -26,6 +27,7 @@ import type {
   PluginAPI,
 } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
+import { ErrorView } from '../../../components/StateViews';
 
 // ----------------------------------------------------------
 // Types
@@ -72,12 +74,14 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight }: WorkspacePlugin
   const [progress, setProgress] = useState(0);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
+  const [webViewError, setWebViewError] = useState<string | null>(null);
   const urlInputRef = useRef<TextInput>(null);
 
   const handleNavigate = useCallback((input: string) => {
     const url = normalizeUrl(input);
     setCurrentUrl(url);
     setIsEditingUrl(false);
+    setWebViewError(null);
   }, []);
 
   const handleUrlSubmit = useCallback(() => {
@@ -191,27 +195,40 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight }: WorkspacePlugin
       )}
 
       {/* WebView */}
-      <WebView
-        ref={webViewRef}
-        style={styles.webView}
-        source={{ uri: currentUrl }}
-        onNavigationStateChange={handleNavStateChange}
-        onLoadStart={() => setLoading(true)}
-        onLoadEnd={() => setLoading(false)}
-        onLoadProgress={({ nativeEvent }) => setProgress(nativeEvent.progress)}
-        onError={(syntheticEvent) => {
-          const { nativeEvent } = syntheticEvent;
-          console.warn('[Browser] WebView error:', nativeEvent);
-          setLoading(false);
-        }}
-        // Allow mixed content for local dev servers (http)
-        mixedContentMode="compatibility"
-        // Allow file access for local server previews
-        allowsInlineMediaPlayback
-        mediaPlaybackRequiresUserAction={false}
-        // User agent — keep default so sites render correctly
-        applicationNameForUserAgent="StaviBrowser/1.0"
-      />
+      {webViewError ? (
+        <ErrorView
+          icon={AlertTriangle}
+          title="Page failed to load"
+          message={webViewError}
+          onRetry={() => {
+            setWebViewError(null);
+            webViewRef.current?.reload();
+          }}
+        />
+      ) : (
+        <WebView
+          ref={webViewRef}
+          style={styles.webView}
+          source={{ uri: currentUrl }}
+          onNavigationStateChange={handleNavStateChange}
+          onLoadStart={() => setLoading(true)}
+          onLoadEnd={() => setLoading(false)}
+          onLoadProgress={({ nativeEvent }) => setProgress(nativeEvent.progress)}
+          onError={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            console.warn('[Browser] WebView error:', nativeEvent);
+            setLoading(false);
+            setWebViewError(nativeEvent.description || 'An unknown error occurred');
+          }}
+          // Allow mixed content for local dev servers (http)
+          mixedContentMode="compatibility"
+          // Allow file access for local server previews
+          allowsInlineMediaPlayback
+          mediaPlaybackRequiresUserAction={false}
+          // User agent — keep default so sites render correctly
+          applicationNameForUserAgent="StaviBrowser/1.0"
+        />
+      )}
     </View>
   );
 }

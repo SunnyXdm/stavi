@@ -5,15 +5,15 @@
 // State and RPC calls live in hooks/useGit.ts
 // CommitSheet component lives in components/CommitSheet.tsx
 
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable,
-  RefreshControl, ActivityIndicator, ScrollView,
+  RefreshControl, ActivityIndicator, ScrollView, Animated,
 } from 'react-native';
 import {
   GitBranch, GitCommit, ArrowUpDown, FileEdit, FilePlus,
   FileMinus, FileQuestion, FileCheck, RefreshCw, Plus, Minus,
-  Undo2, ArrowUp, ArrowDown, History, Layers,
+  Undo2, ArrowUp, ArrowDown, History, Layers, X,
 } from 'lucide-react-native';
 import type {
   WorkspacePluginDefinition,
@@ -22,6 +22,7 @@ import type {
 import type { GitPluginAPI } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
+import { EmptyView, LoadingView } from '../../../components/StateViews';
 import { useConnectionStore } from '../../../stores/connection';
 import { useGit, type TabId, type GitFile } from './hooks/useGit';
 import { CommitSheet } from './components/CommitSheet';
@@ -125,22 +126,47 @@ function GitPanel({ session }: WorkspacePluginPanelProps) {
   const git = useGit(activeTab, session.serverId);
   const { status, stagedFiles, unstagedFiles, untrackedFiles } = git;
 
+  // Dismissible error banner state
+  const [gitError, setGitError] = useState<string | null>(null);
+  const errorOpacity = useRef(new Animated.Value(1)).current;
+
+  const showGitError = useCallback((msg: string) => {
+    setGitError(msg);
+    errorOpacity.setValue(1);
+    const timer = setTimeout(() => {
+      Animated.timing(errorOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+        setGitError(null);
+      });
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [errorOpacity]);
+
+  const dismissGitError = useCallback(() => {
+    Animated.timing(errorOpacity, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+      setGitError(null);
+    });
+  }, [errorOpacity]);
+
+  // Wrapped git actions that surface errors
+  const safePull = useCallback(async () => {
+    try { await git.pull(); } catch (e) { showGitError(`Pull failed: ${e instanceof Error ? e.message : String(e)}`); }
+  }, [git, showGitError]);
+  const safePush = useCallback(async () => {
+    try { await git.push(); } catch (e) { showGitError(`Push failed: ${e instanceof Error ? e.message : String(e)}`); }
+  }, [git, showGitError]);
+
   if (git.connectionState !== 'connected') {
     return (
-      <View style={styles.empty}>
-        <GitBranch size={32} color={colors.fg.muted} />
-        <Text style={[textStyles.body, { color: colors.fg.muted, textAlign: 'center' }]}>
-          Connect to a server to view git status
-        </Text>
-      </View>
+      <EmptyView
+        icon={GitBranch}
+        title="No server connected"
+        subtitle="Connect to a server to view git status"
+      />
     );
   }
   if (status.loading) {
     return (
-      <View style={styles.empty}>
-        <ActivityIndicator size="small" color={colors.accent.primary} />
-        <Text style={[textStyles.bodySmall, { color: colors.fg.tertiary }]}>Loading git status...</Text>
-      </View>
+      <LoadingView message="Loading git status..." />
     );
   }
 
@@ -161,10 +187,10 @@ function GitPanel({ session }: WorkspacePluginPanelProps) {
           )}
         </View>
         <View style={styles.headerActions}>
-          <Pressable style={styles.smallButton} onPress={git.pull} disabled={git.actionLoading === 'pull'}>
+          <Pressable style={styles.smallButton} onPress={safePull} disabled={git.actionLoading === 'pull'}>
             <ArrowDown size={14} color={colors.fg.tertiary} />
           </Pressable>
-          <Pressable style={styles.smallButton} onPress={git.push} disabled={git.actionLoading === 'push'}>
+          <Pressable style={styles.smallButton} onPress={safePush} disabled={git.actionLoading === 'push'}>
             <ArrowUp size={14} color={colors.fg.tertiary} />
           </Pressable>
           <Pressable style={styles.smallButton} onPress={git.refresh}>
@@ -185,6 +211,16 @@ function GitPanel({ session }: WorkspacePluginPanelProps) {
           );
         })}
       </View>
+
+      {/* Dismissible error banner */}
+      {gitError && (
+        <Animated.View style={[styles.gitErrorBanner, { opacity: errorOpacity }]}>
+          <Text style={styles.gitErrorText} numberOfLines={2}>{gitError}</Text>
+          <Pressable onPress={dismissGitError} hitSlop={8}>
+            <X size={14} color={colors.semantic.error} />
+          </Pressable>
+        </Animated.View>
+      )}
 
       {/* Changes tab */}
       {activeTab === 'changes' && (
@@ -377,7 +413,6 @@ export const gitPlugin: WorkspacePluginDefinition = {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.base },
-  empty: { flex: 1, backgroundColor: colors.bg.base, alignItems: 'center', justifyContent: 'center', gap: spacing[3], padding: spacing[6] },
   branchHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing[4], paddingVertical: spacing[3], backgroundColor: colors.bg.raised },
   branchInfo: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], flex: 1 },
   branchName: { fontSize: typography.fontSize.base, fontWeight: typography.fontWeight.semibold, color: colors.fg.primary, fontFamily: typography.fontFamily.mono },
@@ -416,4 +451,6 @@ const styles = StyleSheet.create({
   currentBadge: { backgroundColor: colors.accent.subtle, paddingHorizontal: spacing[2], paddingVertical: 2, borderRadius: radii.sm },
   currentBadgeText: { fontSize: typography.fontSize.xs, color: colors.accent.primary, fontWeight: typography.fontWeight.medium },
   branchHash: { fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.mono, color: colors.fg.muted },
+  gitErrorBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], paddingHorizontal: spacing[4], paddingVertical: spacing[2], backgroundColor: colors.semantic.errorSubtle },
+  gitErrorText: { flex: 1, fontSize: typography.fontSize.sm, color: colors.semantic.error },
 });

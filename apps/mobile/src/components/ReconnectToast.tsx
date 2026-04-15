@@ -1,25 +1,51 @@
-// WHAT: ReconnectToast — minimal fade-out banner shown on server reconnect.
-// WHY:  Phase 5 requires a one-shot toast when a server reconnects. Phase 7 polishes.
-// HOW:  Animated.View with opacity fade-out after 2.6s. Pure presentational component.
+// WHAT: ReconnectToast — minimal fade-in/out banner shown on server reconnect.
+// WHY:  Phase 5 introduced the toast; Phase 7d polishes with tap-to-dismiss,
+//       2.5s auto-dismiss, fade-in animation, and zIndex token.
+// HOW:  Animated.View with opacity fade-in on mount, auto-fade-out after 2.5s.
+//       Pressable wrapper enables tap-to-dismiss. Uses zIndex.toast token.
 // SEE:  apps/mobile/src/navigation/SessionsHomeScreen.tsx
 
-import React, { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, Text } from 'react-native';
-import { colors, radii, spacing, typography } from '../theme';
+import React, { useCallback, useEffect, useRef } from 'react';
+import { Animated, Pressable, StyleSheet, Text } from 'react-native';
+import { colors, radii, spacing, typography, zIndex } from '../theme';
 
-export function ReconnectToast({ serverName }: { serverName: string }) {
-  const opacity = useRef(new Animated.Value(1)).current;
+interface ReconnectToastProps {
+  serverName: string;
+  onDismiss?: () => void;
+}
+
+export function ReconnectToast({ serverName, onDismiss }: ReconnectToastProps) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
-    }, 2600);
-    return () => clearTimeout(timer);
-  }, [opacity]);
+    // Fade in
+    Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+
+    // Auto-dismiss after 2.5s
+    timerRef.current = setTimeout(() => {
+      Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver: true }).start(() => {
+        onDismiss?.();
+      });
+    }, 2500);
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [opacity, onDismiss]);
+
+  const handleTapDismiss = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+      onDismiss?.();
+    });
+  }, [opacity, onDismiss]);
 
   return (
     <Animated.View style={[styles.toast, { opacity }]}>
-      <Text style={styles.toastText}>Reconnected to {serverName}</Text>
+      <Pressable onPress={handleTapDismiss}>
+        <Text style={styles.toastText}>Reconnected to {serverName}</Text>
+      </Pressable>
     </Animated.View>
   );
 }
@@ -33,7 +59,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing[4],
     paddingVertical: spacing[2],
     borderRadius: radii.lg,
-    zIndex: 100,
+    zIndex: zIndex.toast,
   },
   toastText: {
     fontSize: typography.fontSize.sm,

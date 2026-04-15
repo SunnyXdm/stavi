@@ -22,7 +22,7 @@ import {
   ActivityIndicator,
   Pressable,
 } from 'react-native';
-import { FolderTree, SortAsc, Eye } from 'lucide-react-native';
+import { FolderTree, SortAsc, Eye, FolderOpen } from 'lucide-react-native';
 import type { WorkspacePluginDefinition, WorkspacePluginPanelProps } from '@stavi/shared';
 import { useConnectionStore } from '../../../stores/connection';
 import { useExplorerStore } from './store';
@@ -34,6 +34,8 @@ import { EntryMetaSheet } from './components/EntryMetaSheet';
 import { DestinationPicker } from './components/DestinationPicker';
 import { colors, typography, spacing } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
+import { logEvent } from '../../../services/telemetry';
+import { ErrorView, LoadingView, EmptyView } from '../../../components/StateViews';
 
 // ----------------------------------------------------------
 // Panel
@@ -106,6 +108,7 @@ function ExplorerPanel({ session, instanceId }: WorkspacePluginPanelProps) {
           onPress: async () => {
             if (!client) return;
             exitSelectionMode(sessionId);
+            logEvent('explorer.batchOperation', { op: 'delete', count: paths.length, sessionId });
             setProgressText('Deleting 0 / ' + paths.length);
             let done = 0;
             try {
@@ -131,6 +134,7 @@ function ExplorerPanel({ session, instanceId }: WorkspacePluginPanelProps) {
     const paths = Array.from(selection);
     exitSelectionMode(sessionId);
     if (!client) return;
+    logEvent('explorer.batchOperation', { op: 'move', count: paths.length, sessionId });
     setProgressText('Moving 0 / ' + paths.length);
     let done = 0;
     try {
@@ -152,6 +156,7 @@ function ExplorerPanel({ session, instanceId }: WorkspacePluginPanelProps) {
     const paths = Array.from(selection);
     exitSelectionMode(sessionId);
     if (!client) return;
+    logEvent('explorer.batchOperation', { op: 'copy', count: paths.length, sessionId });
     setProgressText('Copying 0 / ' + paths.length);
     let done = 0;
     try {
@@ -174,6 +179,7 @@ function ExplorerPanel({ session, instanceId }: WorkspacePluginPanelProps) {
     const destination = `${cwd}/archive-${timestamp}.zip`;
     exitSelectionMode(sessionId);
     if (!client) return;
+    logEvent('explorer.batchOperation', { op: 'zip', count: paths.length, sessionId });
     setProgressText('Zipping...');
     try {
       await client.subscribeAsync('fs.zip', { paths, destination }, (chunk: unknown) => {
@@ -211,15 +217,14 @@ function ExplorerPanel({ session, instanceId }: WorkspacePluginPanelProps) {
 
   // Error state
   if (error && !loading) {
+    const isPermission = /permission|denied|EACCES/i.test(error);
+    const isNotFound = /not found|ENOENT|no such/i.test(error);
     return (
-      <View style={styles.center}>
-        <Text style={[textStyles.body, { color: colors.semantic.error, textAlign: 'center' }]}>
-          {error}
-        </Text>
-        <Pressable style={styles.retryButton} onPress={handleRefresh}>
-          <Text style={styles.retryText}>Retry</Text>
-        </Pressable>
-      </View>
+      <ErrorView
+        title={isPermission ? 'Permission denied' : isNotFound ? 'Path not found' : 'Failed to load directory'}
+        message={error}
+        onRetry={handleRefresh}
+      />
     );
   }
 
@@ -273,9 +278,13 @@ function ExplorerPanel({ session, instanceId }: WorkspacePluginPanelProps) {
 
       {/* Loading state */}
       {loading && entries.length === 0 ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="small" color={colors.accent.primary} />
-        </View>
+        <LoadingView message="Loading files..." />
+      ) : entries.length === 0 ? (
+        <EmptyView
+          icon={FolderOpen}
+          title="This folder is empty"
+          subtitle="No files or folders found in this directory"
+        />
       ) : (
         <ExplorerList
           sessionId={sessionId}
@@ -336,13 +345,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg.base,
   },
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing[3],
-    padding: spacing[6],
-  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -376,15 +378,5 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.xs,
     color: colors.accent.primary,
     fontFamily: typography.fontFamily.mono,
-  },
-  retryButton: {
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[2],
-    borderRadius: 8,
-    backgroundColor: colors.bg.overlay,
-  },
-  retryText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.secondary,
   },
 });

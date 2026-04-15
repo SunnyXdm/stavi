@@ -8,6 +8,7 @@
 import { create } from 'zustand';
 import type { Session } from '@stavi/shared';
 import { useConnectionStore } from './connection';
+import { logEvent } from '../services/telemetry';
 
 type SessionEvent =
   | { type: 'snapshot'; payload?: { sessions?: Session[] } }
@@ -120,6 +121,9 @@ export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions
           return;
         }
         if (typed.type === 'created' || typed.type === 'updated' || typed.type === 'archived') {
+          if (typed.type === 'created') {
+            logEvent('session.created', { sessionId: typed.session.id, serverId, folder: typed.session.folder });
+          }
           set((state) => ({
             sessionsByServer: {
               ...state.sessionsByServer,

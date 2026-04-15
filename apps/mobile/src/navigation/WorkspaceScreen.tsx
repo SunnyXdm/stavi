@@ -29,6 +29,7 @@ import { usePluginRegistry } from '../stores/plugin-registry';
 import { useSessionsStore } from '../stores/sessions-store';
 import { useConnectionStore } from '../stores/connection';
 import { colors, typography, spacing, radii } from '../theme';
+import { logEvent } from '../services/telemetry';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 340);
@@ -99,6 +100,7 @@ export function WorkspaceScreen() {
     if (!session || !serverId) return;
     const client = useConnectionStore.getState().getClientForServer(serverId);
     if (!client) return;
+    logEvent('session.opened', { sessionId: session.id, serverId, folder: session.folder });
     client.request('session.touch', { sessionId: session.id }).catch((err) => {
       console.warn('[WorkspaceScreen] session.touch failed:', err);
     });

@@ -19,6 +19,7 @@ import {
 } from './stavi-client';
 import { prefetchServerId } from './connection-preflight';
 import { RelayTransport } from '../transports/RelayTransport';
+import { logEvent } from '../services/telemetry';
 
 // Re-export for consumers that import SavedConnection from this file.
 export type { SavedConnection } from '@stavi/shared';
@@ -159,6 +160,7 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
             // Fire reconnect listeners when transitioning from reconnecting → connected.
             const wasReconnecting = state._wasConnectedById[savedConnection.id];
             if (wasReconnecting && mapped === 'connected') {
+              logEvent('server.reconnected', { serverId: savedConnection.id, name: savedConnection.name });
               for (const listener of _reconnectListeners) {
                 try {
                   listener(savedConnection.id);
@@ -181,6 +183,9 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
 
             // Clear relay reconnect counter once successfully connected.
             if (mapped === 'connected') {
+              if (!wasReconnecting) {
+                logEvent('server.connected', { serverId: savedConnection.id, name: savedConnection.name });
+              }
               _relayReconnectAttempts.delete(savedConnection.id);
               const t = _relayReconnectTimers.get(savedConnection.id);
               if (t) { clearTimeout(t); _relayReconnectTimers.delete(savedConnection.id); }
@@ -387,6 +392,8 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
 
           const runtime = get().connectionsById[serverId];
           runtime?.client.disconnect();
+          const name = get().savedConnections.find((c) => c.id === serverId)?.name;
+          logEvent('server.disconnected', { serverId, name });
           set((state) => ({
             connectionsById: {
               ...state.connectionsById,

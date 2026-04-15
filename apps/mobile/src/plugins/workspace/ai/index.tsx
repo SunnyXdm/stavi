@@ -32,6 +32,7 @@ import type { WorkspacePluginDefinition, WorkspacePluginPanelProps } from '@stav
 import type { AIPluginAPI } from '@stavi/shared';
 import { colors, typography, spacing, radii } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
+import { EmptyView, LoadingView } from '../../../components/StateViews';
 import { useConnectionStore } from '../../../stores/connection';
 import { usePluginRegistry } from '../../../stores/plugin-registry';
 import { useSessionRegistry } from '../../../stores/session-registry';
@@ -552,29 +553,18 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
   // Not connected
   if (connectionState !== 'connected') {
     return (
-      <View style={styles.empty}>
-        <Sparkles size={32} color={colors.fg.muted} />
-        <Text
-          style={[
-            textStyles.body,
-            { color: colors.fg.muted, textAlign: 'center' },
-          ]}
-        >
-          Connect to a server to start an AI session
-        </Text>
-      </View>
+      <EmptyView
+        icon={Sparkles}
+        title="No server connected"
+        subtitle="Connect to a server to start an AI session"
+      />
     );
   }
 
   // Loading
   if (loading) {
     return (
-      <View style={styles.empty}>
-        <ActivityIndicator size="small" color={colors.accent.primary} />
-        <Text style={[textStyles.bodySmall, { color: colors.fg.tertiary }]}>
-          Loading sessions...
-        </Text>
-      </View>
+      <LoadingView message="Loading sessions..." />
     );
   }
 
@@ -592,7 +582,9 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
             {worktreePath.split('/').filter(Boolean).pop()}
           </Text>
           <Text style={styles.emptyChatSubtitle}>
-            Select a model below and send a message to start.
+            {configSelection.provider
+              ? `Start a conversation with ${configSelection.provider === 'claude' ? 'Claude' : configSelection.provider === 'codex' ? 'Codex' : configSelection.provider}`
+              : 'Select a model below and send a message to start.'}
           </Text>
         </View>
       ) : (
@@ -780,15 +772,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg.base,
   },
-  empty: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing[3],
-    padding: spacing[6],
-  },
-
   // Empty chat
   emptyChat: {
     flex: 1,

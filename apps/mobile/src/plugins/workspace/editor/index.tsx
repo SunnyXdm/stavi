@@ -16,13 +16,14 @@ import {
   StyleSheet,
   useWindowDimensions,
 } from 'react-native';
-import { Code2 } from 'lucide-react-native';
+import { Code2, FileCode } from 'lucide-react-native';
 import type {
   WorkspacePluginDefinition,
   WorkspacePluginPanelProps,
 } from '@stavi/shared';
 import type { EditorPluginAPI } from '@stavi/shared';
 import { colors } from '../../../theme';
+import { EmptyView } from '../../../components/StateViews';
 import { useEditorStore } from './store';
 import { FileTree } from './components/FileTree';
 import { EditorTabs } from './components/EditorTabs';
@@ -142,14 +143,22 @@ function EditorPanel({ instanceId, session, isActive }: WorkspacePluginPanelProp
         {/* Content area */}
         <View style={styles.content}>
           <EditorTabs sessionId={sessionId} />
-          <EditorSurface
-            activeFile={activeFile}
-            sessionId={sessionId}
-            serverId={serverId}
-            onAction={handleAction}
-            onCursorMoved={handleCursorMoved}
-            bridgeRef={bridgeRef}
-          />
+          {!activeFile ? (
+            <EmptyView
+              icon={FileCode}
+              title="No file open"
+              subtitle="Open a file from the tree or Explorer"
+            />
+          ) : (
+            <EditorSurface
+              activeFile={activeFile}
+              sessionId={sessionId}
+              serverId={serverId}
+              onAction={handleAction}
+              onCursorMoved={handleCursorMoved}
+              bridgeRef={bridgeRef}
+            />
+          )}
         </View>
       </View>
     </View>

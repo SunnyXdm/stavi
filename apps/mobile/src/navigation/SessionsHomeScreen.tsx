@@ -66,8 +66,6 @@ export function SessionsHomeScreen() {
     return onReconnect((serverId) => {
       setToastServerId(serverId);
       void refreshForServer(serverId).catch(() => {});
-      const t = setTimeout(() => setToastServerId(null), 3500);
-      return () => clearTimeout(t);
     });
   }, [onReconnect, refreshForServer]);
 
@@ -128,7 +126,7 @@ export function SessionsHomeScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {toastConn ? <ReconnectToast serverName={toastConn.name} /> : null}
+      {toastConn ? <ReconnectToast serverName={toastConn.name} onDismiss={() => setToastServerId(null)} /> : null}
 
       <View style={styles.header}>
         <Text style={styles.title}>stavi</Text>

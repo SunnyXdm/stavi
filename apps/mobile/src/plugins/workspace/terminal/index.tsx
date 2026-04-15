@@ -12,20 +12,21 @@
 // and DrawerContent to display per-instance tabs.
 
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
-import { SquareTerminal, AlertTriangle, RefreshCw } from 'lucide-react-native';
+import { View, StyleSheet } from 'react-native';
+import { SquareTerminal, AlertTriangle } from 'lucide-react-native';
 import type {
   WorkspacePluginDefinition,
   WorkspacePluginPanelProps,
 } from '@stavi/shared';
 import type { TerminalPluginAPI } from '@stavi/shared';
-import { colors, typography, spacing, radii } from '../../../theme';
-import { textStyles } from '../../../theme/styles';
+import { colors, spacing } from '../../../theme';
+import { EmptyView, ErrorView, LoadingView } from '../../../components/StateViews';
 import NativeTerminal, { type NativeTerminalRef } from '../../../components/NativeTerminal';
 import { TerminalToolbar } from '../../../components/TerminalToolbar';
 import { useConnectionStore } from '../../../stores/connection';
 import { useSessionRegistry } from '../../../stores/session-registry';
 import { eventBus } from '../../../services/event-bus';
+import { logEvent } from '../../../services/telemetry';
 
 // ----------------------------------------------------------
 // Types
@@ -121,6 +122,7 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
             s.threadId === threadId ? { ...s, status: 'running' } : s,
           ),
         );
+        logEvent('terminal.open', { serverId, threadId, cwd: cwd || defaultCwd });
 
         // Subscribe to terminal events
         const unsub = client.subscribe(
@@ -308,24 +310,18 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
   // Not connected state
   if (connectionState !== 'connected') {
     return (
-      <View style={styles.empty}>
-        <SquareTerminal size={32} color={colors.fg.muted} />
-        <Text style={[textStyles.body, { color: colors.fg.muted, textAlign: 'center' }]}>
-          Connect to a server to open a terminal
-        </Text>
-      </View>
+      <EmptyView
+        icon={SquareTerminal}
+        title="No server connected"
+        subtitle="Connect to a server to open a terminal"
+      />
     );
   }
 
   // No sessions (shouldn't normally happen)
   if (sessions.length === 0) {
     return (
-      <View style={styles.empty}>
-        <ActivityIndicator size="small" color={colors.accent.primary} />
-        <Text style={[textStyles.bodySmall, { color: colors.fg.tertiary }]}>
-          Opening terminal...
-        </Text>
-      </View>
+      <LoadingView message="Opening terminal..." />
     );
   }
 
@@ -344,15 +340,14 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
                 key={key}
                 style={[
                   styles.terminalWrapper,
-                  styles.errorBanner,
                   { opacity: isVisible ? 1 : 0, pointerEvents: isVisible ? 'auto' : 'none' },
                 ]}
               >
-                <AlertTriangle size={20} color={colors.semantic.error} />
-                <Text style={styles.errorText}>Terminal failed to start</Text>
-                <Pressable
-                  style={styles.retryButton}
-                  onPress={() => {
+                <ErrorView
+                  icon={AlertTriangle}
+                  title="Terminal failed to start"
+                  message="Could not open a terminal session on the server."
+                  onRetry={() => {
                     // Replace the errored session: close and reopen
                     setSessions((prev) =>
                       prev.map((s) =>
@@ -390,10 +385,7 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
                         );
                       });
                   }}
-                >
-                  <RefreshCw size={14} color={colors.semantic.error} />
-                  <Text style={styles.retryText}>Retry</Text>
-                </Pressable>
+                />
               </View>
             );
           }
@@ -522,15 +514,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg.base,
   },
-  empty: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing[3],
-    padding: spacing[6],
-  },
-
   // Terminal
   terminalArea: {
     flex: 1,
@@ -545,34 +528,5 @@ const styles = StyleSheet.create({
   },
   terminal: {
     flex: 1,
-  },
-  // Error banner (shown when session.status === 'error')
-  errorBanner: {
-    backgroundColor: colors.semantic.errorSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing[3],
-    padding: spacing[6],
-  },
-  errorText: {
-    fontSize: typography.fontSize.base,
-    color: colors.semantic.error,
-    textAlign: 'center',
-  },
-  retryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[2],
-    borderWidth: 1,
-    borderColor: colors.semantic.error,
-    borderRadius: radii.md,
-    marginTop: spacing[2],
-  },
-  retryText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.semantic.error,
-    fontWeight: typography.fontWeight.medium,
   },
 });

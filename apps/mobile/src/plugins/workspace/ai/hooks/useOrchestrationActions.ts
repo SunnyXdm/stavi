@@ -5,6 +5,7 @@
 import { useCallback } from 'react';
 import { useConnectionStore } from '../../../../stores/connection';
 import { useAiBindingsStore } from '../../../../stores/ai-bindings-store';
+import { logEvent } from '../../../../services/telemetry';
 import type { OrchestrationState, Thread } from '../useOrchestration';
 
 function getOrchestrationClient(serverId: string) {
@@ -100,6 +101,7 @@ export function useOrchestrationActions({
         },
       });
 
+      logEvent('ai.send', { sessionId, serverId, threadId: tid, provider: modelSel?.provider });
       return { threadId: tid, turnId: commandId };
     },
     [ensureActiveThread, resolveThreadModelSelection, serverId, setState],
