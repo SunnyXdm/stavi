@@ -1,6 +1,7 @@
 // WHAT: Per-server sessions store for Sessions Home and workspace lookups.
 // WHY:  Phase 2 needs Sessions grouped by server, live subscriptions per connection,
 //       and session lookup by id without relying on a single active connection.
+//       Phase 8d adds getAllWorkspaces() for the flat home screen sorted by recency.
 // HOW:  Zustand runtime state keyed by serverId. Uses getClientForServer(serverId)
 //       to subscribe to session events and refresh via session.list.
 // SEE:  apps/mobile/src/stores/connection.ts, apps/mobile/src/navigation/SessionsHomeScreen.tsx
@@ -28,6 +29,8 @@ interface SessionsStoreState {
 interface SessionsStoreActions {
   refreshForServer(serverId: string): Promise<void>;
   getSessionsForServer(serverId: string): Session[];
+  /** Flat list of ALL workspaces across all servers, sorted by lastActiveAt desc. */
+  getAllWorkspaces(): Session[];
   getSession(sessionId: string): Session | undefined;
   startSubscription(serverId: string): () => void;
   clearServer(serverId: string): void;
@@ -89,6 +92,15 @@ export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions
   },
 
   getSessionsForServer: (serverId) => get().sessionsByServer[serverId] ?? [],
+
+  getAllWorkspaces: () => {
+    const { sessionsByServer } = get();
+    const all: Session[] = [];
+    for (const sessions of Object.values(sessionsByServer)) {
+      all.push(...sessions);
+    }
+    return all.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  },
 
   getSession: (sessionId) => get().sessionsById[sessionId],
 
