@@ -278,73 +278,74 @@ export function EditorSurface({
   }, [activeFile?.path]);
 
   // ----------------------------------------------------------
-  // Empty / loading / error / binary states
+  // Determine overlay state (shown on top of the always-mounted WebView)
   // ----------------------------------------------------------
+  // The WebView is ALWAYS in the component tree — never conditionally rendered.
+  // Fabric (New Architecture) requires each native view to have exactly one
+  // parent; mounting/unmounting the WebView across tab switches causes
+  // "addViewAt: failed to insert view … child already has a parent".
+  // Fix: render all states as absoluteFill overlays over the persistent WebView.
 
-  if (!activeFile) {
-    return (
-      <View style={styles.empty}>
-        <FileText size={32} color={colors.fg.muted} />
-        <Text style={styles.emptyText}>Open a file from the tree</Text>
-      </View>
-    );
-  }
+  const showEmpty = !activeFile;
+  const showLoading = !showEmpty && activeFile.loading;
+  const showError = !showEmpty && !showLoading && Boolean(activeFile.error);
+  const showBinary = !showEmpty && !showLoading && !showError && isBinary(activeFile.path);
+  const showOverlay = showEmpty || showLoading || showError || showBinary;
 
-  if (activeFile.loading) {
-    return (
-      <View style={styles.empty}>
-        <ActivityIndicator size="small" color={colors.accent.primary} />
-      </View>
-    );
-  }
-
-  if (activeFile.error) {
-    return (
-      <View style={styles.empty}>
-        <AlertCircle size={24} color={colors.semantic.error} />
-        <Text style={[styles.emptyText, { color: colors.semantic.error }]}>
-          {activeFile.error}
-        </Text>
-      </View>
-    );
-  }
-
-  if (isBinary(activeFile.path)) {
-    return (
-      <View style={styles.empty}>
-        <FileText size={32} color={colors.fg.muted} />
-        <Text style={styles.emptyText}>Binary file — preview not available</Text>
-        <Text style={styles.binaryPath}>{activeFile.path.split('/').pop()}</Text>
-      </View>
-    );
-  }
-
-  // ----------------------------------------------------------
-  // WebView with CodeMirror
-  // ----------------------------------------------------------
   return (
-    <WebView
-      ref={webviewRef}
-      style={styles.webview}
-      source={{ uri: 'file:///android_asset/editor/index.html' }}
-      originWhitelist={['*']}
-      onMessage={handleMessage}
-      onLoadStart={() => {
-        // Reset bridge state on reload (e.g., hot-reload during dev)
-        bridgeInstance.current.reset();
-        lastLoadedPath.current = null;
-      }}
-      javaScriptEnabled
-      allowFileAccess
-      allowUniversalAccessFromFileURLs
-      allowFileAccessFromFileURLs
-      mixedContentMode="always"
-      // Prevent overscroll bounce on iOS
-      bounces={false}
-      scrollEnabled={false}
-      // Keyboard-avoiding handled by outer container
-      keyboardDisplayRequiresUserAction={false}
-    />
+    <View style={styles.container}>
+      {/* WebView is always mounted — never conditionally rendered */}
+      <WebView
+        ref={webviewRef}
+        style={styles.webview}
+        source={{ uri: 'file:///android_asset/editor/index.html' }}
+        originWhitelist={['*']}
+        onMessage={handleMessage}
+        onLoadStart={() => {
+          // Reset bridge state on reload (e.g., hot-reload during dev)
+          bridgeInstance.current.reset();
+          lastLoadedPath.current = null;
+        }}
+        javaScriptEnabled
+        allowFileAccess
+        allowUniversalAccessFromFileURLs
+        allowFileAccessFromFileURLs
+        mixedContentMode="always"
+        bounces={false}
+        scrollEnabled={false}
+        keyboardDisplayRequiresUserAction={false}
+      />
+
+      {/* Overlay states sit on top of the WebView and visually hide it */}
+      {showOverlay && (
+        <View style={styles.overlay}>
+          {showEmpty && (
+            <>
+              <FileText size={32} color={colors.fg.muted} />
+              <Text style={styles.emptyText}>Open a file from the tree</Text>
+            </>
+          )}
+          {showLoading && (
+            <ActivityIndicator size="small" color={colors.accent.primary} />
+          )}
+          {showError && (
+            <>
+              <AlertCircle size={24} color={colors.semantic.error} />
+              <Text style={[styles.emptyText, { color: colors.semantic.error }]}>
+                {activeFile!.error}
+              </Text>
+            </>
+          )}
+          {showBinary && (
+            <>
+              <FileText size={32} color={colors.fg.muted} />
+              <Text style={styles.emptyText}>Binary file — preview not available</Text>
+              <Text style={styles.binaryPath}>{activeFile!.path.split('/').pop()}</Text>
+            </>
+          )}
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -353,17 +354,22 @@ export function EditorSurface({
 // ----------------------------------------------------------
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
   webview: {
     flex: 1,
     backgroundColor: colors.bg.base,
   },
-  empty: {
-    flex: 1,
+  // Overlay covers the WebView for empty/loading/error/binary states.
+  // Uses bg.base background so the WebView beneath is fully hidden.
+  overlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: colors.bg.base,
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing[3],
     padding: spacing[6],
-    backgroundColor: colors.bg.base,
   },
   emptyText: {
     fontSize: typography.fontSize.sm,
