@@ -12,7 +12,6 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   Pressable,
   RefreshControl,
@@ -279,11 +278,6 @@ function ItemSeparator() {
 function NoWorkspacesEmpty({ onNewSession }: { onNewSession: () => void }) {
   return (
     <View style={emptyStyles.container}>
-      <ActivityIndicator
-        size="small"
-        color={colors.accent.primary}
-        style={emptyStyles.spinner}
-      />
       <Text style={emptyStyles.title}>No workspaces yet</Text>
       <Text style={emptyStyles.subtitle}>Create one to get started.</Text>
       <Pressable style={emptyStyles.button} onPress={onNewSession}>
@@ -411,9 +405,6 @@ const emptyStyles = StyleSheet.create({
     justifyContent: 'center',
     paddingTop: spacing[16],
     gap: spacing[3],
-  },
-  spinner: {
-    marginBottom: spacing[2],
   },
   title: {
     fontSize: typography.fontSize.lg,
