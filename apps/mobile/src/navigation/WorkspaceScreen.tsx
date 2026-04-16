@@ -95,16 +95,25 @@ export function WorkspaceScreen() {
     }
   }, [initialize, sessionId, session]);
 
-  // session.touch on mount (non-blocking, errors logged)
+  // Log session.opened once on mount — dep is sessionId (stable string), not session
+  // object, to avoid re-firing on every Zustand store update.
   useEffect(() => {
-    if (!session || !serverId) return;
+    if (!sessionId) return;
+    const s = useSessionsStore.getState().sessionsById[sessionId];
+    if (!s) return;
+    logEvent('session.opened', { sessionId: s.id, serverId: s.serverId, folder: s.folder });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  // session.touch on mount — deps are stable strings only, not the session object.
+  useEffect(() => {
+    if (!sessionId || !serverId) return;
     const client = useConnectionStore.getState().getClientForServer(serverId);
     if (!client) return;
-    logEvent('session.opened', { sessionId: session.id, serverId, folder: session.folder });
-    client.request('session.touch', { sessionId: session.id }).catch((err) => {
+    client.request('session.touch', { sessionId }).catch((err) => {
       console.warn('[WorkspaceScreen] session.touch failed:', err);
     });
-  }, [session, serverId]);
+  }, [sessionId, serverId]);
 
   // session.touch on re-focus (after navigating back from Home)
   useFocusEffect(
