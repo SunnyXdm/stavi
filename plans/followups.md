@@ -50,7 +50,7 @@
 - **ReconnectToast onDismiss drives cleanup**: SessionsHomeScreen no longer uses a setTimeout to clear the toast. The toast itself manages its lifecycle (2.5s auto-dismiss + tap-to-dismiss) and calls `onDismiss` to clear the parent's `toastServerId` state.
 
 ## From Phase 8a
-- **`useOrchestration.ts` line 118 reads connection state non-reactively** (`.getState().getServerStatus(activeConnectionId)`). Value is captured once on mount and becomes stale if the connection drops afterward. **FIX IN 8e/8f**: Replace with a Zustand selector (`useConnectionStore((s) => s.getServerStatus(activeConnectionId))`) when the AI panel is being modified for the sidebar/chat-first layout.
+- ~~**`useOrchestration.ts` line 118 reads connection state non-reactively**~~ — **CLOSED in Phase 8e**: Replaced `.getState().getServerStatus(activeConnectionId)` with `useConnectionStore((s) => s.getServerStatus(activeConnectionId))` selector. Hook now re-renders reactively when connection state changes (server drops/reconnects).
 
 ## From Phase 8b
 - **`DrawerContent.tsx` comment header still says "session management"**: The comment on line 3 says "Left sidebar with session management". Not user-visible, so not renamed in 8b. Update the comment when the drawer is repurposed in Phase 8e.
@@ -62,3 +62,8 @@
 - **Archive/delete RPCs not yet wired from WorkspaceCard**: `WorkspaceCard.onArchive` and `WorkspaceCard.onDelete` fire the action sheet and Alert confirm correctly, but the server RPC calls (`session.archive`, `session.delete`) are stubbed with TODO comments. Wire these in Phase 8e or 8g when the Workspace shell is being reworked and we have the per-session client context readily available on the home screen.
 - **Search is client-side only**: `getAllWorkspaces()` is re-computed on every render when `searchQuery` changes. With 50+ workspaces this is still O(N) over a small array — acceptable. If the list grows to hundreds, memoize with `useMemo` keyed on `sessionsByServer` reference as well as the query.
 - **NoWorkspacesEmpty shows a spinner**: The spinner in the empty state is a visual artifact that should be removed — it was added to fill space but implies loading when there may be nothing to load. Remove in Phase 8g polish pass.
+
+## From Phase 8e
+- **`DrawerContent.tsx` deleted, logic inlined into WorkspaceSidebar**: The session-list pattern from DrawerContent is re-implemented in WorkspaceSidebarChats using the same SessionRegistry API. Comments in `terminal/index.tsx` and `ai/index.tsx` still say "DrawerContent" — these are code comments, not imports. Update in Phase 8g cleanup pass.
+- **Sidebar tap-outside scrim**: WorkspaceScreen renders a full-screen Pressable overlay when sidebar is expanded. This means any tap anywhere in the content area collapses the sidebar — intentional for dismissal, but may interfere with content interaction if the sidebar is accidentally expanded. Phase 8f can gate scrim on a small left-edge zone if needed.
+- **`SessionsHomeServerSection.tsx` still present**: Referenced in followups.md from Phase 8d as dead code. Delete in Phase 8g cleanup.

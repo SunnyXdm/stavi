@@ -1,41 +1,36 @@
 // ============================================================
-// PluginHeader — top bar with hamburger + per-plugin instance tabs
+// PluginHeader — top bar showing active plugin name + instance tabs
 // ============================================================
-// Shows tabs for all open instances of the ACTIVE plugin.
-// [Hamburger] [Instance 1] [Instance 2] ... [+ new]
-// Reads directly from plugin-registry (not SessionRegistry).
+// Phase 8e: Hamburger menu button removed (sidebar is persistent, no drawer).
+// Shows active plugin name + multi-instance tabs + add-instance button.
+// The onOpenDrawer prop is kept as optional for backward compat during transition
+// but the hamburger icon is no longer rendered.
 
 import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, FlatList } from 'react-native';
-import { Menu, Plus, X } from 'lucide-react-native';
+import { Plus, X } from 'lucide-react-native';
 import { usePluginRegistry } from '../stores/plugin-registry';
 import { colors, typography, spacing, radii } from '../theme';
 import type { PluginInstance } from '@stavi/shared';
 
 interface PluginHeaderProps {
-  onOpenDrawer: () => void;
+  /** @deprecated Phase 8e — sidebar is persistent. No longer used. */
+  onOpenDrawer?: () => void;
   onCreateInstance?: () => void;
   sessionId?: string;
 }
 
 function instanceDisplayTitle(instance: PluginInstance, index: number): string {
-  // If the tab title has been updated by the plugin (e.g. "Claude", "myproject — Codex"), use it
-  // Fall back to directory name from initialState, or numbered default
   const dir = instance.initialState?.directory as string | undefined;
   const dirBasename = dir ? dir.split('/').filter(Boolean).pop() || dir : null;
-
-  // If title is the plain plugin name ("AI", "Editor") — it hasn't been customized yet
   const isDefaultTitle = instance.title === 'AI' || instance.title === 'Editor';
   if (!isDefaultTitle) {
-    // Plugin has set a custom title — show it (truncated to dir basename for compact tabs)
     return dirBasename ?? instance.title;
   }
-  // Default: directory name or numbered
   return dirBasename ?? `${instance.title} ${index + 1}`;
 }
 
 export const PluginHeader = memo(function PluginHeader({
-  onOpenDrawer,
   onCreateInstance,
   sessionId,
 }: PluginHeaderProps) {
@@ -46,7 +41,6 @@ export const PluginHeader = memo(function PluginHeader({
   const closeTab = usePluginRegistry((s) => s.closeTab);
   const canCloseTab = usePluginRegistry((s) => s.canCloseTab);
 
-  // Active plugin
   const activeTab = useMemo(
     () => openTabs.find((t) => t.id === activeTabId),
     [openTabs, activeTabId],
@@ -54,18 +48,15 @@ export const PluginHeader = memo(function PluginHeader({
   const activePluginId = activeTab?.pluginId ?? null;
   const activePluginName = activePluginId ? (definitions[activePluginId]?.name ?? '') : '';
 
-  // All instances of the active plugin
   const pluginInstances = useMemo(() => {
     if (!activePluginId) return [];
     return openTabs.filter((t) => t.pluginId === activePluginId);
   }, [openTabs, activePluginId]);
 
-  // Whether this plugin supports multiple instances
   const allowMultipleInstances = activePluginId
     ? (definitions[activePluginId]?.allowMultipleInstances ?? false)
     : false;
 
-  // Show tabs only when plugin supports multiple instances
   const showTabs = allowMultipleInstances && pluginInstances.length >= 1;
 
   const handleTabPress = useCallback(
@@ -111,19 +102,14 @@ export const PluginHeader = memo(function PluginHeader({
         </Pressable>
       );
     },
-    [activeTabId, canCloseTab, handleTabPress, handleCloseTab],
+    [activeTabId, canCloseTab, handleTabPress, handleCloseTab, sessionId],
   );
 
   const keyExtractor = useCallback((item: PluginInstance) => item.id, []);
 
   return (
     <View style={styles.container}>
-      {/* Hamburger menu */}
-      <Pressable style={styles.hamburger} onPress={onOpenDrawer} hitSlop={8}>
-        <Menu size={20} color={colors.fg.secondary} />
-      </Pressable>
-
-      {/* Content area */}
+      {/* Content area — title or multi-instance tab strip */}
       {showTabs ? (
         <FlatList
           data={pluginInstances}
@@ -165,15 +151,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.divider,
   },
-  hamburger: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   titleContainer: {
     flex: 1,
-    paddingHorizontal: spacing[2],
+    paddingHorizontal: spacing[4],
   },
   title: {
     fontSize: typography.fontSize.base,

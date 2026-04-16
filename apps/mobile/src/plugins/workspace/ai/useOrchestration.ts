@@ -121,7 +121,9 @@ export function useOrchestration(input?: {
     console.warn('[useOrchestration] serverId not provided — subscription will be inactive.');
   }
   const activeConnectionId = input?.serverId ?? 'local';
-  const connectionState = useConnectionStore.getState().getServerStatus(activeConnectionId);
+  // Phase 8e fix (followups.md): replace non-reactive .getState() read with Zustand selector
+  // so the hook re-renders when connection state changes (e.g. server drops and reconnects).
+  const connectionState = useConnectionStore((s) => s.getServerStatus(activeConnectionId));
   const client = useConnectionStore.getState().getClientForServer(activeConnectionId);
   const projectsRef = useRef<any[]>([]);
   const serverConfigRef = useRef<any>(null);

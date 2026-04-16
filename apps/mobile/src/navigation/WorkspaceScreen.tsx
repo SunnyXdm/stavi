@@ -1,19 +1,18 @@
-// WHAT: WorkspaceScreen — the main IDE layout, now Session-bound.
-// WHY:  Phase 3 binds every workspace to a specific Session. Route takes sessionId,
-//       plugins receive session: Session as a prop, folder picker is gone.
-// HOW:  Resolves Session from sessions-store via route param. Calls session.touch
-//       on mount and re-focus. BackHandler routes to SessionsHome on Android.
-// SEE:  apps/mobile/src/stores/sessions-store.ts, apps/mobile/src/stores/plugin-registry.ts
+// WHAT: WorkspaceScreen — IDE layout with persistent sidebar shell (Phase 8e).
+// WHY:  Phase 8e replaces bottom-tab + drawer layout with a flex-row sidebar + content area.
+//       WorkspaceSidebar is always visible (collapsed = 52px rail, expanded = 260px panel).
+//       No animated drawer/scrim/bottomBarHeight. PluginBottomBar removed.
+// HOW:  flex-row: <WorkspaceSidebar> + <content area>. Sidebar manages its own
+//       collapsed/expanded state. Content area is full remaining width × full height.
+// SEE:  apps/mobile/src/components/WorkspaceSidebar.tsx, plans/08-restructure-plan.md §8e
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   StatusBar,
-  Animated,
   Pressable,
-  Dimensions,
   BackHandler,
   ActivityIndicator,
 } from 'react-native';
@@ -22,22 +21,18 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AlertTriangle, ArrowLeft } from 'lucide-react-native';
 import { PluginRenderer } from '../components/PluginRenderer';
-import { PluginBottomBar } from '../components/PluginBottomBar';
 import { PluginHeader } from '../components/PluginHeader';
-import { DrawerContent } from '../components/DrawerContent';
+import { WorkspaceSidebar } from '../components/WorkspaceSidebar';
 import { usePluginRegistry } from '../stores/plugin-registry';
 import { useSessionsStore } from '../stores/sessions-store';
 import { useConnectionStore } from '../stores/connection';
 import { colors, typography, spacing, radii } from '../theme';
 import { logEvent } from '../services/telemetry';
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 340);
-
 export function WorkspaceScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<any>>();
   const route = useRoute<any>();
-  const [bottomBarHeight, setBottomBarHeight] = useState(56);
+
   const isReady = usePluginRegistry((s) => s.isReady);
   const initialize = usePluginRegistry((s) => s.initialize);
   const openTab = usePluginRegistry((s) => s.openTab);
@@ -54,39 +49,22 @@ export function WorkspaceScreen() {
   const openTabs = usePluginRegistry((s) => s.getOpenTabs(sessionId));
   const activeTabId = usePluginRegistry((s) => s.getActiveTabId(sessionId));
 
-  // Drawer animation
-  const drawerAnim = useRef(new Animated.Value(0)).current;
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  // Sidebar collapsed/expanded state
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
 
-  const openDrawer = useCallback(() => {
-    setDrawerOpen(true);
-    Animated.timing(drawerAnim, {
-      toValue: 1,
-      duration: 250,
-      useNativeDriver: true,
-    }).start();
-  }, [drawerAnim]);
-
-  const closeDrawer = useCallback(() => {
-    Animated.timing(drawerAnim, {
-      toValue: 0,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(() => {
-      setDrawerOpen(false);
-    });
-  }, [drawerAnim]);
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarExpanded((v) => !v);
+  }, []);
 
   const handleNavigateHome = useCallback(() => {
-    closeDrawer();
-    // Navigate without disconnecting — WebSockets stay alive
+    setSidebarExpanded(false);
     navigation.navigate('SessionsHome');
-  }, [closeDrawer, navigation]);
+  }, [navigation]);
 
   const handleNavigateSettings = useCallback(() => {
-    closeDrawer();
+    setSidebarExpanded(false);
     navigation.navigate('Settings');
-  }, [closeDrawer, navigation]);
+  }, [navigation]);
 
   // Initialize plugin tabs for this session on mount
   useEffect(() => {
@@ -138,11 +116,9 @@ export function WorkspaceScreen() {
     }, [navigation]),
   );
 
-  const handleBarHeightChange = useCallback((height: number) => {
-    setBottomBarHeight(height);
-  }, []);
+  // Collapse sidebar when keyboard is open: handled by letting the content area
+  // absorb keyboard avoidance. The sidebar stays visible (collapsed rail).
 
-  // Create a new plugin instance — no more directory picker
   const handleCreateInstance = useCallback(
     (pluginId: string) => {
       openTab(pluginId, undefined, sessionId);
@@ -150,7 +126,7 @@ export function WorkspaceScreen() {
     [openTab, sessionId],
   );
 
-  // Active plugin's ID
+  // Active plugin's ID for header
   const activePluginId = (openTabs ?? []).find((t) => t.id === activeTabId)?.pluginId ?? null;
   const activePluginAllowsMultiple = activePluginId
     ? (definitions[activePluginId]?.allowMultipleInstances ?? false)
@@ -162,7 +138,10 @@ export function WorkspaceScreen() {
     }
   }, [activePluginId, handleCreateInstance]);
 
-  // Error state: session not found, archived, or deleted
+  // ----------------------------------------------------------
+  // Error states
+  // ----------------------------------------------------------
+
   if (!sessionId || (!session && sessionId)) {
     return (
       <View style={styles.errorContainer}>
@@ -210,93 +189,68 @@ export function WorkspaceScreen() {
     );
   }
 
-  // Animated transforms
-  const mainTranslateX = drawerAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, DRAWER_WIDTH],
-  });
-
-  const drawerTranslateX = drawerAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-DRAWER_WIDTH, 0],
-  });
-
-  const scrimOpacity = drawerAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 0.5],
-  });
+  // ----------------------------------------------------------
+  // Main layout: flex-row sidebar + content area
+  // ----------------------------------------------------------
 
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" backgroundColor={colors.bg.base} />
 
-      {/* Drawer layer */}
-      {drawerOpen && (
-        <Animated.View
-          style={[
-            styles.drawerContainer,
-            { width: DRAWER_WIDTH, transform: [{ translateX: drawerTranslateX }] },
-          ]}
-        >
-          <DrawerContent
-            onClose={closeDrawer}
-            onNavigateHome={handleNavigateHome}
-            onNavigateSettings={handleNavigateSettings}
-            onCreateInstance={handleCreateInstance}
+      {/* Persistent sidebar — always visible icon rail, expands to full panel */}
+      <WorkspaceSidebar
+        sessionId={sessionId}
+        serverId={serverId}
+        expanded={sidebarExpanded}
+        onToggle={handleToggleSidebar}
+        onNavigateHome={handleNavigateHome}
+        onNavigateSettings={handleNavigateSettings}
+        onCreateInstance={handleCreateInstance}
+      />
+
+      {/* Content area — full remaining width × full height */}
+      <SafeAreaView style={styles.content} edges={['top']}>
+        {/* Plugin header */}
+        <PluginHeader
+          onOpenDrawer={handleToggleSidebar}
+          onCreateInstance={activePluginAllowsMultiple ? handleHeaderCreateInstance : undefined}
+          sessionId={sessionId}
+        />
+
+        {/* Plugin panels — full height, no bottom margin */}
+        <View style={styles.panelArea}>
+          <PluginRenderer
+            bottomBarHeight={0}
             sessionId={sessionId}
+            session={session}
           />
-        </Animated.View>
+        </View>
+      </SafeAreaView>
+
+      {/* Tap-to-collapse scrim when expanded */}
+      {sidebarExpanded && (
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={handleToggleSidebar}
+          accessible={false}
+          pointerEvents="box-only"
+        />
       )}
-
-      {/* Main content */}
-      <Animated.View
-        style={[styles.mainContainer, { transform: [{ translateX: mainTranslateX }] }]}
-      >
-        <SafeAreaView style={styles.container} edges={['top']}>
-          {/* Plugin header */}
-          <PluginHeader
-            onOpenDrawer={openDrawer}
-            onCreateInstance={activePluginAllowsMultiple ? handleHeaderCreateInstance : undefined}
-            sessionId={sessionId}
-          />
-
-          {/* Plugin panels */}
-          <View style={[styles.content, { marginBottom: bottomBarHeight }]}>
-            <PluginRenderer
-              bottomBarHeight={bottomBarHeight}
-              sessionId={sessionId}
-              session={session}
-            />
-          </View>
-
-          {/* Bottom navigation */}
-          <View style={styles.bottomBar}>
-            <PluginBottomBar
-              onHeightChange={handleBarHeightChange}
-              onCreateInstance={handleCreateInstance}
-              sessionId={sessionId}
-              serverId={serverId}
-            />
-          </View>
-        </SafeAreaView>
-
-        {/* Scrim overlay */}
-        {drawerOpen && (
-          <Animated.View style={[styles.scrim, { opacity: scrimOpacity }]}>
-            <Pressable style={StyleSheet.absoluteFill} onPress={closeDrawer} />
-          </Animated.View>
-        )}
-      </Animated.View>
     </View>
   );
 }
 
+// ----------------------------------------------------------
+// Styles
+// ----------------------------------------------------------
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+    flexDirection: 'row',
     backgroundColor: colors.bg.base,
   },
-  container: {
+  content: {
     flex: 1,
     backgroundColor: colors.bg.base,
   },
@@ -306,35 +260,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  content: {
+  panelArea: {
     flex: 1,
-  },
-  bottomBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
-
-  // Drawer
-  drawerContainer: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: 0,
-    zIndex: 10,
-  },
-  mainContainer: {
-    flex: 1,
-  },
-  scrim: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: colors.bg.scrim,
-    zIndex: 5,
   },
 
   // Error state
