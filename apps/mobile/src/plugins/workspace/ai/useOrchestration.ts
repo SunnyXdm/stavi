@@ -264,6 +264,75 @@ export function useOrchestration(input?: {
   }, [instanceId, preferredWorktreePath, activeConnectionId, sessionId, client]);
 
   // ----------------------------------------------------------
+  // Phase 8f: createNewChat — always creates a fresh thread (never reuses)
+  // Unlike ensureActiveThread which reuses an existing bound thread,
+  // createNewChat unconditionally creates a new one and makes it active.
+  // ----------------------------------------------------------
+
+  const createNewChat = useCallback(async (agentRuntime?: 'claude' | 'codex') => {
+    const project = projectsRef.current[0];
+    if (!project?.id) throw new Error('No project is available on the connected server');
+
+    if (!client) {
+      throw new Error('Client unavailable for active server');
+    }
+
+    const createdAt = new Date().toISOString();
+    const threadId = `thread-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const dirName = preferredWorktreePath
+      ? preferredWorktreePath.split('/').filter(Boolean).pop()
+      : null;
+    const title = dirName ? `${dirName} AI` : 'AI Chat';
+
+    await client.request('orchestration.dispatchCommand', {
+      command: {
+        type: 'thread.create',
+        commandId: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        threadId,
+        sessionId: sessionId !== 'local' ? sessionId : undefined,
+        projectId: project.id,
+        title,
+        runtimeMode: 'approval-required',
+        interactionMode: 'default',
+        branch: null,
+        worktreePath: preferredWorktreePath,
+        agentRuntime: agentRuntime ?? null,
+        createdAt,
+      },
+    });
+
+    // Bind this new thread to the current instance (replacing any prior binding)
+    if (instanceId) {
+      useAiBindingsStore.getState().bind({ serverId: activeConnectionId, sessionId, instanceId }, threadId);
+    }
+    activeThreadIdRef.current = threadId;
+    setState((prev) => ({
+      ...prev,
+      activeThreadId: threadId,
+      threads: prev.threads.some((t) => t.threadId === threadId)
+        ? prev.threads
+        : [
+            ...prev.threads,
+            {
+              threadId,
+              projectId: project.id,
+              title,
+              runtimeMode: 'approval-required',
+              interactionMode: 'default',
+              branch: '',
+              worktreePath: preferredWorktreePath,
+              agentRuntime,
+              modelSelection: undefined,
+              archived: false,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          ],
+    }));
+    return threadId;
+  }, [instanceId, preferredWorktreePath, activeConnectionId, sessionId, client]);
+
+  // ----------------------------------------------------------
   // Event processing (pure state reducer)
   // ----------------------------------------------------------
 
@@ -566,5 +635,6 @@ export function useOrchestration(input?: {
     ...state,
     ...actions,
     ensureActiveThread,
+    createNewChat,
   };
 }

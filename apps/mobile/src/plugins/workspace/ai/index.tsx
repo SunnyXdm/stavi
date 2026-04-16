@@ -26,6 +26,7 @@ import {
   ChevronDown,
   ChevronRight,
   Layers,
+  PenLine,
   X,
 } from 'lucide-react-native';
 import type { WorkspacePluginDefinition, WorkspacePluginPanelProps } from '@stavi/shared';
@@ -267,9 +268,10 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
     interruptTurn,
     respondToApproval,
     setActiveThread,
+    createNewChat,
   } = useOrchestration({ instanceId, worktreePath, serverId: session.serverId, sessionId: session.id });
 
-  // Register AI threads with SessionRegistry so DrawerContent can show them
+  // Register AI threads with SessionRegistry so WorkspaceSidebarChats can show them
   const registerSessions = useSessionRegistry((s) => s.register);
   useEffect(() => {
     registerSessions('ai', {
@@ -283,10 +285,15 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
       onSelectSession: (sessionId) => {
         setActiveThread(sessionId);
       },
-      onCreateSession: () => {},
-      createLabel: 'New AI Chat',
+      // Phase 8f: wired to createNewChat so the sidebar "New Chat" button creates a real thread
+      onCreateSession: () => {
+        createNewChat().catch((err) =>
+          console.error('[AI] createNewChat error:', err),
+        );
+      },
+      createLabel: 'New Chat',
     });
-  }, [threads, activeThreadId, registerSessions, setActiveThread]);
+  }, [threads, activeThreadId, registerSessions, setActiveThread, createNewChat]);
 
   const [popoverSection, setPopoverSection] = useState<PopoverSection>('providers');
   const [popoverVisible, setPopoverVisible] = useState(false);
@@ -591,6 +598,27 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={bottomBarHeight + 44}
     >
+      {/* Chat header bar: shows active chat title + New Chat button */}
+      <View style={styles.chatHeader}>
+        <Text style={styles.chatHeaderTitle} numberOfLines={1}>
+          {threads.find((t) => t.threadId === activeThreadId)?.title ?? 'AI Chat'}
+        </Text>
+        <Pressable
+          style={styles.newChatBtn}
+          onPress={() =>
+            createNewChat().catch((err) =>
+              console.error('[AI] createNewChat error:', err),
+            )
+          }
+          accessibilityLabel="New Chat"
+          accessibilityRole="button"
+          hitSlop={8}
+        >
+          <PenLine size={16} color={colors.fg.secondary} />
+          <Text style={styles.newChatBtnLabel}>New Chat</Text>
+        </Pressable>
+      </View>
+
       {/* Messages */}
       {activeAIMessages.length === 0 ? (
         <View style={styles.emptyChat}>
@@ -792,6 +820,37 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg.base,
+  },
+  // Chat header bar — shows active chat title + New Chat button
+  chatHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 40,
+    paddingHorizontal: spacing[4],
+    backgroundColor: colors.bg.raised,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.divider,
+    gap: spacing[2],
+  },
+  chatHeaderTitle: {
+    flex: 1,
+    fontSize: typography.fontSize.sm,
+    fontWeight: typography.fontWeight.medium,
+    color: colors.fg.secondary,
+  },
+  newChatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing[1],
+    paddingHorizontal: spacing[2],
+    paddingVertical: spacing[1],
+    borderRadius: radii.sm,
+    backgroundColor: colors.bg.active,
+  },
+  newChatBtnLabel: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: typography.fontWeight.medium,
+    color: colors.fg.secondary,
   },
   // Empty chat
   emptyChat: {
