@@ -6,10 +6,11 @@
 // Text parts render through Markdown. Tool parts render inline.
 // Reasoning parts show as collapsible "Thinking" blocks.
 
-import React, { memo, useState, useCallback } from 'react';
+import React, { memo, useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Sparkles, Brain, ChevronDown, ChevronRight } from 'lucide-react-native';
-import { colors, typography, spacing, radii } from '../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../theme';
+import type { Colors } from '../../../theme';
 import { Markdown } from './Markdown';
 import type { AIMessage, AIPart, TextPart, ReasoningPart, ToolCallPart, ToolResultPart } from './types';
 
@@ -22,11 +23,203 @@ interface MessageBubbleProps {
 }
 
 // ----------------------------------------------------------
+// Style factory
+// ----------------------------------------------------------
+
+function createStyles(colors: Colors) {
+  return StyleSheet.create({
+    // User message — right aligned
+    userRow: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[1],
+    },
+    userBubble: {
+      maxWidth: '80%',
+      backgroundColor: colors.bg.raised,
+      borderRadius: radii.lg,
+      borderBottomRightRadius: radii.sm,
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[3],
+    },
+    userText: {
+      fontSize: typography.fontSize.base,
+      fontWeight: typography.fontWeight.regular,
+      color: colors.fg.primary,
+      lineHeight: typography.fontSize.base * 1.45,
+    },
+
+    // Assistant message — left aligned, full width
+    assistantRow: {
+      flexDirection: 'row',
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[1],
+      gap: spacing[2],
+    },
+    assistantIcon: {
+      width: 24,
+      height: 24,
+      borderRadius: radii.full,
+      backgroundColor: colors.accent.subtle,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 2,
+    },
+    assistantContent: {
+      flex: 1,
+    },
+
+    // Streaming cursor
+    streamingCursor: {
+      flexDirection: 'row',
+      marginTop: 4,
+    },
+    cursor: {
+      width: 2,
+      height: 16,
+      backgroundColor: colors.accent.primary,
+      borderRadius: 1,
+      opacity: 0.7,
+    },
+
+    // Reasoning
+    reasoningContainer: {
+      backgroundColor: colors.bg.raised,
+      borderRadius: radii.md,
+      marginVertical: spacing[1],
+      overflow: 'hidden',
+    },
+    reasoningHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing[2],
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[2],
+    },
+    reasoningLabel: {
+      flex: 1,
+      fontSize: typography.fontSize.sm,
+      fontWeight: typography.fontWeight.medium,
+      color: colors.fg.muted,
+      fontStyle: 'italic',
+    },
+    reasoningBody: {
+      paddingHorizontal: spacing[3],
+      paddingBottom: spacing[3],
+    },
+    reasoningText: {
+      fontSize: typography.fontSize.sm,
+      color: colors.fg.tertiary,
+      lineHeight: typography.fontSize.sm * 1.5,
+      fontStyle: 'italic',
+    },
+
+    // Tool call pill
+    toolPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing[2],
+      backgroundColor: colors.bg.raised,
+      borderRadius: radii.md,
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[2],
+      marginVertical: 2,
+    },
+    toolPillDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+    },
+    toolPillName: {
+      fontSize: typography.fontSize.sm,
+      fontWeight: typography.fontWeight.medium,
+      color: colors.fg.secondary,
+      fontFamily: typography.fontFamily.mono,
+    },
+    toolPillCommand: {
+      flex: 1,
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.tertiary,
+      fontFamily: typography.fontFamily.mono,
+    },
+
+    // Tool result
+    toolResult: {
+      backgroundColor: colors.bg.input,
+      borderRadius: radii.sm,
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[2],
+      marginVertical: 2,
+    },
+    toolResultText: {
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.tertiary,
+      fontFamily: typography.fontFamily.mono,
+      lineHeight: typography.fontSize.xs * 1.5,
+    },
+    toolResultError: {
+      backgroundColor: colors.semantic.errorSubtle,
+      borderRadius: radii.sm,
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[2],
+      marginVertical: 2,
+    },
+    toolResultErrorText: {
+      fontSize: typography.fontSize.xs,
+      color: colors.semantic.error,
+      fontFamily: typography.fontFamily.mono,
+      lineHeight: typography.fontSize.xs * 1.5,
+    },
+
+    // Step
+    stepLabel: {
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.muted,
+      fontFamily: typography.fontFamily.mono,
+      marginVertical: 2,
+    },
+    stepFinish: {
+      flexDirection: 'row',
+      gap: spacing[2],
+      marginVertical: 2,
+    },
+    stepChip: {
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.muted,
+      fontFamily: typography.fontFamily.mono,
+      backgroundColor: colors.bg.raised,
+      borderRadius: radii.sm,
+      paddingHorizontal: spacing[2],
+      paddingVertical: 2,
+    },
+
+    // File change
+    fileChangePill: {
+      backgroundColor: colors.bg.raised,
+      borderRadius: radii.md,
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[2],
+      marginVertical: 2,
+      borderLeftWidth: 2,
+      borderLeftColor: colors.semantic.info,
+    },
+    fileChangeText: {
+      fontSize: typography.fontSize.sm,
+      color: colors.fg.secondary,
+      fontFamily: typography.fontFamily.mono,
+    },
+  });
+}
+
+type BubbleStyles = ReturnType<typeof createStyles>;
+
+// ----------------------------------------------------------
 // Part renderers
 // ----------------------------------------------------------
 
 /** Render a text part — user gets plain text, assistant gets Markdown */
-function TextPartView({ part, isUser }: { part: TextPart; isUser: boolean }) {
+function TextPartView({ part, isUser, styles }: { part: TextPart; isUser: boolean; styles: BubbleStyles }) {
   if (isUser) {
     return <Text style={styles.userText}>{part.text}</Text>;
   }
@@ -34,7 +227,7 @@ function TextPartView({ part, isUser }: { part: TextPart; isUser: boolean }) {
 }
 
 /** Collapsible reasoning/thinking block */
-const ReasoningPartView = memo(function ReasoningPartView({ part }: { part: ReasoningPart }) {
+const ReasoningPartView = memo(function ReasoningPartView({ part, styles, colors }: { part: ReasoningPart; styles: BubbleStyles; colors: Colors }) {
   const [expanded, setExpanded] = useState(false);
   const toggle = useCallback(() => setExpanded((v) => !v), []);
   const Chevron = expanded ? ChevronDown : ChevronRight;
@@ -56,7 +249,7 @@ const ReasoningPartView = memo(function ReasoningPartView({ part }: { part: Reas
 });
 
 /** Inline tool call pill — compact summary */
-function ToolCallPartView({ part }: { part: ToolCallPart }) {
+function ToolCallPartView({ part, styles, colors }: { part: ToolCallPart; styles: BubbleStyles; colors: Colors }) {
   const name = part.toolName || part.name || 'tool';
   const isCommand = name === 'Bash' || name === 'bash' || name === 'command';
   const command = isCommand && part.input ? String((part.input as any).command ?? '') : '';
@@ -84,7 +277,7 @@ function ToolCallPartView({ part }: { part: ToolCallPart }) {
 }
 
 /** Tool result — compact output preview */
-function ToolResultPartView({ part }: { part: ToolResultPart }) {
+function ToolResultPartView({ part, styles }: { part: ToolResultPart; styles: BubbleStyles }) {
   if (part.error) {
     return (
       <View style={styles.toolResultError}>
@@ -109,7 +302,7 @@ function ToolResultPartView({ part }: { part: ToolResultPart }) {
 }
 
 /** Step parts — just a subtle label */
-function StepView({ part }: { part: AIPart }) {
+function StepView({ part, styles }: { part: AIPart; styles: BubbleStyles }) {
   if (part.type === 'step-start') {
     const title = (part as any).title;
     return title ? (
@@ -134,16 +327,16 @@ function StepView({ part }: { part: AIPart }) {
 }
 
 /** Dispatch a part to its renderer */
-function MessagePartView({ part, isUser }: { part: AIPart; isUser: boolean }) {
+function MessagePartView({ part, isUser, styles, colors }: { part: AIPart; isUser: boolean; styles: BubbleStyles; colors: Colors }) {
   switch (part.type) {
     case 'text':
-      return <TextPartView part={part} isUser={isUser} />;
+      return <TextPartView part={part} isUser={isUser} styles={styles} />;
     case 'reasoning':
-      return <ReasoningPartView part={part} />;
+      return <ReasoningPartView part={part} styles={styles} colors={colors} />;
     case 'tool-call':
-      return <ToolCallPartView part={part} />;
+      return <ToolCallPartView part={part} styles={styles} colors={colors} />;
     case 'tool-result':
-      return <ToolResultPartView part={part} />;
+      return <ToolResultPartView part={part} styles={styles} />;
     case 'tool':
       // Legacy tool part — render as tool call pill
       return (
@@ -154,11 +347,13 @@ function MessagePartView({ part, isUser }: { part: AIPart; isUser: boolean }) {
             state: (part as any).state,
             input: (part as any).input,
           }}
+          styles={styles}
+          colors={colors}
         />
       );
     case 'step-start':
     case 'step-finish':
-      return <StepView part={part} />;
+      return <StepView part={part} styles={styles} />;
     case 'file-change':
       return (
         <View style={styles.fileChangePill}>
@@ -177,6 +372,8 @@ function MessagePartView({ part, isUser }: { part: AIPart; isUser: boolean }) {
 // ----------------------------------------------------------
 
 export const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const isUser = message.role === 'user';
   const parts = message.parts;
 
@@ -209,7 +406,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
       </View>
       <View style={styles.assistantContent}>
         {parts.map((part, i) => (
-          <MessagePartView key={`${part.type}-${(part as any).id ?? i}`} part={part} isUser={false} />
+          <MessagePartView key={`${part.type}-${(part as any).id ?? i}`} part={part} isUser={false} styles={styles} colors={colors} />
         ))}
         {message.streaming && (
           <View style={styles.streamingCursor}>
@@ -221,190 +418,4 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
   );
 });
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  // User message — right aligned
-  userRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[1],
-  },
-  userBubble: {
-    maxWidth: '80%',
-    backgroundColor: colors.bg.raised,
-    borderRadius: radii.lg,
-    borderBottomRightRadius: radii.sm,
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-  },
-  userText: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.regular,
-    color: colors.fg.primary,
-    lineHeight: typography.fontSize.base * 1.45,
-  },
-
-  // Assistant message — left aligned, full width
-  assistantRow: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[1],
-    gap: spacing[2],
-  },
-  assistantIcon: {
-    width: 24,
-    height: 24,
-    borderRadius: radii.full,
-    backgroundColor: colors.accent.subtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
-  },
-  assistantContent: {
-    flex: 1,
-  },
-
-  // Streaming cursor
-  streamingCursor: {
-    flexDirection: 'row',
-    marginTop: 4,
-  },
-  cursor: {
-    width: 2,
-    height: 16,
-    backgroundColor: colors.accent.primary,
-    borderRadius: 1,
-    opacity: 0.7,
-  },
-
-  // Reasoning
-  reasoningContainer: {
-    backgroundColor: colors.bg.raised,
-    borderRadius: radii.md,
-    marginVertical: spacing[1],
-    overflow: 'hidden',
-  },
-  reasoningHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-  },
-  reasoningLabel: {
-    flex: 1,
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.muted,
-    fontStyle: 'italic',
-  },
-  reasoningBody: {
-    paddingHorizontal: spacing[3],
-    paddingBottom: spacing[3],
-  },
-  reasoningText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.tertiary,
-    lineHeight: typography.fontSize.sm * 1.5,
-    fontStyle: 'italic',
-  },
-
-  // Tool call pill
-  toolPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    backgroundColor: colors.bg.raised,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    marginVertical: 2,
-  },
-  toolPillDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  toolPillName: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.secondary,
-    fontFamily: typography.fontFamily.mono,
-  },
-  toolPillCommand: {
-    flex: 1,
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.tertiary,
-    fontFamily: typography.fontFamily.mono,
-  },
-
-  // Tool result
-  toolResult: {
-    backgroundColor: colors.bg.input,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    marginVertical: 2,
-  },
-  toolResultText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.tertiary,
-    fontFamily: typography.fontFamily.mono,
-    lineHeight: typography.fontSize.xs * 1.5,
-  },
-  toolResultError: {
-    backgroundColor: colors.semantic.errorSubtle,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    marginVertical: 2,
-  },
-  toolResultErrorText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.semantic.error,
-    fontFamily: typography.fontFamily.mono,
-    lineHeight: typography.fontSize.xs * 1.5,
-  },
-
-  // Step
-  stepLabel: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-    fontFamily: typography.fontFamily.mono,
-    marginVertical: 2,
-  },
-  stepFinish: {
-    flexDirection: 'row',
-    gap: spacing[2],
-    marginVertical: 2,
-  },
-  stepChip: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-    fontFamily: typography.fontFamily.mono,
-    backgroundColor: colors.bg.raised,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing[2],
-    paddingVertical: 2,
-  },
-
-  // File change
-  fileChangePill: {
-    backgroundColor: colors.bg.raised,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    marginVertical: 2,
-    borderLeftWidth: 2,
-    borderLeftColor: colors.semantic.info,
-  },
-  fileChangeText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.secondary,
-    fontFamily: typography.fontFamily.mono,
-  },
-});
+// Styles live in createStyles(colors) factory — see above.

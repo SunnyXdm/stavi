@@ -2,6 +2,7 @@
 // handlers/server-config.ts — server.* RPC handlers
 // ============================================================
 
+import { hostname } from 'os';
 import type { ServerContext, RpcHandler } from '../context';
 
 export function createServerConfigHandlers(ctx: ServerContext): Record<string, RpcHandler> {
@@ -13,6 +14,7 @@ export function createServerConfigHandlers(ctx: ServerContext): Record<string, R
         cwd: ctx.workspaceRoot,
         providers: ctx.providerRegistry.getProviderInfos(),
         serverId: ctx.serverId,
+        hostname: hostname(),
       }));
     },
 

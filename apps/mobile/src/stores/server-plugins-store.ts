@@ -1,11 +1,10 @@
 // WHAT: Ref-counted per-server subscriptions for Processes, Ports, and Monitor plugins.
-// WHY:  ServerToolsSheet can be opened simultaneously from SessionsHomeScreen AND
-//       WorkspaceScreen for the same serverId. Both increment the count; the underlying
-//       WebSocket subscription tears down only when the count reaches zero.
+// WHY:  Multiple panels can be open simultaneously for the same serverId. Both increment
+//       the count; the underlying WebSocket subscription tears down only when count hits 0.
 // HOW:  Zustand runtime store (not persisted). subscribeProcesses/Ports/Monitor each
 //       return an unsubscribe fn. First subscriber triggers the real WS subscription;
 //       last unsubscriber tears it down.
-// SEE:  apps/mobile/src/components/ServerToolsSheet.tsx, apps/mobile/src/stores/connection.ts
+// SEE:  apps/mobile/src/plugins/extra/processes/index.tsx, apps/mobile/src/stores/connection.ts
 
 import { create } from 'zustand';
 import { useConnectionStore } from './connection';
@@ -77,6 +76,11 @@ interface ServerPluginsStoreActions {
 // ----------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------
+
+// Sentinels — frozen empty arrays returned by getProcesses/getPorts when no data.
+// Reusing the same reference prevents new-array-per-snapshot in useSyncExternalStore.
+const EMPTY_PROCESSES: ManagedProcess[] = Object.freeze([]) as unknown as ManagedProcess[];
+const EMPTY_PORTS: PortEntry[] = Object.freeze([]) as unknown as PortEntry[];
 
 function emptyServer(): PerServerPluginState {
   return {
@@ -327,8 +331,8 @@ export const useServerPluginsStore = create<ServerPluginsStoreState & ServerPlug
       };
     },
 
-    getProcesses: (serverId) => get().byServer[serverId]?.processes.list ?? [],
-    getPorts: (serverId) => get().byServer[serverId]?.ports.list ?? [],
+    getProcesses: (serverId) => get().byServer[serverId]?.processes.list ?? EMPTY_PROCESSES,
+    getPorts: (serverId) => get().byServer[serverId]?.ports.list ?? EMPTY_PORTS,
     getMonitorStats: (serverId) => get().byServer[serverId]?.monitor.stats ?? null,
   }),
 );

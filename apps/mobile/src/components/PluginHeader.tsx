@@ -1,21 +1,22 @@
 // ============================================================
 // PluginHeader — top bar showing active plugin name + instance tabs
 // ============================================================
-// Phase 8e: Hamburger menu button removed (sidebar is persistent, no drawer).
-// Shows active plugin name + multi-instance tabs + add-instance button.
-// The onOpenDrawer prop is kept as optional for backward compat during transition
-// but the hamburger icon is no longer rendered.
+// Phase 9: Bottom bar navigation replaces sidebar. onOpenDrawer is optional;
+// when provided (Phase 2 drawer), a hamburger will be wired. Currently unused.
+// onCreateInstance is optional — multi-instance creation is deferred to Phase 2.
 
 import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, FlatList } from 'react-native';
-import { Plus, X } from 'lucide-react-native';
+import { Plus, X, Menu } from 'lucide-react-native';
 import { usePluginRegistry } from '../stores/plugin-registry';
-import { colors, typography, spacing, radii } from '../theme';
+import { useTheme } from '../theme';
+import { typography, spacing, radii } from '../theme';
 import type { PluginInstance } from '@stavi/shared';
 
 interface PluginHeaderProps {
-  /** @deprecated Phase 8e — sidebar is persistent. No longer used. */
+  /** Optional — will render hamburger in Phase 2 when drawer is wired. */
   onOpenDrawer?: () => void;
+  /** Optional — multi-instance creation handled by Tabs modal in Phase 9. */
   onCreateInstance?: () => void;
   sessionId?: string;
 }
@@ -31,9 +32,50 @@ function instanceDisplayTitle(instance: PluginInstance, index: number): string {
 }
 
 export const PluginHeader = memo(function PluginHeader({
+  onOpenDrawer,
   onCreateInstance,
   sessionId,
 }: PluginHeaderProps) {
+  const { colors } = useTheme();
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      flexDirection: 'row', alignItems: 'center', height: 44,
+      backgroundColor: colors.bg.raised,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.divider,
+    },
+    titleContainer: { flex: 1, paddingHorizontal: spacing[4] },
+    title: {
+      fontSize: typography.fontSize.base,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.primary,
+    },
+    tabList: { flex: 1 },
+    tabScroll: { alignItems: 'center', paddingHorizontal: spacing[1], gap: spacing[1] },
+    tab: {
+      flexDirection: 'row', alignItems: 'center', gap: spacing[1],
+      paddingHorizontal: spacing[3], paddingVertical: spacing[1],
+      borderRadius: radii.sm, height: 28, maxWidth: 140,
+    },
+    tabActive: { backgroundColor: colors.bg.active },
+    tabText: {
+      flex: 1,
+      fontSize: typography.fontSize.xs,
+      fontWeight: typography.fontWeight.medium,
+      color: colors.fg.muted,
+    },
+    tabTextActive: { color: colors.fg.primary },
+    tabClose: { width: 14, height: 14, alignItems: 'center', justifyContent: 'center' },
+    addButton: {
+      width: 44, height: 44, alignItems: 'center', justifyContent: 'center',
+      borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.divider,
+    },
+    hamburger: {
+      width: 44, height: 44, alignItems: 'center', justifyContent: 'center',
+      borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.divider,
+    },
+  }), [colors]);
   const openTabs = usePluginRegistry((s) => s.getOpenTabs(sessionId));
   const activeTabId = usePluginRegistry((s) => s.getActiveTabId(sessionId));
   const definitions = usePluginRegistry((s) => s.definitions);
@@ -57,7 +99,7 @@ export const PluginHeader = memo(function PluginHeader({
     ? (definitions[activePluginId]?.allowMultipleInstances ?? false)
     : false;
 
-  const showTabs = allowMultipleInstances && pluginInstances.length >= 1;
+  const showTabs = allowMultipleInstances && pluginInstances.length > 1;
 
   const handleTabPress = useCallback(
     (instanceId: string) => {
@@ -109,6 +151,18 @@ export const PluginHeader = memo(function PluginHeader({
 
   return (
     <View style={styles.container}>
+      {/* Hamburger — only when drawer is wired */}
+      {onOpenDrawer && (
+        <Pressable
+          style={styles.hamburger}
+          onPress={onOpenDrawer}
+          hitSlop={8}
+          accessibilityLabel="Open drawer"
+        >
+          <Menu size={20} color={colors.fg.secondary} />
+        </Pressable>
+      )}
+
       {/* Content area — title or multi-instance tab strip */}
       {showTabs ? (
         <FlatList
@@ -138,70 +192,4 @@ export const PluginHeader = memo(function PluginHeader({
   );
 });
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 44,
-    backgroundColor: colors.bg.raised,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  titleContainer: {
-    flex: 1,
-    paddingHorizontal: spacing[4],
-  },
-  title: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-  },
-  tabList: {
-    flex: 1,
-  },
-  tabScroll: {
-    alignItems: 'center',
-    paddingHorizontal: spacing[1],
-    gap: spacing[1],
-  },
-  tab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[1],
-    borderRadius: radii.sm,
-    height: 28,
-    maxWidth: 140,
-  },
-  tabActive: {
-    backgroundColor: colors.bg.active,
-  },
-  tabText: {
-    flex: 1,
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.muted,
-  },
-  tabTextActive: {
-    color: colors.fg.primary,
-  },
-  tabClose: {
-    width: 14,
-    height: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addButton: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderLeftWidth: StyleSheet.hairlineWidth,
-    borderLeftColor: colors.divider,
-  },
-});
+// Styles are now created inside the component via useMemo (see PluginHeader body above).

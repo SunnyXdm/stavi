@@ -85,11 +85,16 @@ export function createSubscriptions(
   const emitTerminalEvent = (event: Record<string, unknown>) => {
     const eventThreadId = typeof event.threadId === 'string' ? event.threadId : undefined;
     const eventTerminalId = typeof event.terminalId === 'string' ? event.terminalId : undefined;
+    // Phase C1: events may be `raw` byte output (existing) or `cells` frames.
+    // Default mode is 'raw' for back-compat with xterm.js WebView clients.
+    const eventMode = typeof event.mode === 'string' ? event.mode : 'raw';
     for (const sub of terminalSubscriptions.values()) {
       // Subscriptions without a threadId filter receive nothing (no global broadcast).
       if (!sub.threadId) continue;
       if (sub.threadId !== eventThreadId) continue;
       if (sub.terminalId !== undefined && sub.terminalId !== eventTerminalId) continue;
+      const subMode = sub.mode ?? 'raw';
+      if (subMode !== eventMode) continue;
       sendJson(sub.ws, makeChunk(sub.requestId, [event]));
     }
   };

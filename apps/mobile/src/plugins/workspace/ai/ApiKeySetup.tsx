@@ -4,7 +4,7 @@
 // Shown when Claude provider is not authenticated.
 // User can paste their Anthropic API key.
 
-import React, { memo, useState, useCallback } from 'react';
+import React, { memo, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,7 +18,7 @@ import {
   Platform,
 } from 'react-native';
 import { X, Key, ExternalLink } from 'lucide-react-native';
-import { colors, typography, spacing, radii } from '../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../theme';
 
 // ----------------------------------------------------------
 // Types
@@ -39,6 +39,25 @@ export const ApiKeySetup = memo(function ApiKeySetup({
   onClose,
   onSave,
 }: ApiKeySetupProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    backdrop: { flex: 1, backgroundColor: colors.bg.scrim, justifyContent: 'flex-end' },
+    backdropPress: { flex: 1 },
+    sheet: { backgroundColor: colors.bg.base, borderTopLeftRadius: radii.xl, borderTopRightRadius: radii.xl },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing[4], paddingVertical: spacing[3], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+    headerLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing[2] },
+    headerTitle: { fontSize: typography.fontSize.lg, fontWeight: typography.fontWeight.semibold, color: colors.fg.primary },
+    content: { paddingHorizontal: spacing[4], paddingTop: spacing[4], paddingBottom: spacing[8], gap: spacing[4] },
+    description: { fontSize: typography.fontSize.sm, color: colors.fg.tertiary, lineHeight: typography.fontSize.sm * 1.5 },
+    keyInput: { backgroundColor: colors.bg.input, borderRadius: radii.md, paddingHorizontal: spacing[4], paddingVertical: spacing[3], fontSize: typography.fontSize.base, fontFamily: typography.fontFamily.mono, color: colors.fg.primary, borderWidth: 1, borderColor: colors.divider },
+    errorText: { fontSize: typography.fontSize.sm, color: colors.semantic.error, marginTop: -spacing[2] },
+    linkRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[2] },
+    linkText: { fontSize: typography.fontSize.sm, color: colors.accent.primary, fontWeight: typography.fontWeight.medium },
+    saveButton: { backgroundColor: colors.accent.primary, borderRadius: radii.md, paddingVertical: spacing[3], alignItems: 'center', justifyContent: 'center', minHeight: 44 },
+    saveButtonDisabled: { opacity: 0.5 },
+    saveButtonText: { fontSize: typography.fontSize.base, fontWeight: typography.fontWeight.semibold, color: colors.fg.onAccent },
+  }), [colors]);
+
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,94 +166,4 @@ export const ApiKeySetup = memo(function ApiKeySetup({
   );
 });
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: colors.bg.scrim,
-    justifyContent: 'flex-end',
-  },
-  backdropPress: {
-    flex: 1,
-  },
-  sheet: {
-    backgroundColor: colors.bg.base,
-    borderTopLeftRadius: radii.xl,
-    borderTopRightRadius: radii.xl,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-  },
-  content: {
-    paddingHorizontal: spacing[4],
-    paddingTop: spacing[4],
-    paddingBottom: spacing[8],
-    gap: spacing[4],
-  },
-  description: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.tertiary,
-    lineHeight: typography.fontSize.sm * 1.5,
-  },
-  keyInput: {
-    backgroundColor: colors.bg.input,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    fontSize: typography.fontSize.base,
-    fontFamily: typography.fontFamily.mono,
-    color: colors.fg.primary,
-    borderWidth: 1,
-    borderColor: colors.divider,
-  },
-  errorText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.semantic.error,
-    marginTop: -spacing[2],
-  },
-  linkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-  },
-  linkText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.accent.primary,
-    fontWeight: typography.fontWeight.medium,
-  },
-  saveButton: {
-    backgroundColor: colors.accent.primary,
-    borderRadius: radii.md,
-    paddingVertical: spacing[3],
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 44,
-  },
-  saveButtonDisabled: {
-    opacity: 0.5,
-  },
-  saveButtonText: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.onAccent,
-  },
-});
+// Styles computed dynamically via useMemo — see component body.

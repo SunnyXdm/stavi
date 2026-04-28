@@ -10,6 +10,11 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native';
 
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { useAppStateListener } from './hooks/useAppStateListener';
+import { ThemeProvider, useTheme } from './theme';
+import type { RootStackParamList } from './navigation/types';
+
 // Register all plugins (side-effect import)
 import './plugins/load';
 
@@ -19,17 +24,20 @@ import { SessionsHomeScreen } from './navigation/SessionsHomeScreen';
 import { SettingsScreen } from './navigation/SettingsScreen';
 import { PairServerScreen } from './navigation/PairServerScreen';
 
-import { colors, typography } from './theme';
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
-const Stack = createNativeStackNavigator();
+// AppInner reads the active theme so NavigationContainer gets the right colors.
+// Kept separate from App so it renders inside ThemeProvider.
+function AppInner() {
+  useAppStateListener();
+  const { colors, typography, isDark } = useTheme();
 
-export default function App() {
   return (
-    <GestureHandlerRootView style={styles.root}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg.base }}>
       <SafeAreaProvider>
         <NavigationContainer
           theme={{
-            dark: true,
+            dark: isDark,
             colors: {
               primary: colors.accent.primary,
               background: colors.bg.base,
@@ -68,9 +76,18 @@ export default function App() {
   );
 }
 
+export default function App() {
+  return (
+    <ErrorBoundary label="App">
+      <ThemeProvider>
+        <AppInner />
+      </ThemeProvider>
+    </ErrorBoundary>
+  );
+}
+
+// Minimal fallback style — used only if ErrorBoundary itself renders before ThemeProvider
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
+  root: { flex: 1 },
 });
+void styles; // suppress unused warning

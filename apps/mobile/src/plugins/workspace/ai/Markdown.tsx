@@ -5,11 +5,12 @@
 // Supports code blocks with copy button, inline code, headings,
 // blockquotes, lists, tables, and links.
 
-import React, { memo, useState, useCallback } from 'react';
+import React, { memo, useState, useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import RNMarkdown from 'react-native-markdown-display';
 import { Copy, Check } from 'lucide-react-native';
-import { colors, typography, spacing, radii } from '../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../theme';
+import type { Colors } from '../../../theme';
 
 // ----------------------------------------------------------
 // Constants
@@ -28,9 +29,17 @@ interface CodeBlockProps {
   content: string;
   language?: string;
   compact?: boolean;
+  colors: Colors;
 }
 
-const CodeBlock = memo(function CodeBlock({ content, language, compact }: CodeBlockProps) {
+const CodeBlock = memo(function CodeBlock({ content, language, compact, colors }: CodeBlockProps) {
+  const codeStyles = useMemo(() => StyleSheet.create({
+    codeBlock: { backgroundColor: colors.bg.elevated, borderRadius: radii.md, marginVertical: spacing[2], overflow: 'hidden' },
+    codeBlockHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing[3], paddingVertical: spacing[1], backgroundColor: colors.bg.overlay, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+    codeBlockLang: { fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.mono, color: colors.fg.muted, textTransform: 'lowercase' },
+    copyButton: { padding: 4 },
+    codeBlockText: { fontFamily: typography.fontFamily.mono, color: colors.fg.secondary, paddingHorizontal: spacing[3], paddingVertical: spacing[3], lineHeight: BASE_FONT_SIZE * 1.6 },
+  }), [colors]);
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
@@ -43,15 +52,15 @@ const CodeBlock = memo(function CodeBlock({ content, language, compact }: CodeBl
   const copyColor = copied ? colors.semantic.success : colors.fg.muted;
 
   return (
-    <View style={styles.codeBlock}>
+    <View style={codeStyles.codeBlock}>
       {/* Header row */}
-      <View style={styles.codeBlockHeader}>
+      <View style={codeStyles.codeBlockHeader}>
         {language ? (
-          <Text style={styles.codeBlockLang}>{language}</Text>
+          <Text style={codeStyles.codeBlockLang}>{language}</Text>
         ) : (
           <View />
         )}
-        <Pressable onPress={handleCopy} hitSlop={8} style={styles.copyButton}>
+        <Pressable onPress={handleCopy} hitSlop={8} style={codeStyles.copyButton}>
           <CopyIcon size={13} color={copyColor} />
         </Pressable>
       </View>
@@ -59,7 +68,7 @@ const CodeBlock = memo(function CodeBlock({ content, language, compact }: CodeBl
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         <Text
           style={[
-            styles.codeBlockText,
+            codeStyles.codeBlockText,
             { fontSize: compact ? COMPACT_FONT_SIZE - 1 : BASE_FONT_SIZE - 1 },
           ]}
           selectable
@@ -75,7 +84,7 @@ const CodeBlock = memo(function CodeBlock({ content, language, compact }: CodeBl
 // Custom rules
 // ----------------------------------------------------------
 
-function buildRules(compact: boolean) {
+function buildRules(compact: boolean, colors: Colors) {
   return {
     fence: (
       node: any,
@@ -85,7 +94,7 @@ function buildRules(compact: boolean) {
     ) => {
       const content = node.content?.trim() ?? '';
       const lang = node.info?.trim() ?? undefined;
-      return <CodeBlock key={node.key} content={content} language={lang} compact={compact} />;
+      return <CodeBlock key={node.key} content={content} language={lang} compact={compact} colors={colors} />;
     },
     code_block: (
       node: any,
@@ -94,7 +103,7 @@ function buildRules(compact: boolean) {
       _styles: any,
     ) => {
       const content = node.content?.trim() ?? '';
-      return <CodeBlock key={node.key} content={content} compact={compact} />;
+      return <CodeBlock key={node.key} content={content} compact={compact} colors={colors} />;
     },
   };
 }
@@ -103,7 +112,7 @@ function buildRules(compact: boolean) {
 // Style map
 // ----------------------------------------------------------
 
-function buildMarkdownStyles(compact: boolean) {
+function buildMarkdownStyles(compact: boolean, colors: Colors) {
   const fontSize = compact ? COMPACT_FONT_SIZE : BASE_FONT_SIZE;
   const headingScale = compact ? 0.9 : 1;
 
@@ -300,8 +309,9 @@ interface MarkdownProps {
 }
 
 export const Markdown = memo(function Markdown({ children, compact = false }: MarkdownProps) {
-  const mdStyles = buildMarkdownStyles(compact);
-  const rules = buildRules(compact);
+  const { colors } = useTheme();
+  const mdStyles = useMemo(() => buildMarkdownStyles(compact, colors), [compact, colors]);
+  const rules = useMemo(() => buildRules(compact, colors), [compact, colors]);
 
   return (
     <RNMarkdown style={mdStyles} rules={rules}>
@@ -310,41 +320,4 @@ export const Markdown = memo(function Markdown({ children, compact = false }: Ma
   );
 });
 
-// ----------------------------------------------------------
-// Static styles (for CodeBlock)
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  codeBlock: {
-    backgroundColor: colors.bg.elevated,
-    borderRadius: radii.md,
-    marginVertical: spacing[2],
-    overflow: 'hidden',
-  },
-  codeBlockHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[1],
-    backgroundColor: colors.bg.overlay,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  codeBlockLang: {
-    fontSize: typography.fontSize.xs,
-    fontFamily: typography.fontFamily.mono,
-    color: colors.fg.muted,
-    textTransform: 'lowercase',
-  },
-  copyButton: {
-    padding: 4,
-  },
-  codeBlockText: {
-    fontFamily: typography.fontFamily.mono,
-    color: colors.fg.secondary,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[3],
-    lineHeight: BASE_FONT_SIZE * 1.6,
-  },
-});
+// Styles live in CodeBlock via useMemo — see component body.

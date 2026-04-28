@@ -19,7 +19,7 @@ import {
 } from 'node:fs';
 import { dirname, join, normalize, resolve } from 'node:path';
 import type { ServerContext, RpcHandler } from '../context';
-import { execFileAsync, resolveWorkspacePath, searchEntries } from '../utils';
+import { execFileAsync, searchEntries } from '../utils';
 import { createFsBatchHandlers } from './fs-batch';
 
 const HIDDEN_DIRS = new Set([
@@ -84,7 +84,8 @@ export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler>
     // fs.read — read a file
     // -------------------------------------------------------
     'fs.read': async (ws, id, payload) => {
-      const targetPath = resolveWorkspacePath(workspaceRoot, String(payload.path ?? ''));
+      const targetPath = guardedPath(String(payload.path ?? ''));
+      if (!targetPath) { sendJson(ws, makeFailure(id, 'Path is outside allowed workspace roots')); return; }
       const content = readFileSync(targetPath, 'utf-8');
       sendJson(ws, makeSuccess(id, { content }));
     },
@@ -93,7 +94,8 @@ export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler>
     // fs.write — write a file (creates dirs as needed)
     // -------------------------------------------------------
     'fs.write': async (ws, id, payload) => {
-      const targetPath = resolveWorkspacePath(workspaceRoot, String(payload.path ?? ''));
+      const targetPath = guardedPath(String(payload.path ?? ''));
+      if (!targetPath) { sendJson(ws, makeFailure(id, 'Path is outside allowed workspace roots')); return; }
       ensureDirFor(targetPath);
       writeFileSync(targetPath, String(payload.content ?? ''), 'utf-8');
       sendJson(ws, makeSuccess(id, { ok: true }));
@@ -101,7 +103,8 @@ export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler>
 
     // Alias used by some older plugin code
     'projects.writeFile': async (ws, id, payload) => {
-      const targetPath = resolveWorkspacePath(workspaceRoot, String(payload.path ?? ''));
+      const targetPath = guardedPath(String(payload.path ?? ''));
+      if (!targetPath) { sendJson(ws, makeFailure(id, 'Path is outside allowed workspace roots')); return; }
       ensureDirFor(targetPath);
       writeFileSync(targetPath, String(payload.content ?? ''), 'utf-8');
       sendJson(ws, makeSuccess(id, { ok: true }));
@@ -206,7 +209,8 @@ export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler>
     'fs.list': async (ws, id, payload) => {
       const relPath = String(payload.path ?? '.');
       const showHidden = Boolean(payload.showHidden ?? false);
-      const targetPath = resolveWorkspacePath(workspaceRoot, relPath);
+      const targetPath = guardedPath(relPath);
+      if (!targetPath) { sendJson(ws, makeFailure(id, 'Path is outside allowed workspace roots')); return; }
 
       if (!existsSync(targetPath)) {
         sendJson(ws, makeFailure(id, `Directory not found: ${relPath}`));
@@ -259,9 +263,9 @@ export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler>
     'fs.search': async (ws, id, payload) => {
       const query = String(payload.query ?? payload.path ?? '*');
       const limit = Number(payload.limit ?? 200);
-      const exactPath = resolveWorkspacePath(workspaceRoot, query);
+      const exactPath = guardedPath(query);
       let content: string | undefined;
-      if (existsSync(exactPath)) {
+      if (exactPath && existsSync(exactPath)) {
         try { content = readFileSync(exactPath, 'utf-8'); } catch { /* ignore */ }
       }
       const entries = await searchEntries(workspaceRoot, query, limit);
@@ -272,9 +276,9 @@ export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler>
     'projects.searchEntries': async (ws, id, payload) => {
       const query = String(payload.query ?? payload.path ?? '*');
       const limit = Number(payload.limit ?? 200);
-      const exactPath = resolveWorkspacePath(workspaceRoot, query);
+      const exactPath = guardedPath(query);
       let content: string | undefined;
-      if (existsSync(exactPath)) {
+      if (exactPath && existsSync(exactPath)) {
         try { content = readFileSync(exactPath, 'utf-8'); } catch { /* ignore */ }
       }
       const entries = await searchEntries(workspaceRoot, query, limit);

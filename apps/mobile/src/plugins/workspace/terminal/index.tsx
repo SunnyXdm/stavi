@@ -9,24 +9,47 @@
 //   User input → onTerminalInput → terminal.write RPC → server
 //
 // Sessions are registered with SessionRegistry for PluginHeader
-// and DrawerContent to display per-instance tabs.
+// and WorkspaceSidebarChats to display per-instance tabs.
 
-import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { View, StyleSheet } from 'react-native';
+import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import { Platform, Text, View, StyleSheet } from 'react-native';
 import { SquareTerminal, AlertTriangle } from 'lucide-react-native';
 import type {
   WorkspacePluginDefinition,
   WorkspacePluginPanelProps,
 } from '@stavi/shared';
 import type { TerminalPluginAPI } from '@stavi/shared';
-import { colors, spacing } from '../../../theme';
+import { useTheme, spacing, typography } from '../../../theme';
 import { EmptyView, ErrorView, LoadingView } from '../../../components/StateViews';
 import NativeTerminal, { type NativeTerminalRef } from '../../../components/NativeTerminal';
 import { TerminalToolbar } from '../../../components/TerminalToolbar';
 import { useConnectionStore } from '../../../stores/connection';
 import { useSessionRegistry } from '../../../stores/session-registry';
+import { usePluginSetting } from '../../../stores/plugin-settings-store';
 import { eventBus } from '../../../services/event-bus';
 import { logEvent } from '../../../services/telemetry';
+import { SkiaTerminalView } from './components/SkiaTerminalView';
+
+// ----------------------------------------------------------
+// Backend selection
+// ----------------------------------------------------------
+//
+// 'webview' → xterm.js in a WebView (battle-tested, cross-platform)
+// 'skia'    → GPU-rendered via @shopify/react-native-skia (iOS-only this release)
+// 'native'  → Termux/SwiftTerm (not yet wired — falls through to 'webview')
+//
+// Android + 'skia' is not supported yet; we fall back to 'webview' and show a
+// dismissible-style notice banner above the terminal.
+
+type TerminalBackend = 'webview' | 'skia' | 'native';
+
+function resolveEffectiveBackend(choice: TerminalBackend): 'webview' | 'skia' {
+  // 'native' is declared in the schema but not implemented — fall through.
+  if (choice === 'native') return 'webview';
+  // Skia is iOS-only in this release.
+  if (choice === 'skia' && Platform.OS !== 'ios') return 'webview';
+  return choice;
+}
 
 // ----------------------------------------------------------
 // Types
@@ -55,6 +78,31 @@ let serverCwd = '.';
 // ----------------------------------------------------------
 
 function TerminalPanel({ session }: WorkspacePluginPanelProps) {
+  const { colors } = useTheme();
+  const backendChoice = usePluginSetting<TerminalBackend>('terminal', 'backend');
+  const effectiveBackend = resolveEffectiveBackend(backendChoice ?? 'webview');
+  // Show a small notice when the user picked 'skia' on Android — we fell
+  // back to WebView because Skia is iOS-only in this release.
+  const showAndroidSkiaNotice =
+    backendChoice === 'skia' && Platform.OS !== 'ios';
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.bg.base },
+    terminalArea: { flex: 1, position: 'relative' },
+    terminalWrapper: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+    terminal: { flex: 1 },
+    notice: {
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[2],
+      backgroundColor: colors.bg.elevated,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.divider,
+    },
+    noticeText: {
+      color: colors.fg.secondary,
+      fontSize: typography.fontSize.xs,
+      fontFamily: typography.fontFamily.sans,
+    },
+  }), [colors]);
   const serverId = session.serverId;
   const defaultCwd = session.folder;
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
@@ -287,7 +335,7 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
     return unsub;
   }, [session.id, connectionState, createSession]);
 
-  // Register sessions with SessionRegistry for PluginHeader / DrawerContent
+  // Register sessions with SessionRegistry for PluginHeader / WorkspaceSidebarChats
   useEffect(() => {
     registerSessions('terminal', {
       sessions: sessions.map((s) => ({
@@ -327,8 +375,16 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
 
   return (
     <View style={styles.container}>
-      {/* Terminal views — opacity swap (never unmount) */}
-      <View style={styles.terminalArea}>
+      {showAndroidSkiaNotice && (
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>
+            Skia backend is iOS-only in this release. Using WebView on Android.
+          </Text>
+        </View>
+      )}
+      {/* Terminal views — opacity swap (never unmount).
+          Key the area on effectiveBackend so switching remounts cleanly. */}
+      <View key={effectiveBackend} style={styles.terminalArea}>
         {sessions.map((session) => {
           const key = `${session.threadId}:${session.terminalId}`;
           const isVisible = key === activeSessionId;
@@ -401,25 +457,33 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
                 },
               ]}
             >
-              <NativeTerminal
-                ref={getTerminalRef(key)}
-                style={styles.terminal}
-                onTerminalInput={(data) => handleInput(session.threadId, data)}
-                onTerminalResize={(cols, rows) => handleResize(session.threadId, cols, rows)}
-                onTerminalReady={(cols, rows) => {
-                  // Resize server PTY to match actual terminal dimensions first
-                  handleResize(session.threadId, cols, rows);
-                  // Now flush any buffered history — terminal is sized and ready
-                  const history = pendingHistory.get(key);
-                  if (history) {
-                    pendingHistory.delete(key);
-                    getTerminalRef(key).current?.write(history);
-                  }
-                }}
-                onTerminalBell={() => {
-                  // Could trigger haptic feedback here
-                }}
-              />
+              {effectiveBackend === 'skia' ? (
+                <SkiaTerminalView
+                  sessionId={session.threadId}
+                  threadId={session.threadId}
+                  terminalId={session.terminalId}
+                />
+              ) : (
+                <NativeTerminal
+                  ref={getTerminalRef(key)}
+                  style={styles.terminal}
+                  onTerminalInput={(data) => handleInput(session.threadId, data)}
+                  onTerminalResize={(cols, rows) => handleResize(session.threadId, cols, rows)}
+                  onTerminalReady={(cols, rows) => {
+                    // Resize server PTY to match actual terminal dimensions first
+                    handleResize(session.threadId, cols, rows);
+                    // Now flush any buffered history — terminal is sized and ready
+                    const history = pendingHistory.get(key);
+                    if (history) {
+                      pendingHistory.delete(key);
+                      getTerminalRef(key).current?.write(history);
+                    }
+                  }}
+                  onTerminalBell={() => {
+                    // Could trigger haptic feedback here
+                  }}
+                />
+              )}
             </View>
           );
         })}
@@ -503,30 +567,30 @@ export const terminalPlugin: WorkspacePluginDefinition = {
   navOrder: 2,
   navLabel: 'Term',
   api: terminalApi,
+  settings: {
+    sections: [
+      {
+        title: 'Rendering',
+        fields: [
+          {
+            key: 'backend',
+            type: 'select',
+            label: 'Rendering backend',
+            description: 'Which renderer to use for terminal output',
+            // Platform-aware default: Skia on iOS (GPU, 60fps), WebView on
+            // Android (Skia backend is iOS-only in this release).
+            default: Platform.OS === 'ios' ? 'skia' : 'webview',
+            options: [
+              { value: 'webview', label: 'WebView (xterm.js)', description: 'Battle-tested, default on Android' },
+              { value: 'skia', label: 'Skia GPU (Beta)', description: 'iOS only, 60fps native rendering' },
+              { value: 'native', label: 'Native (beta, not yet available)', description: 'SwiftTerm / Termux — falls back to WebView' },
+            ],
+          },
+          { key: 'fontSize', type: 'number', label: 'Font Size', default: 13, min: 8, max: 24, step: 1 },
+        ],
+      },
+    ],
+  },
 };
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-  // Terminal
-  terminalArea: {
-    flex: 1,
-    position: 'relative',
-  },
-  terminalWrapper: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
-  terminal: {
-    flex: 1,
-  },
-});
+// Styles live in TerminalPanel via useMemo — see component body.

@@ -4,11 +4,13 @@
 // Shows when the AI needs permission to run a command or
 // make changes. Three buttons: Deny, Always Allow, Approve.
 
-import React, { memo, useCallback, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
+import React, { memo, useCallback, useState, useMemo } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { ShieldAlert, Terminal, FileText } from 'lucide-react-native';
-import { colors, typography, spacing, radii } from '../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../theme';
 import type { ApprovalRequest } from './useOrchestration';
+import { AnimatedPressable } from '../../../components/AnimatedPressable';
+import { useHaptics } from '../../../hooks/useHaptics';
 
 interface ApprovalCardProps {
   approval: ApprovalRequest;
@@ -20,10 +22,55 @@ interface ApprovalCardProps {
 }
 
 export const ApprovalCard = memo(function ApprovalCard({ approval, onRespond }: ApprovalCardProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      marginHorizontal: spacing[4],
+      marginVertical: spacing[2],
+      backgroundColor: colors.bg.raised,
+      borderRadius: radii.lg,
+      borderLeftWidth: 3,
+      borderLeftColor: colors.semantic.warning,
+      overflow: 'hidden',
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing[2],
+      paddingHorizontal: spacing[4],
+      paddingTop: spacing[3],
+      paddingBottom: spacing[1],
+    },
+    headerText: {
+      fontSize: typography.fontSize.sm,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.semantic.warning,
+      textTransform: 'uppercase',
+      letterSpacing: typography.letterSpacing.wide,
+    },
+    content: { paddingHorizontal: spacing[4], paddingVertical: spacing[2] },
+    toolRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], marginBottom: spacing[1] },
+    toolName: { fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.medium, color: colors.fg.secondary },
+    detailBox: { backgroundColor: colors.bg.input, borderRadius: radii.sm, paddingHorizontal: spacing[3], paddingVertical: spacing[2], marginTop: spacing[1] },
+    detailText: { fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.mono, color: colors.fg.secondary, lineHeight: typography.fontSize.xs * typography.lineHeight.normal },
+    actions: { flexDirection: 'row', gap: spacing[2], paddingHorizontal: spacing[4], paddingBottom: spacing[3], paddingTop: spacing[2] },
+    button: { flex: 1, borderRadius: radii.md, paddingVertical: spacing[2], alignItems: 'center', justifyContent: 'center', minHeight: 36 },
+    buttonPressed: { opacity: 0.8 },
+    denyButton: { backgroundColor: colors.semantic.errorSubtle },
+    denyText: { fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.medium, color: colors.semantic.error },
+    alwaysAllowButton: { backgroundColor: colors.bg.overlay },
+    alwaysAllowText: { fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.medium, color: colors.fg.secondary },
+    approveButton: { backgroundColor: colors.accent.primary },
+    approveButtonPressed: { backgroundColor: colors.accent.secondary },
+    approveText: { fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.semibold, color: colors.fg.onAccent },
+  }), [colors]);
   const [responding, setResponding] = useState<string | null>(null);
+  const haptics = useHaptics();
 
   const handleRespond = useCallback(
     async (decision: 'accept' | 'reject' | 'always-allow') => {
+      if (decision === 'accept' || decision === 'always-allow') haptics.success();
+      else haptics.warning();
       setResponding(decision);
       try {
         await onRespond(approval.threadId, approval.requestId, decision);
@@ -33,7 +80,7 @@ export const ApprovalCard = memo(function ApprovalCard({ approval, onRespond }: 
         setResponding(null);
       }
     },
-    [approval.threadId, approval.requestId, onRespond],
+      [approval.threadId, approval.requestId, onRespond, haptics],
   );
 
   if (!approval.pending) return null;
@@ -84,8 +131,8 @@ export const ApprovalCard = memo(function ApprovalCard({ approval, onRespond }: 
 
       {/* Action buttons */}
       <View style={styles.actions}>
-        <Pressable
-          style={({ pressed }) => [styles.button, styles.denyButton, pressed && styles.buttonPressed]}
+        <AnimatedPressable
+          style={[styles.button, styles.denyButton]}
           onPress={() => handleRespond('reject')}
           disabled={responding !== null}
         >
@@ -94,14 +141,10 @@ export const ApprovalCard = memo(function ApprovalCard({ approval, onRespond }: 
           ) : (
             <Text style={styles.denyText}>Deny</Text>
           )}
-        </Pressable>
+        </AnimatedPressable>
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.button,
-            styles.alwaysAllowButton,
-            pressed && styles.buttonPressed,
-          ]}
+        <AnimatedPressable
+          style={[styles.button, styles.alwaysAllowButton]}
           onPress={() => handleRespond('always-allow')}
           disabled={responding !== null}
         >
@@ -110,14 +153,10 @@ export const ApprovalCard = memo(function ApprovalCard({ approval, onRespond }: 
           ) : (
             <Text style={styles.alwaysAllowText}>Always Allow</Text>
           )}
-        </Pressable>
+        </AnimatedPressable>
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.button,
-            styles.approveButton,
-            pressed && styles.approveButtonPressed,
-          ]}
+        <AnimatedPressable
+          style={[styles.button, styles.approveButton]}
           onPress={() => handleRespond('accept')}
           disabled={responding !== null}
         >
@@ -126,108 +165,10 @@ export const ApprovalCard = memo(function ApprovalCard({ approval, onRespond }: 
           ) : (
             <Text style={styles.approveText}>Approve</Text>
           )}
-        </Pressable>
+        </AnimatedPressable>
       </View>
     </View>
   );
 });
 
-const styles = StyleSheet.create({
-  container: {
-    marginHorizontal: spacing[4],
-    marginVertical: spacing[2],
-    backgroundColor: colors.bg.raised,
-    borderRadius: radii.lg,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.semantic.warning,
-    overflow: 'hidden',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    paddingHorizontal: spacing[4],
-    paddingTop: spacing[3],
-    paddingBottom: spacing[1],
-  },
-  headerText: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.semantic.warning,
-    textTransform: 'uppercase',
-    letterSpacing: typography.letterSpacing.wide,
-  },
-  content: {
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[2],
-  },
-  toolRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    marginBottom: spacing[1],
-  },
-  toolName: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.secondary,
-  },
-  detailBox: {
-    backgroundColor: colors.bg.input,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    marginTop: spacing[1],
-  },
-  detailText: {
-    fontSize: typography.fontSize.xs,
-    fontFamily: typography.fontFamily.mono,
-    color: colors.fg.secondary,
-    lineHeight: typography.fontSize.xs * typography.lineHeight.normal,
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: spacing[2],
-    paddingHorizontal: spacing[4],
-    paddingBottom: spacing[3],
-    paddingTop: spacing[2],
-  },
-  button: {
-    flex: 1,
-    borderRadius: radii.md,
-    paddingVertical: spacing[2],
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 36,
-  },
-  buttonPressed: {
-    opacity: 0.8,
-  },
-  denyButton: {
-    backgroundColor: colors.semantic.errorSubtle,
-  },
-  denyText: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.semantic.error,
-  },
-  alwaysAllowButton: {
-    backgroundColor: colors.bg.overlay,
-  },
-  alwaysAllowText: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.secondary,
-  },
-  approveButton: {
-    backgroundColor: colors.accent.primary,
-  },
-  approveButtonPressed: {
-    backgroundColor: colors.accent.secondary,
-  },
-  approveText: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.onAccent,
-  },
-});
+// Styles live in ApprovalCard via useMemo — see component body.

@@ -190,6 +190,19 @@ export class CodexAdapter implements ProviderAdapter {
   readonly provider = 'codex' as const;
 
   private sessions = new Map<string, CodexSession>();
+  // Callback wired at boot (server.ts) to persist the Codex providerThreadId.
+  // The codex app-server subprocess is transient — persisting providerThreadId
+  // is for observability only.  On server restart, startSession() always spawns
+  // a fresh subprocess and issues a new thread/start; there is no resume API in
+  // the codex app-server protocol.  Therefore _onCursorPersist is called when
+  // providerThreadId is first assigned, but _getCursor is intentionally NOT used
+  // to reconstruct sessions on boot.
+  private _onCursorPersist: ((threadId: string, providerThreadId: string | null) => void) | null = null;
+
+  /** Wire cursor persistence (Codex — observability only, no restart resume). */
+  onCursorPersist(persist: (threadId: string, providerThreadId: string | null) => void): void {
+    this._onCursorPersist = persist;
+  }
   private binaryPath: string | null = null;
   private ready = false;
   private dynamicModels: ModelInfo[] = [];
@@ -472,6 +485,23 @@ export class CodexAdapter implements ProviderAdapter {
     if (!session) return;
 
     session.status = 'closed';
+
+    // Reject all pending approvals so they don't hang waiting for user input
+    for (const [, pending] of session.pendingApprovals) {
+      this.sendRaw(session, JSON.stringify({
+        id: pending.jsonRpcId,
+        result: { decision: 'decline' },
+      }));
+    }
+    session.pendingApprovals.clear();
+
+    // Wake the drain loop if it's blocked, so sendTurn can exit cleanly
+    if (session.eventResolve) {
+      const resolve = session.eventResolve;
+      session.eventResolve = null;
+      resolve({ value: turnError(threadId, 'Session stopped'), done: false });
+    }
+
     session.process?.kill('SIGTERM');
     this.sessions.delete(threadId);
   }
@@ -610,7 +640,11 @@ export class CodexAdapter implements ProviderAdapter {
 
       case 'turn/completed': {
         const status = params.turn?.status ?? 'completed';
-        if (status === 'completed' || status === 'error') {
+        if (status === 'error') {
+          // Codex reported the turn as failed — emit turnError, not turnComplete
+          const errMsg = params.turn?.error ?? params.error ?? 'Turn completed with error status';
+          this.emitEvent(session, turnError(threadId, String(errMsg), turnId));
+        } else {
           this.emitEvent(session, turnComplete(threadId, turnId));
         }
         // Do NOT set session.status here — the drain loop in sendTurn owns
@@ -687,6 +721,9 @@ export class CodexAdapter implements ProviderAdapter {
       case 'thread/started':
         if (params.thread?.id) {
           session.providerThreadId = params.thread.id;
+          // Persist for observability.  NOT used for restart recovery — see
+          // CodexAdapter class comment about transient subprocess lifecycle.
+          this._onCursorPersist?.(session.threadId, session.providerThreadId);
         }
         break;
 

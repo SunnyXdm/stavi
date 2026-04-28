@@ -17,7 +17,6 @@ import React, {
 } from 'react';
 import {
   Platform,
-  StyleSheet,
   type ViewStyle,
   type StyleProp,
 } from 'react-native';
@@ -28,6 +27,8 @@ import NativeTerminalViewComponent, {
   type NativeTerminalViewProps,
 } from '../specs/NativeTerminalViewNativeComponent';
 import { colors, typography } from '../theme';
+// colors used below for buildXtermHtml() only — terminal HTML is built once at module load,
+// so static import is intentional here. The StyleSheet uses inline styles instead.
 
 // ----------------------------------------------------------
 // Public types
@@ -87,7 +88,7 @@ const AndroidTerminal = forwardRef<NativeTerminalRef, NativeTerminalProps>(
     return (
       <NativeTerminalViewComponent
         ref={nativeRef}
-        style={[styles.nativeTerminal, style]}
+        style={[terminalStyle, style]}
         onTerminalInput={(event) => {
           onTerminalInput?.(event.nativeEvent.data);
         }}
@@ -252,7 +253,7 @@ const IOSXtermTerminal = forwardRef<NativeTerminalRef, NativeTerminalProps>(
     return (
       <WebView
         ref={webviewRef}
-        style={[styles.iosTerminal, style]}
+        style={[terminalStyle, style]}
         source={{ html: XTERM_HTML }}
         onMessage={handleMessage}
         originWhitelist={['*']}
@@ -279,12 +280,6 @@ const NativeTerminal = Platform.OS === 'android' ? AndroidTerminal : IOSXtermTer
 export default NativeTerminal;
 export type { NativeTerminalProps };
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  // bg.base must match the Kotlin TerminalView background color set in initSession
-  nativeTerminal: { flex: 1, backgroundColor: colors.bg.base },
-  iosTerminal:    { flex: 1, backgroundColor: colors.bg.base },
-});
+// bg.base must match the Kotlin TerminalView background color set in initSession.
+// Inline styles avoid a reactive StyleSheet since terminal color is baked into the HTML.
+const terminalStyle = { flex: 1, backgroundColor: colors.bg.base } as const;

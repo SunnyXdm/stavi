@@ -1,0 +1,15 @@
+-- Migration 0003 — Thread Resume Cursor
+-- Adds resume_cursor column to threads table (nullable JSON blob).
+--
+-- Claude shape:   {"provider":"claude","sessionId":"<claude-sdk-session-uuid>"}
+--   sessionId corresponds to the session_id returned by the claude-agent-sdk result
+--   message and passed as `resume:` on subsequent query() calls.
+--
+-- Codex shape:    {"provider":"codex","providerThreadId":"<codex-app-server-thread-id>"}
+--   providerThreadId is the transient IPC handle assigned by the codex app-server
+--   subprocess. Persisted for observability but NOT used to reconstruct sessions on
+--   restart — the codex subprocess dies with the server and a new thread/start must
+--   be issued. See CodexAdapter.startSession() for the restart path.
+--
+-- NULL = no cursor stored yet (new thread or cursor was invalidated).
+ALTER TABLE threads ADD COLUMN resume_cursor TEXT DEFAULT NULL;

@@ -6,7 +6,7 @@
 // SEE:  plugins/workspace/ai/ModelPopover.tsx (quick-popover for effort/mode),
 //       theme/provider-brands.ts (provider brand colors — NOT theme tokens)
 
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -22,7 +22,7 @@ import {
   Zap,
   Brain,
 } from 'lucide-react-native';
-import { colors, typography, spacing, radii } from '../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../theme';
 import { providerBrands } from '../../../theme/provider-brands';
 
 // ----------------------------------------------------------
@@ -103,6 +103,49 @@ export const ConfigSheet = memo(function ConfigSheet({
   selection,
   onSelect,
 }: ConfigSheetProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    backdrop: { flex: 1, backgroundColor: colors.bg.scrim, justifyContent: 'flex-end' },
+    backdropPress: { flex: 1 },
+    sheet: { backgroundColor: colors.bg.base, borderTopLeftRadius: radii.xl, borderTopRightRadius: radii.xl, maxHeight: '70%' },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing[4], paddingVertical: spacing[3], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+    headerTitle: { fontSize: typography.fontSize.lg, fontWeight: typography.fontWeight.semibold, color: colors.fg.primary },
+    content: { paddingHorizontal: spacing[4], paddingTop: spacing[3] },
+    providerSection: { marginBottom: spacing[4] },
+    providerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing[2] },
+    providerNameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[2] },
+    providerAccentDot: { width: 8, height: 8, borderRadius: 4 },
+    providerName: { fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.semibold, color: colors.fg.secondary, textTransform: 'uppercase', letterSpacing: 0.5 },
+    providerNameMuted: { color: colors.fg.muted },
+    comingSoonBadge: { paddingHorizontal: spacing[2], paddingVertical: 2, borderRadius: radii.sm, backgroundColor: colors.bg.active },
+    comingSoonText: { fontSize: typography.fontSize.xs, fontWeight: typography.fontWeight.semibold, color: colors.fg.muted, letterSpacing: 0.5 },
+    statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    statusDot: { width: 6, height: 6, borderRadius: 3 },
+    statusText: { fontSize: typography.fontSize.xs, color: colors.fg.muted },
+    setupButton: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+    setupButtonText: { fontSize: typography.fontSize.xs, fontWeight: typography.fontWeight.medium, color: colors.accent.primary },
+    modelList: { gap: spacing[1] },
+    modelRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing[3], paddingVertical: spacing[2], borderRadius: radii.md, backgroundColor: colors.bg.raised },
+    modelRowSelected: { backgroundColor: colors.accent.subtle, borderWidth: 1, borderColor: colors.accent.primary },
+    modelInfo: { flex: 1, gap: 2 },
+    modelName: { fontSize: typography.fontSize.base, fontWeight: typography.fontWeight.medium, color: colors.fg.primary },
+    modelNameSelected: { color: colors.accent.primary },
+    modelMeta: { fontSize: typography.fontSize.xs, color: colors.fg.muted },
+    settingSection: { marginBottom: spacing[4] },
+    settingLabel: { fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.semibold, color: colors.fg.secondary, marginBottom: spacing[2] },
+    settingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    settingInfo: { flexDirection: 'row', alignItems: 'center', gap: spacing[2] },
+    effortRow: { flexDirection: 'row', gap: spacing[2] },
+    effortChip: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: spacing[2], borderRadius: radii.md, backgroundColor: colors.bg.raised },
+    effortChipActive: { backgroundColor: colors.accent.subtle, borderWidth: 1, borderColor: colors.accent.primary },
+    effortLabel: { fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.medium, color: colors.fg.muted },
+    effortLabelActive: { color: colors.accent.primary },
+    toggle: { width: 44, height: 24, borderRadius: 12, backgroundColor: colors.bg.active, padding: 2, justifyContent: 'center' },
+    toggleActive: { backgroundColor: colors.accent.primary },
+    toggleKnob: { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.fg.muted },
+    toggleKnobActive: { backgroundColor: colors.fg.onAccent, alignSelf: 'flex-end' },
+  }), [colors]);
+
   const handleModelSelect = useCallback(
     (provider: string, model: ModelInfo) => {
       onSelect({
@@ -289,215 +332,4 @@ export const ConfigSheet = memo(function ConfigSheet({
   );
 });
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: colors.bg.scrim,
-    justifyContent: 'flex-end',
-  },
-  backdropPress: {
-    flex: 1,
-  },
-  sheet: {
-    backgroundColor: colors.bg.base,
-    borderTopLeftRadius: radii.xl,
-    borderTopRightRadius: radii.xl,
-    maxHeight: '70%',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-  },
-  content: {
-    paddingHorizontal: spacing[4],
-    paddingTop: spacing[3],
-  },
-
-  // Provider section
-  providerSection: {
-    marginBottom: spacing[4],
-  },
-  providerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing[2],
-  },
-  providerNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-  },
-  providerAccentDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  providerName: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.secondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  providerNameMuted: {
-    color: colors.fg.muted,
-  },
-  comingSoonBadge: {
-    paddingHorizontal: spacing[2],
-    paddingVertical: 2,
-    borderRadius: radii.sm,
-    backgroundColor: colors.bg.active,
-  },
-  comingSoonText: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.muted,
-    letterSpacing: 0.5,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  statusText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-  },
-  setupButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  setupButtonText: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.accent.primary,
-  },
-
-  // Model list
-  modelList: {
-    gap: spacing[1],
-  },
-  modelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    borderRadius: radii.md,
-    backgroundColor: colors.bg.raised,
-  },
-  modelRowSelected: {
-    backgroundColor: colors.accent.subtle,
-    borderWidth: 1,
-    borderColor: colors.accent.primary,
-  },
-  modelInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  modelName: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.primary,
-  },
-  modelNameSelected: {
-    color: colors.accent.primary,
-  },
-  modelMeta: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-  },
-
-  // Settings
-  settingSection: {
-    marginBottom: spacing[4],
-  },
-  settingLabel: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.secondary,
-    marginBottom: spacing[2],
-  },
-  settingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  settingInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-  },
-
-  // Effort chips
-  effortRow: {
-    flexDirection: 'row',
-    gap: spacing[2],
-  },
-  effortChip: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingVertical: spacing[2],
-    borderRadius: radii.md,
-    backgroundColor: colors.bg.raised,
-  },
-  effortChipActive: {
-    backgroundColor: colors.accent.subtle,
-    borderWidth: 1,
-    borderColor: colors.accent.primary,
-  },
-  effortLabel: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.muted,
-  },
-  effortLabelActive: {
-    color: colors.accent.primary,
-  },
-
-  // Toggle
-  toggle: {
-    width: 44,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: colors.bg.active,
-    padding: 2,
-    justifyContent: 'center',
-  },
-  toggleActive: {
-    backgroundColor: colors.accent.primary,
-  },
-  toggleKnob: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: colors.fg.muted,
-  },
-  toggleKnobActive: {
-    backgroundColor: colors.fg.onAccent,
-    alignSelf: 'flex-end',
-  },
-});
+// Styles computed dynamically via useMemo — see component body.

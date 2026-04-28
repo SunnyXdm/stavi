@@ -1,14 +1,14 @@
 // WHAT: Renders all mounted workspace plugin panels using opacity-swap for persistence.
-// WHY:  Phase 2 passes session to workspace plugins (scope-based props). Server plugins
-//       are not rendered here — they go through ServerToolsSheet.
-// HOW:  Reads openTabsBySession for the current session. WorkspacePluginPanelProps
-//       receives session; ServerPluginPanelProps receives serverId (filtered out here).
+// WHY:  Phase 2 passes session to workspace plugins (scope-based props).
+//       Phase 9 removes server-scoped plugins — all plugins now receive WorkspacePluginPanelProps.
+// HOW:  Reads openTabsBySession for the current session. All panels receive session props.
 // SEE:  apps/mobile/src/stores/plugin-registry.ts, packages/shared/src/plugin-types.ts
 
-import React, { useRef, memo } from 'react';
+import React, { useRef, memo, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { usePluginRegistry, getPluginComponent } from '../stores/plugin-registry';
-import { colors } from '../theme';
+import { useTheme } from '../theme';
+import { ErrorBoundary } from './ErrorBoundary';
 import type { Session } from '@stavi/shared';
 import type { PluginInstance } from '@stavi/shared';
 
@@ -22,6 +22,11 @@ export function PluginRenderer({ bottomBarHeight, sessionId, session }: PluginRe
   const openTabs = usePluginRegistry((s) => s.getOpenTabs(sessionId));
   const activeTabId = usePluginRegistry((s) => s.getActiveTabId(sessionId));
   const definitions = usePluginRegistry((s) => s.definitions);
+  const { colors } = useTheme();
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.bg.base },
+  }), [colors]);
 
   // Track which tabs have been mounted (lazy mounting)
   const mountedTabIds = useRef(new Set<string>());
@@ -38,14 +43,16 @@ export function PluginRenderer({ bottomBarHeight, sessionId, session }: PluginRe
         if (!definition) return null;
         const isActive = tab.id === activeTabId;
         return (
-          <MemoizedPanel
-            key={tab.id}
-            tab={tab}
-            scope={definition.scope}
-            isActive={isActive}
-            bottomBarHeight={bottomBarHeight}
-            session={session}
-          />
+          <ErrorBoundary key={tab.id} label={definition.name ?? tab.pluginId}>
+            <MemoizedPanel
+              key={tab.id}
+              tab={tab}
+              scope={definition.scope}
+              isActive={isActive}
+              bottomBarHeight={bottomBarHeight}
+              session={session}
+            />
+          </ErrorBoundary>
         );
       })}
     </View>
@@ -64,44 +71,37 @@ interface PanelProps {
   session?: Session;
 }
 
+// Static panel styles — do not reference colors, so they don't need useMemo.
+const panelStyles = StyleSheet.create({
+  panel: { ...StyleSheet.absoluteFill },
+  panelHidden: { opacity: 0 },
+});
+
 const MemoizedPanel = memo(
   function Panel({ tab, scope, isActive, bottomBarHeight, session }: PanelProps) {
     const Component = getPluginComponent(tab.pluginId);
 
     if (!Component) {
-      return <View style={[styles.panel, !isActive && styles.panelHidden]} />;
+      return <View style={[panelStyles.panel, !isActive && panelStyles.panelHidden]} />;
     }
 
     if (scope === 'workspace' && !session) {
-      return <View style={[styles.panel, !isActive && styles.panelHidden]} />;
+      return <View style={[panelStyles.panel, !isActive && panelStyles.panelHidden]} />;
     }
-
-    const serverId = session?.serverId ?? '';
 
     return (
       <View
-        style={[styles.panel, !isActive && styles.panelHidden]}
+        style={[panelStyles.panel, !isActive && panelStyles.panelHidden]}
         pointerEvents={isActive ? 'auto' : 'none'}
       >
-        {scope === 'workspace' ? (
-          <Component
-            scope="workspace"
-            instanceId={tab.id}
-            isActive={isActive}
-            session={session!}
-            bottomBarHeight={bottomBarHeight}
-            initialState={tab.initialState}
-          />
-        ) : (
-          <Component
-            scope="server"
-            instanceId={tab.id}
-            isActive={isActive}
-            serverId={serverId}
-            bottomBarHeight={bottomBarHeight}
-            initialState={tab.initialState}
-          />
-        )}
+        <Component
+          scope="workspace"
+          instanceId={tab.id}
+          isActive={isActive}
+          session={session!}
+          bottomBarHeight={bottomBarHeight}
+          initialState={tab.initialState}
+        />
       </View>
     );
   },
@@ -118,8 +118,4 @@ const MemoizedPanel = memo(
   },
 );
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg.base },
-  panel: { ...StyleSheet.absoluteFill },
-  panelHidden: { opacity: 0 },
-});
+// Styles are created inside the component via useMemo (see PluginRenderer body above).

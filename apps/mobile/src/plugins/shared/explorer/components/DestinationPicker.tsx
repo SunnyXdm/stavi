@@ -10,7 +10,7 @@
 // SEE:  apps/mobile/src/components/DirectoryPicker.tsx,
 //       apps/mobile/src/plugins/shared/explorer/index.tsx (host)
 
-import React, { memo, useState, useCallback } from 'react';
+import React, { memo, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,7 +21,8 @@ import {
 import { X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DirectoryPicker } from '../../../../components/DirectoryPicker';
-import { colors, typography, spacing, radii } from '../../../../theme';
+import { useTheme } from '../../../../theme';
+import { typography, spacing, radii } from '../../../../theme';
 
 // ----------------------------------------------------------
 // Types
@@ -48,6 +49,70 @@ export const DestinationPicker = memo(function DestinationPicker({
   onSelect,
   onClose,
 }: DestinationPickerProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.bg.base,
+    },
+    header: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      justifyContent: 'space-between' as const,
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[3],
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.divider,
+    },
+    headerTitle: {
+      fontSize: typography.fontSize.lg,
+      fontFamily: typography.fontFamily.sansSemiBold,
+      color: colors.fg.primary,
+    },
+    selectedBanner: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[2],
+      backgroundColor: colors.accent.subtle,
+      gap: spacing[2],
+    },
+    selectedLabel: {
+      fontSize: typography.fontSize.xs,
+      fontFamily: typography.fontFamily.sansMedium,
+      color: colors.accent.primary,
+    },
+    selectedPath: {
+      flex: 1,
+      fontSize: typography.fontSize.xs,
+      fontFamily: typography.fontFamily.mono,
+      color: colors.fg.secondary,
+    },
+    footer: {
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[3],
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.divider,
+    },
+    confirmButton: {
+      backgroundColor: colors.accent.primary,
+      borderRadius: radii.md,
+      paddingVertical: spacing[3],
+      alignItems: 'center' as const,
+    },
+    confirmButtonDisabled: {
+      opacity: 0.4,
+    },
+    confirmButtonText: {
+      fontSize: typography.fontSize.base,
+      fontFamily: typography.fontFamily.sansSemiBold,
+      color: colors.fg.onAccent,
+    },
+    confirmButtonTextDisabled: {
+      color: colors.fg.onAccent,
+    },
+  }), [colors]);
+
   const insets = useSafeAreaInsets();
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
 
@@ -119,69 +184,4 @@ export const DestinationPicker = memo(function DestinationPicker({
   );
 });
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.lg,
-    fontFamily: typography.fontFamily.sansSemiBold,
-    color: colors.fg.primary,
-  },
-  selectedBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[2],
-    backgroundColor: colors.accent.subtle,
-    gap: spacing[2],
-  },
-  selectedLabel: {
-    fontSize: typography.fontSize.xs,
-    fontFamily: typography.fontFamily.sansMedium,
-    color: colors.accent.primary,
-  },
-  selectedPath: {
-    flex: 1,
-    fontSize: typography.fontSize.xs,
-    fontFamily: typography.fontFamily.mono,
-    color: colors.fg.secondary,
-  },
-  footer: {
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.divider,
-  },
-  confirmButton: {
-    backgroundColor: colors.accent.primary,
-    borderRadius: radii.md,
-    paddingVertical: spacing[3],
-    alignItems: 'center',
-  },
-  confirmButtonDisabled: {
-    opacity: 0.4,
-  },
-  confirmButtonText: {
-    fontSize: typography.fontSize.base,
-    fontFamily: typography.fontFamily.sansSemiBold,
-    color: colors.fg.onAccent,
-  },
-  confirmButtonTextDisabled: {
-    color: colors.fg.onAccent,
-  },
-});
+// Styles computed dynamically via useMemo — see component body.

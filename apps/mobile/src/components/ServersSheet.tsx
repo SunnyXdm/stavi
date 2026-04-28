@@ -10,13 +10,14 @@
 //       apps/mobile/src/components/AddServerSheet.tsx,
 //       apps/mobile/src/stores/connection.ts
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
   Modal,
   Platform,
   ActionSheetIOS,
+  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -30,21 +31,13 @@ import {
   type ConnectionState,
   type SavedConnection,
 } from '../stores/connection';
-import { colors, radii, spacing, typography, zIndex } from '../theme';
+import { useTheme } from '../theme';
+import { radii, spacing, typography, zIndex } from '../theme';
+import { AnimatedPressable } from './AnimatedPressable';
 
 // ----------------------------------------------------------
 // Status helpers
 // ----------------------------------------------------------
-
-const STATUS_COLOR: Record<ConnectionState, string> = {
-  idle: colors.fg.muted,
-  authenticating: colors.semantic.warning,
-  connecting: colors.semantic.warning,
-  connected: colors.semantic.success,
-  reconnecting: colors.semantic.warning,
-  error: colors.semantic.error,
-  disconnected: colors.fg.muted,
-};
 
 const STATUS_LABEL: Record<ConnectionState, string> = {
   idle: 'idle',
@@ -69,6 +62,87 @@ interface ServerRowProps {
 }
 
 function ServerRow({ conn, status, onConnect, onDisconnect, onForget }: ServerRowProps) {
+  const { colors } = useTheme();
+
+  const statusColor: Record<ConnectionState, string> = useMemo(() => ({
+    idle: colors.fg.muted,
+    authenticating: colors.semantic.warning,
+    connecting: colors.semantic.warning,
+    connected: colors.semantic.success,
+    reconnecting: colors.semantic.warning,
+    error: colors.semantic.error,
+    disconnected: colors.fg.muted,
+  }), [colors]);
+
+  const rowStyles = useMemo(() => StyleSheet.create({
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: spacing[3],
+      paddingHorizontal: spacing[4],
+      gap: spacing[3],
+      borderBottomWidth: 1,
+      borderBottomColor: colors.dividerSubtle,
+    },
+    dotWrap: {
+      width: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    dot: {
+      width: 8,
+      height: 8,
+      borderRadius: radii.full,
+    },
+    nameWrap: { flex: 1 },
+    nameRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing[1],
+    },
+    name: {
+      fontSize: typography.fontSize.base,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.primary,
+    },
+    meta: {
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.muted,
+      marginTop: 2,
+    },
+    actions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing[1],
+    },
+    actionBtn: {
+      borderRadius: radii.md,
+      borderWidth: 1,
+      borderColor: colors.divider,
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[1],
+    },
+    actionBtnText: {
+      fontSize: typography.fontSize.xs,
+      fontWeight: typography.fontWeight.medium,
+      color: colors.fg.secondary,
+    },
+    actionBtnTextDestructive: {
+      color: colors.semantic.error,
+    },
+    menuBtn: {
+      width: 28,
+      height: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    menuDots: {
+      fontSize: typography.fontSize.base,
+      color: colors.fg.muted,
+      letterSpacing: 1,
+    },
+  }), [colors]);
+
   const isConnected = status === 'connected';
   const isBusy =
     status === 'connecting' || status === 'authenticating' || status === 'reconnecting';
@@ -100,7 +174,7 @@ function ServerRow({ conn, status, onConnect, onDisconnect, onForget }: ServerRo
     <View style={rowStyles.row}>
       {/* Left: status dot + name/meta */}
       <View style={rowStyles.dotWrap}>
-        <View style={[rowStyles.dot, { backgroundColor: STATUS_COLOR[status] }]} />
+        <View style={[rowStyles.dot, { backgroundColor: statusColor[status] }]} />
       </View>
       <View style={rowStyles.nameWrap}>
         <View style={rowStyles.nameRow}>
@@ -130,7 +204,9 @@ function ServerRow({ conn, status, onConnect, onDisconnect, onForget }: ServerRo
               Disconnect
             </Text>
           </Pressable>
-        ) : isBusy ? null : (
+        ) : isBusy ? (
+          <ActivityIndicator size="small" color={colors.fg.secondary} />
+        ) : (
           <Pressable
             style={rowStyles.actionBtn}
             onPress={onConnect}
@@ -147,75 +223,6 @@ function ServerRow({ conn, status, onConnect, onDisconnect, onForget }: ServerRo
   );
 }
 
-const rowStyles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing[3],
-    paddingHorizontal: spacing[4],
-    gap: spacing[3],
-    borderBottomWidth: 1,
-    borderBottomColor: colors.dividerSubtle,
-  },
-  dotWrap: {
-    width: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: radii.full,
-  },
-  nameWrap: { flex: 1 },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-  },
-  name: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-  },
-  meta: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-    marginTop: 2,
-  },
-  actions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-  },
-  actionBtn: {
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.divider,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[1],
-  },
-  actionBtnText: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.secondary,
-  },
-  actionBtnTextDestructive: {
-    color: colors.semantic.error,
-  },
-  menuBtn: {
-    width: 28,
-    height: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  menuDots: {
-    fontSize: typography.fontSize.base,
-    color: colors.fg.muted,
-    letterSpacing: 1,
-  },
-});
-
 // ----------------------------------------------------------
 // ServersSheet
 // ----------------------------------------------------------
@@ -227,6 +234,105 @@ interface ServersSheetProps {
 
 export function ServersSheet({ visible, onClose }: ServersSheetProps) {
   const [showAddServer, setShowAddServer] = useState(false);
+  const { colors } = useTheme();
+
+  const styles = useMemo(() => StyleSheet.create({
+    backdrop: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: colors.bg.scrim,
+      zIndex: zIndex.modal,
+    },
+    sheetWrap: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: zIndex.modal + 1,
+    },
+    sheet: {
+      backgroundColor: colors.bg.overlay,
+      borderTopLeftRadius: radii.xl,
+      borderTopRightRadius: radii.xl,
+      maxHeight: 480,
+    },
+    handle: {
+      width: 36,
+      height: 4,
+      borderRadius: radii.full,
+      backgroundColor: colors.divider,
+      alignSelf: 'center',
+      marginTop: spacing[2],
+      marginBottom: spacing[1],
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[3],
+      borderBottomWidth: 1,
+      borderBottomColor: colors.dividerSubtle,
+    },
+    headerTitle: {
+      flex: 1,
+      fontSize: typography.fontSize.lg,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.primary,
+    },
+    closeBtn: {
+      width: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: radii.md,
+      backgroundColor: colors.bg.raised,
+    },
+    list: {
+      maxHeight: 300,
+    },
+    listContent: {
+      paddingBottom: spacing[2],
+    },
+    emptyState: {
+      padding: spacing[6],
+      alignItems: 'center',
+      gap: spacing[2],
+    },
+    emptyTitle: {
+      fontSize: typography.fontSize.base,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.secondary,
+    },
+    emptySubtitle: {
+      fontSize: typography.fontSize.sm,
+      color: colors.fg.muted,
+      textAlign: 'center',
+    },
+    addButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing[2],
+      margin: spacing[4],
+      marginTop: spacing[3],
+      paddingVertical: spacing[3],
+      borderRadius: radii.md,
+      borderWidth: 1,
+      borderColor: colors.accent.subtle,
+      backgroundColor: colors.accent.subtle,
+    },
+    addButtonPressed: {
+      backgroundColor: colors.accent.glow,
+    },
+    addButtonText: {
+      fontSize: typography.fontSize.base,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.accent.primary,
+    },
+  }), [colors]);
 
   const savedConnections = useConnectionStore((s) => s.savedConnections);
   const connectServer = useConnectionStore((s) => s.connectServer);
@@ -266,9 +372,9 @@ export function ServersSheet({ visible, onClose }: ServersSheetProps) {
           {/* Server list */}
           {savedConnections.length === 0 ? (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>No servers added</Text>
+              <Text style={styles.emptyTitle}>No servers yet</Text>
               <Text style={styles.emptySubtitle}>
-                Add a server to connect your workspaces.
+                Tap "Add Server" to connect to a Stavi daemon.
               </Text>
             </View>
           ) : (
@@ -290,13 +396,14 @@ export function ServersSheet({ visible, onClose }: ServersSheetProps) {
           )}
 
           {/* Add Server button */}
-          <Pressable
-            style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}
+          <AnimatedPressable
+            style={styles.addButton}
             onPress={() => setShowAddServer(true)}
+            haptic="medium"
           >
             <Plus size={16} color={colors.accent.primary} />
             <Text style={styles.addButtonText}>Add Server</Text>
-          </Pressable>
+          </AnimatedPressable>
         </View>
       </SafeAreaView>
 
@@ -309,104 +416,4 @@ export function ServersSheet({ visible, onClose }: ServersSheetProps) {
   );
 }
 
-// ----------------------------------------------------------
-// Styles — all values from theme tokens
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  backdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: colors.bg.scrim,
-    zIndex: zIndex.modal,
-  },
-  sheetWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: zIndex.modal + 1,
-  },
-  sheet: {
-    backgroundColor: colors.bg.overlay,
-    borderTopLeftRadius: radii.xl,
-    borderTopRightRadius: radii.xl,
-    maxHeight: 480,
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    borderRadius: radii.full,
-    backgroundColor: colors.divider,
-    alignSelf: 'center',
-    marginTop: spacing[2],
-    marginBottom: spacing[1],
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    borderBottomWidth: 1,
-    borderBottomColor: colors.dividerSubtle,
-  },
-  headerTitle: {
-    flex: 1,
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-  },
-  closeBtn: {
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radii.md,
-    backgroundColor: colors.bg.raised,
-  },
-  list: {
-    maxHeight: 300,
-  },
-  listContent: {
-    paddingBottom: spacing[2],
-  },
-  emptyState: {
-    padding: spacing[6],
-    alignItems: 'center',
-    gap: spacing[2],
-  },
-  emptyTitle: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.secondary,
-  },
-  emptySubtitle: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.muted,
-    textAlign: 'center',
-  },
-  addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing[2],
-    margin: spacing[4],
-    marginTop: spacing[3],
-    paddingVertical: spacing[3],
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.accent.subtle,
-    backgroundColor: colors.accent.subtle,
-  },
-  addButtonPressed: {
-    backgroundColor: colors.accent.glow,
-  },
-  addButtonText: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.accent.primary,
-  },
-});
+// Styles are created inside the components via useMemo (see ServersSheet and ServerRow above).

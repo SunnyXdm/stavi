@@ -4,7 +4,7 @@
 // Modal for adding a local Stavi server connection.
 // No QR code in beta — manual entry only.
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -19,8 +19,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { X } from 'lucide-react-native';
 import { useConnectionStore, type SavedConnection } from '../stores/connection';
-import { colors, typography, spacing, radii } from '../theme';
+import { useTheme } from '../theme';
+import { typography, spacing, radii } from '../theme';
 import { devConnectionConfig } from '../generated/dev-config';
+import { AnimatedPressable } from './AnimatedPressable';
 
 // ----------------------------------------------------------
 // Props
@@ -37,6 +39,7 @@ interface AddServerModalProps {
 // ----------------------------------------------------------
 
 export function AddServerModal({ visible, onClose, onComplete }: AddServerModalProps) {
+  const { colors } = useTheme();
   const defaultHost = Platform.OS === 'android'
     ? (devConnectionConfig?.androidHost ?? '')
     : (devConnectionConfig?.iosHost ?? '');
@@ -67,7 +70,6 @@ export function AddServerModal({ visible, onClose, onComplete }: AddServerModalP
   }, [resetForm, onClose]);
 
   const handleConnect = useCallback(async () => {
-    // Validate
     const trimmedHost = host.trim();
     const trimmedToken = token.trim();
     const portNum = parseInt(port, 10);
@@ -94,7 +96,6 @@ export function AddServerModal({ visible, onClose, onComplete }: AddServerModalP
     setConnecting(true);
 
     try {
-      // addServer is async in Phase 5 — it pre-flights server.getConfig for dedup.
       const connection = await addServer({
         name: name.trim() || `${trimmedHost}:${portNum}`,
         host: trimmedHost,
@@ -110,6 +111,104 @@ export function AddServerModal({ visible, onClose, onComplete }: AddServerModalP
       setConnecting(false);
     }
   }, [addServer, name, host, onComplete, port, resetForm, token]);
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.bg.base,
+    },
+    keyboardView: {
+      flex: 1,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[3],
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.divider,
+    },
+    headerTitle: {
+      fontSize: typography.fontSize.lg,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.primary,
+    },
+    closeButton: {
+      width: 36,
+      height: 36,
+      borderRadius: radii.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    form: {
+      flex: 1,
+    },
+    formContent: {
+      paddingHorizontal: spacing[4],
+      paddingTop: spacing[6],
+      paddingBottom: spacing[8],
+    },
+    field: {
+      marginBottom: spacing[5],
+    },
+    fieldLabel: {
+      fontSize: typography.fontSize.sm,
+      fontWeight: typography.fontWeight.medium,
+      color: colors.fg.secondary,
+      marginBottom: spacing[2],
+    },
+    input: {
+      backgroundColor: colors.bg.input,
+      borderRadius: radii.md,
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[3],
+      fontSize: typography.fontSize.base,
+      fontFamily: typography.fontFamily.mono,
+      color: colors.fg.primary,
+    },
+    tokenInput: {
+      minHeight: 80,
+      paddingTop: spacing[3],
+    },
+    fieldHint: {
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.muted,
+      marginTop: spacing[1],
+      marginLeft: spacing[1],
+    },
+    code: {
+      fontFamily: typography.fontFamily.mono,
+      color: colors.accent.primary,
+    },
+    errorBox: {
+      backgroundColor: colors.semantic.errorSubtle,
+      borderRadius: radii.md,
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[3],
+      marginBottom: spacing[5],
+    },
+    errorText: {
+      fontSize: typography.fontSize.sm,
+      color: colors.semantic.error,
+    },
+    connectButton: {
+      backgroundColor: colors.accent.primary,
+      borderRadius: radii.md,
+      paddingVertical: spacing[4],
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 48,
+    },
+    connectButtonPressed: {
+      backgroundColor: colors.accent.secondary,
+    },
+    connectButtonText: {
+      fontSize: typography.fontSize.base,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.onAccent,
+    },
+  }), [colors]);
 
   return (
     <Modal
@@ -228,121 +327,17 @@ export function AddServerModal({ visible, onClose, onComplete }: AddServerModalP
             )}
 
             {/* Connect Button */}
-            <Pressable
-              style={({ pressed }) => [
-                styles.connectButton,
-                (pressed || connecting) && styles.connectButtonPressed,
-              ]}
+            <AnimatedPressable
+              style={[styles.connectButton, connecting && styles.connectButtonPressed]}
               onPress={() => void handleConnect()}
               disabled={connecting}
+              haptic="medium"
             >
               <Text style={styles.connectButtonText}>{connecting ? 'Connecting…' : 'Connect'}</Text>
-            </Pressable>
+            </AnimatedPressable>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   );
 }
-
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-  },
-  closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  form: {
-    flex: 1,
-  },
-  formContent: {
-    paddingHorizontal: spacing[4],
-    paddingTop: spacing[6],
-    paddingBottom: spacing[8],
-  },
-  field: {
-    marginBottom: spacing[5],
-  },
-  fieldLabel: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.secondary,
-    marginBottom: spacing[2],
-  },
-  input: {
-    backgroundColor: colors.bg.input,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    fontSize: typography.fontSize.base,
-    fontFamily: typography.fontFamily.mono,
-    color: colors.fg.primary,
-  },
-  tokenInput: {
-    minHeight: 80,
-    paddingTop: spacing[3],
-  },
-  fieldHint: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-    marginTop: spacing[1],
-    marginLeft: spacing[1],
-  },
-  code: {
-    fontFamily: typography.fontFamily.mono,
-    color: colors.accent.primary,
-  },
-  errorBox: {
-    backgroundColor: colors.semantic.errorSubtle,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    marginBottom: spacing[5],
-  },
-  errorText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.semantic.error,
-  },
-  connectButton: {
-    backgroundColor: colors.accent.primary,
-    borderRadius: radii.md,
-    paddingVertical: spacing[4],
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 48,
-  },
-  connectButtonPressed: {
-    backgroundColor: colors.accent.secondary,
-  },
-  connectButtonText: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.onAccent,
-  },
-});

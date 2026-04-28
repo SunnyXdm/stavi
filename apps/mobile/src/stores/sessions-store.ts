@@ -7,6 +7,8 @@
 // SEE:  apps/mobile/src/stores/connection.ts, apps/mobile/src/navigation/SessionsHomeScreen.tsx
 
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Session } from '@stavi/shared';
 import { useConnectionStore } from './connection';
 import { logEvent } from '../services/telemetry';
@@ -47,7 +49,9 @@ function upsertSession(sessions: Session[], nextSession: Session): Session[] {
     .sort((a, b) => b.lastActiveAt - a.lastActiveAt);
 }
 
-export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions>((set, get) => ({
+export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions>()(
+  persist(
+    (set, get) => ({
   sessionsByServer: {},
   sessionsById: {},
   isLoadingByServer: {},
@@ -228,4 +232,15 @@ export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions
       }
     }
   },
-}));
+  }),
+    {
+      name: 'stavi-sessions',
+      storage: createJSONStorage(() => AsyncStorage),
+      // Only persist session data — not subscriptions, loading state, or errors.
+      partialize: (state) => ({
+        sessionsByServer: state.sessionsByServer,
+        sessionsById: state.sessionsById,
+      }),
+    },
+  ),
+);

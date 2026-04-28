@@ -4,7 +4,7 @@
 // Shows tool invocations (file reads, edits, commands) as
 // collapsible cards with icon + label + optional preview.
 
-import React, { memo, useState, useCallback } from 'react';
+import React, { memo, useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import {
   FileText,
@@ -16,7 +16,7 @@ import {
   Search,
   FolderOpen,
 } from 'lucide-react-native';
-import { colors, typography, spacing, radii } from '../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../theme';
 import type { ThreadActivity } from './useOrchestration';
 
 interface ToolCallCardProps {
@@ -56,6 +56,17 @@ function getToolDetail(activity: ThreadActivity): string | null {
 }
 
 export const ToolCallCard = memo(function ToolCallCard({ activities }: ToolCallCardProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    container: { marginHorizontal: spacing[4], marginVertical: spacing[1], backgroundColor: colors.bg.raised, borderRadius: radii.md, overflow: 'hidden' },
+    header: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], paddingHorizontal: spacing[3], paddingVertical: spacing[2] },
+    headerText: { fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.medium, color: colors.fg.tertiary },
+    list: { paddingHorizontal: spacing[3], paddingBottom: spacing[2], gap: spacing[1] },
+    item: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], paddingVertical: spacing[1], paddingHorizontal: spacing[1] },
+    itemText: { flex: 1 },
+    itemLabel: { fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.medium, color: colors.fg.secondary, fontFamily: typography.fontFamily.mono },
+    itemDetail: { fontSize: typography.fontSize.xs, color: colors.fg.muted, fontFamily: typography.fontFamily.mono, marginTop: 1 },
+  }), [colors]);
   const [expanded, setExpanded] = useState(false);
 
   const toggle = useCallback(() => setExpanded((v) => !v), []);
@@ -102,51 +113,4 @@ export const ToolCallCard = memo(function ToolCallCard({ activities }: ToolCallC
   );
 });
 
-const styles = StyleSheet.create({
-  container: {
-    marginHorizontal: spacing[4],
-    marginVertical: spacing[1],
-    backgroundColor: colors.bg.raised,
-    borderRadius: radii.md,
-    overflow: 'hidden',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-  },
-  headerText: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.tertiary,
-  },
-  list: {
-    paddingHorizontal: spacing[3],
-    paddingBottom: spacing[2],
-    gap: spacing[1],
-  },
-  item: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    paddingVertical: spacing[1],
-    paddingHorizontal: spacing[1],
-  },
-  itemText: {
-    flex: 1,
-  },
-  itemLabel: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.secondary,
-    fontFamily: typography.fontFamily.mono,
-  },
-  itemDetail: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-    fontFamily: typography.fontFamily.mono,
-    marginTop: 1,
-  },
-});
+// Styles live in ToolCallCard via useMemo — see component body.

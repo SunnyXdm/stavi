@@ -9,7 +9,7 @@
 //       apps/mobile/src/stores/connection.ts (addServer + relay connectServer path),
 //       apps/cli/src/index.ts (--relay flag that generates the QR)
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -19,22 +19,176 @@ import {
   useCodeScanner,
 } from 'react-native-vision-camera';
 import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { AppNavigation } from './types';
 import { X, QrCode } from 'lucide-react-native';
 import type { PairingPayload } from '@stavi/shared';
 import { useConnectionStore } from '../stores/connection';
-import { colors, spacing, typography, radii } from '../theme';
+import { useTheme } from '../theme';
+import { spacing, typography, radii } from '../theme';
+
+// ----------------------------------------------------------
+// Constants
+// ----------------------------------------------------------
+
+const VIEWFINDER_SIZE = 260;
+const CORNER_SIZE = 24;
+const CORNER_THICKNESS = 3;
 
 // ----------------------------------------------------------
 // Component
 // ----------------------------------------------------------
 
 export function PairServerScreen() {
-  const navigation = useNavigation<NativeStackNavigationProp<any>>();
+  const navigation = useNavigation<AppNavigation>();
   const { hasPermission, requestPermission } = useCameraPermission();
   const device = useCameraDevice('back');
   const addServer = useConnectionStore((s) => s.addServer);
   const connectServer = useConnectionStore((s) => s.connectServer);
+  const { colors } = useTheme();
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.bg.base,
+    },
+    cameraContainer: {
+      flex: 1,
+      backgroundColor: colors.bg.base,
+    },
+    overlay: {
+      flex: 1,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[3],
+      backgroundColor: colors.bg.scrim,
+    },
+    headerTitle: {
+      fontSize: typography.fontSize.lg,
+      fontWeight: typography.fontWeight.semibold,
+      // '#fff' is intentional: camera overlay text must contrast against live camera
+      // feed regardless of the app theme. Not a theme token.
+      color: '#fff',
+    },
+    closeButton: {
+      width: 36,
+      height: 36,
+      borderRadius: radii.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.bg.active,
+    },
+    viewfinderArea: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    viewfinder: {
+      width: VIEWFINDER_SIZE,
+      height: VIEWFINDER_SIZE,
+      position: 'relative',
+    },
+    corner: {
+      position: 'absolute',
+      width: CORNER_SIZE,
+      height: CORNER_SIZE,
+      // '#fff' is intentional: viewfinder corners must contrast against any camera
+      // background (bright or dark). Theme accent would disappear on bright scenes.
+      borderColor: '#fff',
+    },
+    cornerTL: {
+      top: 0,
+      left: 0,
+      borderTopWidth: CORNER_THICKNESS,
+      borderLeftWidth: CORNER_THICKNESS,
+      borderTopLeftRadius: 4,
+    },
+    cornerTR: {
+      top: 0,
+      right: 0,
+      borderTopWidth: CORNER_THICKNESS,
+      borderRightWidth: CORNER_THICKNESS,
+      borderTopRightRadius: 4,
+    },
+    cornerBL: {
+      bottom: 0,
+      left: 0,
+      borderBottomWidth: CORNER_THICKNESS,
+      borderLeftWidth: CORNER_THICKNESS,
+      borderBottomLeftRadius: 4,
+    },
+    cornerBR: {
+      bottom: 0,
+      right: 0,
+      borderBottomWidth: CORNER_THICKNESS,
+      borderRightWidth: CORNER_THICKNESS,
+      borderBottomRightRadius: 4,
+    },
+    footer: {
+      paddingHorizontal: spacing[6],
+      paddingVertical: spacing[5],
+      alignItems: 'center',
+      backgroundColor: colors.bg.scrim,
+    },
+    hintText: {
+      fontSize: typography.fontSize.sm,
+      // rgba white is intentional: hint text on live camera feed must stay legible
+      // on any background. Not a theme token.
+      color: 'rgba(255,255,255,0.8)',
+      textAlign: 'center',
+    },
+    code: {
+      fontFamily: typography.fontFamily.mono,
+      color: colors.accent.primary,
+    },
+    permissionContainer: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: spacing[8],
+      gap: spacing[4],
+    },
+    permissionTitle: {
+      fontSize: typography.fontSize.xl,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.primary,
+      textAlign: 'center',
+    },
+    permissionBody: {
+      fontSize: typography.fontSize.base,
+      color: colors.fg.secondary,
+      textAlign: 'center',
+      lineHeight: 24,
+    },
+    grantButton: {
+      backgroundColor: colors.accent.primary,
+      borderRadius: radii.md,
+      paddingHorizontal: spacing[6],
+      paddingVertical: spacing[3],
+      marginTop: spacing[2],
+    },
+    grantButtonText: {
+      fontSize: typography.fontSize.base,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.onAccent,
+    },
+    cancelLink: {
+      paddingVertical: spacing[2],
+    },
+    cancelLinkText: {
+      fontSize: typography.fontSize.sm,
+      color: colors.fg.muted,
+    },
+    errorText: {
+      fontSize: typography.fontSize.base,
+      color: colors.semantic.error,
+      textAlign: 'center',
+      padding: spacing[6],
+    },
+  }), [colors]);
 
   const [scanning, setScanning] = useState(true);
   const [processing, setProcessing] = useState(false);
@@ -225,155 +379,4 @@ function _decodePairingPayload(raw: string): PairingPayload {
   return obj as PairingPayload;
 }
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const VIEWFINDER_SIZE = 260;
-const CORNER_SIZE = 24;
-const CORNER_THICKNESS = 3;
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-  cameraContainer: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-  overlay: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    backgroundColor: colors.bg.scrim,
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-    // '#fff' is intentional: camera overlay text must contrast against live camera
-    // feed regardless of the app theme. Not a theme token.
-    color: '#fff',
-  },
-  closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.bg.active,
-  },
-  viewfinderArea: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  viewfinder: {
-    width: VIEWFINDER_SIZE,
-    height: VIEWFINDER_SIZE,
-    position: 'relative',
-  },
-  corner: {
-    position: 'absolute',
-    width: CORNER_SIZE,
-    height: CORNER_SIZE,
-    // '#fff' is intentional: viewfinder corners must contrast against any camera
-    // background (bright or dark). Theme accent would disappear on bright scenes.
-    borderColor: '#fff',
-  },
-  cornerTL: {
-    top: 0,
-    left: 0,
-    borderTopWidth: CORNER_THICKNESS,
-    borderLeftWidth: CORNER_THICKNESS,
-    borderTopLeftRadius: 4,
-  },
-  cornerTR: {
-    top: 0,
-    right: 0,
-    borderTopWidth: CORNER_THICKNESS,
-    borderRightWidth: CORNER_THICKNESS,
-    borderTopRightRadius: 4,
-  },
-  cornerBL: {
-    bottom: 0,
-    left: 0,
-    borderBottomWidth: CORNER_THICKNESS,
-    borderLeftWidth: CORNER_THICKNESS,
-    borderBottomLeftRadius: 4,
-  },
-  cornerBR: {
-    bottom: 0,
-    right: 0,
-    borderBottomWidth: CORNER_THICKNESS,
-    borderRightWidth: CORNER_THICKNESS,
-    borderBottomRightRadius: 4,
-  },
-  footer: {
-    paddingHorizontal: spacing[6],
-    paddingVertical: spacing[5],
-    alignItems: 'center',
-    backgroundColor: colors.bg.scrim,
-  },
-  hintText: {
-    fontSize: typography.fontSize.sm,
-    // rgba white is intentional: hint text on live camera feed must stay legible
-    // on any background. Not a theme token.
-    color: 'rgba(255,255,255,0.8)',
-    textAlign: 'center',
-  },
-  code: {
-    fontFamily: typography.fontFamily.mono,
-    color: colors.accent.primary,
-  },
-  // Permission screen
-  permissionContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing[8],
-    gap: spacing[4],
-  },
-  permissionTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-    textAlign: 'center',
-  },
-  permissionBody: {
-    fontSize: typography.fontSize.base,
-    color: colors.fg.secondary,
-    textAlign: 'center',
-    lineHeight: 24,
-  },
-  grantButton: {
-    backgroundColor: colors.accent.primary,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing[6],
-    paddingVertical: spacing[3],
-    marginTop: spacing[2],
-  },
-  grantButtonText: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.onAccent,
-  },
-  cancelLink: {
-    paddingVertical: spacing[2],
-  },
-  cancelLinkText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.muted,
-  },
-  errorText: {
-    fontSize: typography.fontSize.base,
-    color: colors.semantic.error,
-    textAlign: 'center',
-    padding: spacing[6],
-  },
-});
+// Styles are created inside the component via useMemo (see PairServerScreen body above).

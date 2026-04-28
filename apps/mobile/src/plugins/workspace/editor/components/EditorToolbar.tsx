@@ -8,7 +8,7 @@
 // SEE:  apps/mobile/src/plugins/workspace/editor/components/EditorSurface.tsx,
 //       apps/mobile/src/plugins/workspace/editor/index.tsx
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import {
   Save,
@@ -17,7 +17,8 @@ import {
   Search,
   PanelLeft,
 } from 'lucide-react-native';
-import { colors, typography, spacing } from '../../../../theme';
+import { useTheme, typography, spacing } from '../../../../theme';
+import type { Colors } from '../../../../theme';
 
 // ----------------------------------------------------------
 // Types
@@ -44,6 +45,26 @@ interface EditorToolbarProps {
 }
 
 // ----------------------------------------------------------
+// Styles factory (used by EditorToolbar + ToolbarBtn)
+// ----------------------------------------------------------
+
+function createToolbarStyles(colors: Colors) {
+  return StyleSheet.create({
+    toolbar: { height: 36, backgroundColor: colors.bg.overlay, flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing[2], gap: spacing[1], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+    left: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing[2], overflow: 'hidden' },
+    right: { flexDirection: 'row', alignItems: 'center', gap: spacing[1] },
+    btn: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 6 },
+    btnActive: { backgroundColor: colors.accent.subtle },
+    btnPressed: { backgroundColor: colors.bg.active },
+    btnHighlight: { backgroundColor: colors.accent.subtle },
+    fileName: { flex: 1, fontSize: typography.fontSize.xs, color: colors.fg.tertiary, fontFamily: typography.fontFamily.mono },
+    cursor: { fontSize: typography.fontSize.xs, color: colors.fg.muted, fontFamily: typography.fontFamily.mono, marginLeft: spacing[2] },
+  });
+}
+
+type ToolbarStyles = ReturnType<typeof createToolbarStyles>;
+
+// ----------------------------------------------------------
 // Component
 // ----------------------------------------------------------
 
@@ -55,6 +76,9 @@ export const EditorToolbar = React.memo(function EditorToolbar({
   cursor,
   fileName,
 }: EditorToolbarProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createToolbarStyles(colors), [colors]);
+
   return (
     <View style={styles.toolbar}>
       {/* Left: tree toggle + file name */}
@@ -83,22 +107,26 @@ export const EditorToolbar = React.memo(function EditorToolbar({
           icon={<Search size={15} color={colors.fg.muted} />}
           onPress={() => onAction('find')}
           label="Find"
+          styles={styles}
         />
         <ToolbarBtn
           icon={<Undo2 size={15} color={colors.fg.muted} />}
           onPress={() => onAction('undo')}
           label="Undo"
+          styles={styles}
         />
         <ToolbarBtn
           icon={<Redo2 size={15} color={colors.fg.muted} />}
           onPress={() => onAction('redo')}
           label="Redo"
+          styles={styles}
         />
         <ToolbarBtn
           icon={<Save size={15} color={isDirty ? colors.accent.primary : colors.fg.muted} />}
           onPress={() => onAction('save')}
           label="Save"
           highlight={isDirty}
+          styles={styles}
         />
         {cursor && (
           <Text style={styles.cursor}>
@@ -119,11 +147,13 @@ function ToolbarBtn({
   onPress,
   label,
   highlight,
+  styles,
 }: {
   icon: React.ReactNode;
   onPress: () => void;
   label: string;
   highlight?: boolean;
+  styles: ToolbarStyles;
 }) {
   return (
     <Pressable
@@ -141,59 +171,4 @@ function ToolbarBtn({
   );
 }
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  toolbar: {
-    height: 36,
-    backgroundColor: colors.bg.overlay,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[2],
-    gap: spacing[1],
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  left: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    overflow: 'hidden',
-  },
-  right: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-  },
-  btn: {
-    width: 28,
-    height: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 6,
-  },
-  btnActive: {
-    backgroundColor: colors.accent.subtle,
-  },
-  btnPressed: {
-    backgroundColor: colors.bg.active,
-  },
-  btnHighlight: {
-    backgroundColor: colors.accent.subtle,
-  },
-  fileName: {
-    flex: 1,
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.tertiary,
-    fontFamily: typography.fontFamily.mono,
-  },
-  cursor: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-    fontFamily: typography.fontFamily.mono,
-    marginLeft: spacing[2],
-  },
-});
+// Styles computed dynamically via createToolbarStyles — see component body.

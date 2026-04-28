@@ -83,6 +83,8 @@ export type ProviderEventType =
   // Approval
   | 'approval-required'
   | 'approval-resolved'
+  // User input (AskUserQuestion tool)
+  | 'user-input-required'
   // Turn lifecycle
   | 'turn-start'
   | 'turn-complete'
@@ -154,6 +156,48 @@ export function approvalRequired(
     threadId,
     turnId,
     data: { requestId, toolName, toolInput },
+  };
+}
+
+// ----------------------------------------------------------
+// AskUserQuestion — structured user-input request from the model.
+// Shape sourced from @anthropic-ai/claude-agent-sdk/sdk-tools.d.ts
+// (AskUserQuestionInput). Each question has a prompt, a short
+// header label, a multiSelect flag, and 2-4 options.
+// ----------------------------------------------------------
+
+export interface UserInputOption {
+  label: string;
+  description: string;
+  preview?: string;
+}
+
+export interface UserInputQuestion {
+  question: string;
+  header: string;
+  multiSelect: boolean;
+  options: UserInputOption[];
+}
+
+export interface UserInputAnswer {
+  question: string;
+  /** Selected option labels (single-select ⇒ length 1; multi ⇒ N; free text ⇒ [text]). */
+  selections: string[];
+  /** Optional free-form note attached by the user. */
+  notes?: string;
+}
+
+export function userInputRequired(
+  threadId: string,
+  requestId: string,
+  questions: UserInputQuestion[],
+  turnId?: string,
+): ProviderEvent {
+  return {
+    type: 'user-input-required',
+    threadId,
+    turnId,
+    data: { requestId, questions },
   };
 }
 

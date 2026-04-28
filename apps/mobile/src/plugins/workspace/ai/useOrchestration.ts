@@ -4,23 +4,22 @@
 // Manages threads, messages, tool calls, approvals via Stavi's
 // event-sourced orchestration system.
 //
-// Split layout:
-//   utils/event-helpers.ts  — pure payload→AIMessage/AIPart mappers
-//   utils/coalescer.ts      — RAF-batched setState utility
+// File layout (Phase 8g split):
+//   utils/event-helpers.ts   — pure payload→AIMessage/AIPart mappers
+//   utils/coalescer.ts       — RAF-batched setState utility
+//   utils/event-reducer.ts   — processEventInner pure state reducer
 //   hooks/useOrchestrationActions.ts — sendMessage, interruptTurn, etc.
+//   hooks/useThreadManager.ts — ensureActiveThread, createNewChat, model resolution
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useConnectionStore } from '../../../stores/connection';
 import { useAiBindingsStore } from '../../../stores/ai-bindings-store';
 import type { AIMessage } from './types';
-import {
-  rawMessageToAIMessage,
-  activityPayloadToAIPart,
-  mergeActivityPart,
-  applyMessageUpdate,
-} from './utils/event-helpers';
 import { createCoalescingUpdater } from './utils/coalescer';
+import { processEventInner } from './utils/event-reducer';
+import { rawMessageToAIMessage } from './utils/event-helpers';
 import { useOrchestrationActions } from './hooks/useOrchestrationActions';
+import { useThreadManager } from './hooks/useThreadManager';
 
 // ----------------------------------------------------------
 // Types
@@ -50,7 +49,6 @@ export interface Thread {
 }
 
 // UI terminology alias — displayed as "Chat" in the app. Phase 8b.
-// The underlying type and wire protocol remain "Thread".
 export type Chat = Thread;
 
 // Legacy flat-text Message — kept for backward compat during transition.
@@ -82,6 +80,30 @@ export interface ApprovalRequest {
   pending: boolean;
 }
 
+// AskUserQuestion prompt — one of these renders in the chat stream via
+// UserInputPrompt.tsx instead of ApprovalCard.tsx when the SDK invokes the
+// AskUserQuestion tool.  Shape mirrors the server's UserInputQuestion type
+// (sourced from @anthropic-ai/claude-agent-sdk AskUserQuestionInput).
+export interface UserInputOption {
+  label: string;
+  description: string;
+  preview?: string;
+}
+
+export interface UserInputQuestion {
+  question: string;
+  header: string;
+  multiSelect: boolean;
+  options: UserInputOption[];
+}
+
+export interface UserInputRequest {
+  threadId: string;
+  requestId: string;
+  questions: UserInputQuestion[];
+  pending: boolean;
+}
+
 export interface ThreadActivity {
   threadId: string;
   type: string;
@@ -95,6 +117,7 @@ export interface OrchestrationState {
   aiMessages: Map<string, AIMessage[]>;
   activities: Map<string, ThreadActivity[]>;
   approvals: Map<string, ApprovalRequest[]>;
+  userInputs: Map<string, UserInputRequest[]>;
   activeThreadId: string | null;
   loading: boolean;
   snapshotSequence: number;
@@ -115,16 +138,14 @@ export function useOrchestration(input?: {
   const instanceId = input?.instanceId;
   const preferredWorktreePath = input?.worktreePath ?? null;
   const sessionId = input?.sessionId ?? 'local';
-  // Phase 5 cross-server audit: serverId must be passed explicitly by the caller.
-  // Falling back to savedConnections[0] would route events to the wrong server.
   if (!input?.serverId) {
     console.warn('[useOrchestration] serverId not provided — subscription will be inactive.');
   }
   const activeConnectionId = input?.serverId ?? 'local';
-  // Phase 8e fix (followups.md): replace non-reactive .getState() read with Zustand selector
-  // so the hook re-renders when connection state changes (e.g. server drops and reconnects).
+  // Phase 8e fix: reactive selector (was non-reactive .getState() call).
   const connectionState = useConnectionStore((s) => s.getServerStatus(activeConnectionId));
   const client = useConnectionStore.getState().getClientForServer(activeConnectionId);
+
   const projectsRef = useRef<any[]>([]);
   const serverConfigRef = useRef<any>(null);
   const activeThreadIdRef = useRef<string | null>(null);
@@ -135,6 +156,7 @@ export function useOrchestration(input?: {
     aiMessages: new Map(),
     activities: new Map(),
     approvals: new Map(),
+    userInputs: new Map(),
     activeThreadId: null,
     loading: true,
     snapshotSequence: 0,
@@ -145,7 +167,6 @@ export function useOrchestration(input?: {
   useEffect(() => { activeThreadIdRef.current = state.activeThreadId; }, [state.activeThreadId]);
 
   const unsubRef = useRef<(() => void) | null>(null);
-
   const coalescerRef = useRef<ReturnType<typeof createCoalescingUpdater> | null>(null);
   if (coalescerRef.current == null) {
     coalescerRef.current = createCoalescingUpdater(setState);
@@ -161,340 +182,40 @@ export function useOrchestration(input?: {
     };
   }, [instanceId, activeConnectionId, sessionId]);
 
-  // ----------------------------------------------------------
-  // Model resolution
-  // ----------------------------------------------------------
-
-  const resolveThreadModelSelection = useCallback((): NonNullable<Thread['modelSelection']> => {
-    const project = projectsRef.current[0];
-    if (project?.defaultModelSelection) return project.defaultModelSelection;
-
-    const providers = serverConfigRef.current?.providers;
-    if (Array.isArray(providers)) {
-      for (const provider of providers) {
-        if (!provider?.authenticated || !provider?.installed) continue;
-        const firstModel = Array.isArray(provider.models) ? provider.models[0] : null;
-        if (provider.provider && (firstModel?.id || firstModel?.slug)) {
-          const defaultEffort = firstModel?.capabilities?.reasoningEffortLevels?.find((l: any) => l?.isDefault)?.value;
-          const defaultContextWindow = firstModel?.capabilities?.contextWindowOptions?.find((o: any) => o?.isDefault)?.value;
-          return {
-            provider: provider.provider,
-            modelId: firstModel.id ?? firstModel.slug,
-            thinking: firstModel?.capabilities?.supportsThinkingToggle ? true : undefined,
-            effort: defaultEffort,
-            fastMode: firstModel?.capabilities?.supportsFastMode ? false : undefined,
-            contextWindow: defaultContextWindow,
-          };
-        }
-      }
-    }
-    return { provider: 'claude', modelId: 'claude-sonnet-4-6' };
-  }, []);
+  // Thread management (create, model selection)
+  const { resolveThreadModelSelection, ensureActiveThread, createNewChat } = useThreadManager({
+    instanceId,
+    preferredWorktreePath,
+    activeConnectionId,
+    sessionId,
+    client,
+    activeThreadIdRef,
+    projectsRef,
+    serverConfigRef,
+    setState,
+  });
 
   // ----------------------------------------------------------
-  // Thread creation
+  // Event processing
   // ----------------------------------------------------------
 
-  const ensureActiveThread = useCallback(async (agentRuntime?: 'claude' | 'codex') => {
-    const currentId = instanceId
-      ? useAiBindingsStore.getState().getBoundThreadId({ serverId: activeConnectionId, sessionId, instanceId }) ?? activeThreadIdRef.current
-      : activeThreadIdRef.current;
-    if (currentId) return currentId;
-
-    const project = projectsRef.current[0];
-    if (!project?.id) throw new Error('No project is available on the connected server');
-
-    const createdAt = new Date().toISOString();
-    const threadId = `thread-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const dirName = preferredWorktreePath
-      ? preferredWorktreePath.split('/').filter(Boolean).pop()
-      : null;
-    const title = dirName ? `${dirName} AI` : 'AI Chat';
-
-    if (!client) {
-      throw new Error('Client unavailable for active server');
-    }
-
-    await client.request('orchestration.dispatchCommand', {
-      command: {
-        type: 'thread.create',
-        commandId: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        threadId,
-        sessionId: sessionId !== 'local' ? sessionId : undefined,
-        projectId: project.id,
-        title,
-        runtimeMode: 'approval-required',
-        interactionMode: 'default',
-        branch: null,
-        worktreePath: preferredWorktreePath,
-        // Phase 8c: per-chat provider chosen in the AI composer
-        agentRuntime: agentRuntime ?? null,
-        createdAt,
-      },
-    });
-
-    if (instanceId) {
-      useAiBindingsStore.getState().bind({ serverId: activeConnectionId, sessionId, instanceId }, threadId);
-    }
-    activeThreadIdRef.current = threadId;
-    setState((prev) => ({
-      ...prev,
-      activeThreadId: threadId,
-      threads: prev.threads.some((t) => t.threadId === threadId)
-        ? prev.threads
-        : [
-            ...prev.threads,
-            {
-              threadId,
-              projectId: project.id,
-              title,
-              runtimeMode: 'approval-required',
-              interactionMode: 'default',
-              branch: '',
-              worktreePath: preferredWorktreePath,
-              agentRuntime,
-              modelSelection: undefined,
-              archived: false,
-              createdAt,
-              updatedAt: createdAt,
-            },
-          ],
-    }));
-    return threadId;
-  }, [instanceId, preferredWorktreePath, activeConnectionId, sessionId, client]);
-
-  // ----------------------------------------------------------
-  // Phase 8f: createNewChat — always creates a fresh thread (never reuses)
-  // Unlike ensureActiveThread which reuses an existing bound thread,
-  // createNewChat unconditionally creates a new one and makes it active.
-  // ----------------------------------------------------------
-
-  const createNewChat = useCallback(async (agentRuntime?: 'claude' | 'codex') => {
-    const project = projectsRef.current[0];
-    if (!project?.id) throw new Error('No project is available on the connected server');
-
-    if (!client) {
-      throw new Error('Client unavailable for active server');
-    }
-
-    const createdAt = new Date().toISOString();
-    const threadId = `thread-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const dirName = preferredWorktreePath
-      ? preferredWorktreePath.split('/').filter(Boolean).pop()
-      : null;
-    const title = dirName ? `${dirName} AI` : 'AI Chat';
-
-    await client.request('orchestration.dispatchCommand', {
-      command: {
-        type: 'thread.create',
-        commandId: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        threadId,
-        sessionId: sessionId !== 'local' ? sessionId : undefined,
-        projectId: project.id,
-        title,
-        runtimeMode: 'approval-required',
-        interactionMode: 'default',
-        branch: null,
-        worktreePath: preferredWorktreePath,
-        agentRuntime: agentRuntime ?? null,
-        createdAt,
-      },
-    });
-
-    // Bind this new thread to the current instance (replacing any prior binding)
-    if (instanceId) {
-      useAiBindingsStore.getState().bind({ serverId: activeConnectionId, sessionId, instanceId }, threadId);
-    }
-    activeThreadIdRef.current = threadId;
-    setState((prev) => ({
-      ...prev,
-      activeThreadId: threadId,
-      threads: prev.threads.some((t) => t.threadId === threadId)
-        ? prev.threads
-        : [
-            ...prev.threads,
-            {
-              threadId,
-              projectId: project.id,
-              title,
-              runtimeMode: 'approval-required',
-              interactionMode: 'default',
-              branch: '',
-              worktreePath: preferredWorktreePath,
-              agentRuntime,
-              modelSelection: undefined,
-              archived: false,
-              createdAt,
-              updatedAt: createdAt,
-            },
-          ],
-    }));
-    return threadId;
-  }, [instanceId, preferredWorktreePath, activeConnectionId, sessionId, client]);
-
-  // ----------------------------------------------------------
-  // Event processing (pure state reducer)
-  // ----------------------------------------------------------
-
-  const processEventInner = useCallback((prev: OrchestrationState, event: any): OrchestrationState => {
-    const next = { ...prev };
-
-    switch (event.type) {
-      case 'thread.created': {
-        const thread: Thread = {
-          threadId: event.payload.threadId,
-          projectId: event.payload.projectId,
-          title: event.payload.title,
-          runtimeMode: event.payload.runtimeMode,
-          interactionMode: event.payload.interactionMode,
-          branch: event.payload.branch || '',
-          worktreePath: event.payload.worktreePath,
-          agentRuntime: event.payload.agentRuntime ?? undefined,
-          modelSelection: event.payload.modelSelection,
-          archived: false,
-          createdAt: event.payload.createdAt,
-          updatedAt: event.payload.updatedAt,
-        };
-        next.threads = prev.threads.some((item) => item.threadId === thread.threadId)
-          ? prev.threads.map((item) => (item.threadId === thread.threadId ? thread : item))
-          : [...prev.threads, thread];
-        if (instanceId && useAiBindingsStore.getState().getBoundThreadId({ serverId: activeConnectionId, sessionId, instanceId }) === thread.threadId) {
-          next.activeThreadId = thread.threadId;
-          activeThreadIdRef.current = thread.threadId;
-        }
-        break;
-      }
-      case 'thread.deleted': {
-        next.threads = prev.threads.filter((t) => t.threadId !== event.payload.threadId);
-        if (prev.activeThreadId === event.payload.threadId) {
-          const newActive = next.threads[0]?.threadId ?? null;
-          next.activeThreadId = newActive;
-          activeThreadIdRef.current = newActive;
-        }
-        break;
-      }
-      case 'thread.archived':
-        next.threads = prev.threads.map((t) =>
-          t.threadId === event.payload.threadId ? { ...t, archived: true } : t);
-        break;
-      case 'thread.meta-updated':
-        next.threads = prev.threads.map((t) =>
-          t.threadId === event.payload.threadId
-            ? { ...t, title: event.payload.title ?? t.title, updatedAt: event.payload.updatedAt }
-            : t);
-        break;
-
-      case 'thread.message-sent': {
-        const tid = event.payload.threadId;
-        const existing = prev.messages.get(tid) || [];
-        const msgIdx = existing.findIndex((m) => m.messageId === event.payload.messageId);
-        const msg: Message = {
-          messageId: event.payload.messageId,
-          threadId: tid,
-          role: event.payload.role,
-          text: event.payload.text ?? '',
-          turnId: event.payload.turnId,
-          streaming: event.payload.streaming,
-          createdAt: event.payload.createdAt,
-        };
-        const updated = new Map(prev.messages);
-        if (msgIdx >= 0) {
-          const copy = [...existing];
-          copy[msgIdx] = msg;
-          updated.set(tid, copy);
-        } else {
-          updated.set(tid, [...existing, msg]);
-        }
-        next.messages = updated;
-
-        const incomingAI = rawMessageToAIMessage(event.payload, tid);
-        const existingAI = prev.aiMessages.get(tid) ?? [];
-        const updatedAI = new Map(prev.aiMessages);
-        updatedAI.set(tid, applyMessageUpdate(existingAI, incomingAI));
-        next.aiMessages = updatedAI;
-        break;
-      }
-
-      case 'thread.activity-appended': {
-        const tid = event.payload.threadId;
-        const turnId = event.payload.turnId;
-        const existingActivities = prev.activities.get(tid) || [];
-        const activity: ThreadActivity = {
-          threadId: tid,
-          type: event.payload.type ?? 'unknown',
-          data: event.payload,
-          createdAt: event.occurredAt,
-        };
-        const updatedActivities = new Map(prev.activities);
-        updatedActivities.set(tid, [...existingActivities, activity]);
-        next.activities = updatedActivities;
-
-        const part = activityPayloadToAIPart(event.payload);
-        if (part) {
-          const existingAI = prev.aiMessages.get(tid) ?? [];
-          const updatedAI = new Map(prev.aiMessages);
-          updatedAI.set(tid, mergeActivityPart(existingAI, part, turnId));
-          next.aiMessages = updatedAI;
-        }
-        break;
-      }
-
-      case 'thread.approval-response-requested': {
-        const tid = event.payload.threadId;
-        const existing = prev.approvals.get(tid) || [];
-        const updated = new Map(prev.approvals);
-        const existingIdx = existing.findIndex((a) => a.requestId === event.payload.requestId);
-        if (existingIdx >= 0) {
-          const copy = [...existing];
-          copy[existingIdx] = { ...copy[existingIdx], pending: true };
-          updated.set(tid, copy);
-        } else {
-          updated.set(tid, [
-            ...existing,
-            {
-              threadId: tid,
-              requestId: event.payload.requestId,
-              toolName: event.payload.toolName,
-              toolInput: event.payload.toolInput,
-              pending: true,
-            },
-          ]);
-        }
-        next.approvals = updated;
-        break;
-      }
-
-      case 'thread.session-set':
-      case 'thread.token-usage':
-        break;
-
-      default:
-        if (event.sequence != null) {
-          next.snapshotSequence = Math.max(prev.snapshotSequence, event.sequence);
-        }
-        break;
-    }
-
-    if (event.sequence != null) {
-      next.snapshotSequence = Math.max(next.snapshotSequence, event.sequence);
-    }
-    return next;
-  }, [instanceId, activeConnectionId, sessionId]);
+  // Stable ref for event reducer context — primitives are constant for the hook's lifetime.
+  const reducerCtxRef = useRef({ instanceId, activeConnectionId, sessionId, activeThreadIdRef });
 
   const processEvent = useCallback((event: any) => {
     const eventType = event.type;
     console.log('[Orchestration] Event:', eventType, event.payload?.threadId ?? '', event.payload?.role ?? '', event.payload?.streaming ?? '');
 
     if (eventType === 'thread.message-sent' && event.payload?.streaming) {
-      coalescer.enqueue((prev) => processEventInner(prev, event));
+      coalescer.enqueue((prev) => processEventInner(prev, event, reducerCtxRef.current));
       return;
     }
     if (eventType === 'thread.activity-appended') {
-      coalescer.enqueue((prev) => processEventInner(prev, event));
+      coalescer.enqueue((prev) => processEventInner(prev, event, reducerCtxRef.current));
       return;
     }
-    coalescer.immediate((prev) => processEventInner(prev, event));
-  }, [coalescer, processEventInner]);
+    coalescer.immediate((prev) => processEventInner(prev, event, reducerCtxRef.current));
+  }, [coalescer]);
 
   // ----------------------------------------------------------
   // Init + subscription
@@ -502,7 +223,6 @@ export function useOrchestration(input?: {
 
   useEffect(() => {
     if (connectionState !== 'connected') {
-      // Clear all bindings for this server on disconnect so stale threadIds don't persist.
       useAiBindingsStore.getState().clearServer(activeConnectionId);
       setState((prev) => ({ ...prev, loading: true }));
       return;
@@ -512,9 +232,8 @@ export function useOrchestration(input?: {
 
     async function init() {
       try {
-        if (!client) {
-          throw new Error('Client unavailable for active server');
-        }
+        if (!client) throw new Error('Client unavailable for active server');
+
         const serverConfig = await client.request<any>('server.getConfig', {});
         const snapshot = await client.request<{
           snapshotSequence: number;
@@ -553,6 +272,7 @@ export function useOrchestration(input?: {
         const aiMsgs = new Map<string, AIMessage[]>();
         const activities = new Map<string, ThreadActivity[]>();
         const approvals = new Map<string, ApprovalRequest[]>();
+        const userInputs = new Map<string, UserInputRequest[]>();
 
         for (const t of snapshot.threads || []) {
           const tid = t.threadId || t.id;
@@ -578,7 +298,6 @@ export function useOrchestration(input?: {
           }
         }
 
-        // Reconcile: drop any binding that points to a threadId no longer in the snapshot.
         const validThreadIds = new Set(threads.map((t) => t.threadId));
         useAiBindingsStore.getState().reconcile(activeConnectionId, sessionId, validThreadIds);
 
@@ -590,7 +309,7 @@ export function useOrchestration(input?: {
         activeThreadIdRef.current = activeThreadId;
 
         setState({
-          threads, messages, aiMessages: aiMsgs, activities, approvals,
+          threads, messages, aiMessages: aiMsgs, activities, approvals, userInputs,
           activeThreadId, loading: false,
           snapshotSequence: snapshot.snapshotSequence || 0,
           providers, serverCwd,

@@ -3,7 +3,7 @@
 // HOW:  Exposes FileContextMenu, RenameDialog, NewEntryDialog, and shared types.
 // SEE:  FileTree.tsx, store.ts
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,8 +21,8 @@ import {
   Copy,
   Terminal,
 } from 'lucide-react-native';
-import { colors, typography, spacing } from '../../../../theme';
-import type { StaviClient } from '../../../../stores/stavi-client';
+import { useTheme, typography, spacing } from '../../../../theme';
+import type { Colors } from '../../../../theme';
 
 // ----------------------------------------------------------
 // Exported types
@@ -45,6 +45,32 @@ export type FileTreeAction =
   | { type: 'refreshDir'; dirPath: string };
 
 // ----------------------------------------------------------
+// Styles factory
+// ----------------------------------------------------------
+
+function createMenuStyles(colors: Colors) {
+  return StyleSheet.create({
+    menuBackdrop: { flex: 1, backgroundColor: colors.bg.scrim, justifyContent: 'flex-end' },
+    menuSheet: { backgroundColor: colors.bg.overlay, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingTop: spacing[2], paddingBottom: spacing[6], paddingHorizontal: spacing[2] },
+    menuTitle: { fontSize: typography.fontSize.xs, color: colors.fg.muted, paddingHorizontal: spacing[3], paddingVertical: spacing[2], fontFamily: typography.fontFamily.mono },
+    menuItem: { flexDirection: 'row', alignItems: 'center', gap: spacing[3], paddingHorizontal: spacing[3], paddingVertical: spacing[3], borderRadius: 8 },
+    menuItemPressed: { backgroundColor: colors.bg.active },
+    menuItemText: { fontSize: typography.fontSize.base, color: colors.fg.secondary },
+    dialogBackdrop: { flex: 1, backgroundColor: colors.bg.scrim, justifyContent: 'center', alignItems: 'center', padding: spacing[6] },
+    dialog: { backgroundColor: colors.bg.overlay, borderRadius: 12, padding: spacing[5], width: '100%', maxWidth: 360, gap: spacing[4] },
+    dialogTitle: { fontSize: typography.fontSize.base, fontWeight: typography.fontWeight.semibold, color: colors.fg.primary },
+    dialogInput: { backgroundColor: colors.bg.input, borderRadius: 8, paddingHorizontal: spacing[3], paddingVertical: spacing[2], fontSize: typography.fontSize.base, fontFamily: typography.fontFamily.mono, color: colors.fg.primary },
+    dialogButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing[2] },
+    dialogBtn: { paddingHorizontal: spacing[4], paddingVertical: spacing[2], borderRadius: 8 },
+    dialogBtnText: { fontSize: typography.fontSize.sm, color: colors.fg.secondary },
+    dialogBtnPrimary: { backgroundColor: colors.accent.primary },
+    dialogBtnPrimaryText: { color: colors.fg.onAccent, fontWeight: typography.fontWeight.medium },
+  });
+}
+
+type MenuStyles = ReturnType<typeof createMenuStyles>;
+
+// ----------------------------------------------------------
 // ContextMenuItem helper
 // ----------------------------------------------------------
 
@@ -53,11 +79,13 @@ export function ContextMenuItem({
   label,
   labelColor,
   onPress,
+  styles,
 }: {
   icon: React.ReactNode;
   label: string;
   labelColor?: string;
   onPress: () => void;
+  styles: MenuStyles;
 }) {
   return (
     <Pressable
@@ -93,6 +121,9 @@ export function FileContextMenu({
   onStartNew,
   onDelete,
 }: FileContextMenuProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createMenuStyles(colors), [colors]);
+
   const entry = ctxMenu.entry;
   if (!entry) return null;
 
@@ -159,16 +190,19 @@ export function FileContextMenu({
                 icon={<FilePlus size={16} color={colors.fg.secondary} />}
                 label="New File"
                 onPress={handleNewFile}
+                styles={styles}
               />
               <ContextMenuItem
                 icon={<FolderPlus size={16} color={colors.fg.secondary} />}
                 label="New Folder"
                 onPress={handleNewFolder}
+                styles={styles}
               />
               <ContextMenuItem
                 icon={<Terminal size={16} color={colors.fg.secondary} />}
                 label="Open in Terminal Here"
                 onPress={handleOpenInTerminal}
+                styles={styles}
               />
             </>
           )}
@@ -177,23 +211,27 @@ export function FileContextMenu({
               icon={<FilePlus size={16} color={colors.fg.secondary} />}
               label="New File Here"
               onPress={handleNewFile}
+              styles={styles}
             />
           )}
           <ContextMenuItem
             icon={<Pencil size={16} color={colors.fg.secondary} />}
             label="Rename"
             onPress={handleRename}
+            styles={styles}
           />
           <ContextMenuItem
             icon={<Copy size={16} color={colors.fg.secondary} />}
             label="Copy Path"
             onPress={handleCopyPath}
+            styles={styles}
           />
           <ContextMenuItem
             icon={<Trash2 size={16} color={colors.semantic.error} />}
             label="Delete"
             labelColor={colors.semantic.error}
             onPress={handleDelete}
+            styles={styles}
           />
         </View>
       </Pressable>
@@ -213,6 +251,8 @@ interface RenameDialogProps {
 }
 
 export function RenameDialog({ visible, initialValue, onConfirm, onCancel }: RenameDialogProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createMenuStyles(colors), [colors]);
   const [value, setValue] = useState(initialValue);
 
   // Reset when dialog opens
@@ -263,6 +303,8 @@ interface NewEntryDialogProps {
 }
 
 export function NewEntryDialog({ visible, type, onConfirm, onCancel }: NewEntryDialogProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createMenuStyles(colors), [colors]);
   const [value, setValue] = useState('');
 
   React.useEffect(() => {
@@ -302,97 +344,4 @@ export function NewEntryDialog({ visible, type, onConfirm, onCancel }: NewEntryD
   );
 }
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  // Context menu
-  menuBackdrop: {
-    flex: 1,
-    backgroundColor: colors.bg.scrim,
-    justifyContent: 'flex-end',
-  },
-  menuSheet: {
-    backgroundColor: colors.bg.overlay,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingTop: spacing[2],
-    paddingBottom: spacing[6],
-    paddingHorizontal: spacing[2],
-  },
-  menuTitle: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    fontFamily: typography.fontFamily.mono,
-  },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[3],
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[3],
-    borderRadius: 8,
-  },
-  menuItemPressed: {
-    backgroundColor: colors.bg.active,
-  },
-  menuItemText: {
-    fontSize: typography.fontSize.base,
-    color: colors.fg.secondary,
-  },
-
-  // Dialogs
-  dialogBackdrop: {
-    flex: 1,
-    backgroundColor: colors.bg.scrim,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing[6],
-  },
-  dialog: {
-    backgroundColor: colors.bg.overlay,
-    borderRadius: 12,
-    padding: spacing[5],
-    width: '100%',
-    maxWidth: 360,
-    gap: spacing[4],
-  },
-  dialogTitle: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-  },
-  dialogInput: {
-    backgroundColor: colors.bg.input,
-    borderRadius: 8,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    fontSize: typography.fontSize.base,
-    fontFamily: typography.fontFamily.mono,
-    color: colors.fg.primary,
-  },
-  dialogButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: spacing[2],
-  },
-  dialogBtn: {
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[2],
-    borderRadius: 8,
-  },
-  dialogBtnText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.secondary,
-  },
-  dialogBtnPrimary: {
-    backgroundColor: colors.accent.primary,
-  },
-  dialogBtnPrimaryText: {
-    color: colors.fg.onAccent,
-    fontWeight: typography.fontWeight.medium,
-  },
-});
+// Styles computed dynamically via createMenuStyles — see each component body.

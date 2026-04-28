@@ -247,8 +247,13 @@ export const zIndex = {
 // Theme bundle
 // ----------------------------------------------------------
 
-export const theme = { colors, typography, spacing, radii, motion, shadows, zIndex } as const;
-export type Theme      = typeof theme;
-export type Colors     = typeof colors;
+// Derive a widened Colors type so both darkColors and lightColors satisfy it.
+// DeepString<T> replaces every leaf value with `string`, making the type
+// compatible with both `as const` palettes without losing the key structure.
+type DeepString<T> = { [K in keyof T]: T[K] extends object ? DeepString<T[K]> : string };
+export type Colors     = DeepString<typeof colors>;
 export type Typography = typeof typography;
 export type Spacing    = typeof spacing;
+
+export const theme = { colors, typography, spacing, radii, motion, shadows, zIndex } as const;
+export type Theme = typeof theme;

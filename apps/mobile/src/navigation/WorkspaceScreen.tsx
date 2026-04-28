@@ -1,12 +1,13 @@
-// WHAT: WorkspaceScreen — IDE layout with persistent sidebar shell (Phase 8e).
-// WHY:  Phase 8e replaces bottom-tab + drawer layout with a flex-row sidebar + content area.
-//       WorkspaceSidebar is always visible (collapsed = 52px rail, expanded = 260px panel).
-//       No animated drawer/scrim/bottomBarHeight. PluginBottomBar removed.
-// HOW:  flex-row: <WorkspaceSidebar> + <content area>. Sidebar manages its own
-//       collapsed/expanded state. Content area is full remaining width × full height.
-// SEE:  apps/mobile/src/components/WorkspaceSidebar.tsx, plans/08-restructure-plan.md §8e
+// WHAT: WorkspaceScreen — IDE layout with bottom tab bar + session drawer (Phase 9 §1–2).
+// WHY:  Phase 9 replaces the 52px sidebar rail with bottom nav (§1) and a swipe-from-left
+//       session drawer (§2). Both give back full screen width while keeping navigation reachable.
+// HOW:  flex column: SafeAreaView(top) → PluginHeader + PluginRenderer → PluginBottomBar.
+//       SessionDrawer is an absolute overlay managed by drawerOpen state.
+//       Android back button closes drawer first, then navigates home.
+// SEE:  apps/mobile/src/components/SessionDrawer.tsx, PluginBottomBar.tsx
+//       plans/09-navigation-overhaul.md §1–2
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,27 +17,96 @@ import {
   BackHandler,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { AppNavigation, AppRoute } from './types';
 import { AlertTriangle, ArrowLeft } from 'lucide-react-native';
 import { PluginRenderer } from '../components/PluginRenderer';
 import { PluginHeader } from '../components/PluginHeader';
-import { WorkspaceSidebar } from '../components/WorkspaceSidebar';
+import { PluginBottomBar } from '../components/PluginBottomBar';
+import { SessionDrawer } from '../components/SessionDrawer';
 import { usePluginRegistry } from '../stores/plugin-registry';
 import { useSessionsStore } from '../stores/sessions-store';
 import { useConnectionStore } from '../stores/connection';
-import { colors, typography, spacing, radii } from '../theme';
+import { useTheme } from '../theme';
+import { typography, spacing, radii } from '../theme';
 import { logEvent } from '../services/telemetry';
 
 export function WorkspaceScreen() {
-  const navigation = useNavigation<NativeStackNavigationProp<any>>();
-  const route = useRoute<any>();
+  const navigation = useNavigation<AppNavigation>();
+  const route = useRoute<AppRoute<'Workspace'>>();
+  const insets = useSafeAreaInsets();
+  const { colors, isDark } = useTheme();
+
+  const styles = useMemo(() => StyleSheet.create({
+    root: {
+      flex: 1,
+      backgroundColor: colors.bg.base,
+    },
+    content: {
+      flex: 1,
+      backgroundColor: colors.bg.base,
+    },
+    loading: {
+      flex: 1,
+      backgroundColor: colors.bg.base,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    panelArea: {
+      flex: 1,
+    },
+    errorContainer: {
+      flex: 1,
+      backgroundColor: colors.bg.base,
+    },
+    errorContent: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: spacing[6],
+      gap: spacing[3],
+    },
+    errorTitle: {
+      fontSize: typography.fontSize.lg,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.primary,
+    },
+    errorSubtitle: {
+      fontSize: typography.fontSize.base,
+      color: colors.fg.tertiary,
+      textAlign: 'center',
+      lineHeight: typography.fontSize.base * 1.5,
+    },
+    errorButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing[2],
+      backgroundColor: colors.accent.primary,
+      paddingHorizontal: spacing[5],
+      paddingVertical: spacing[3],
+      borderRadius: radii.md,
+      marginTop: spacing[4],
+    },
+    errorButtonText: {
+      fontSize: typography.fontSize.base,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.onAccent,
+    },
+  }), [colors]);
 
   const isReady = usePluginRegistry((s) => s.isReady);
   const initialize = usePluginRegistry((s) => s.initialize);
-  const openTab = usePluginRegistry((s) => s.openTab);
-  const definitions = usePluginRegistry((s) => s.definitions);
+
+  // Resolve the active plugin definition so we can check hideHeader
+  const activePluginDef = usePluginRegistry((s) => {
+    const activeTabId = s.getActiveTabId(sessionId);
+    const activeTab = activeTabId
+      ? (s.getOpenTabs(sessionId)).find((t) => t.id === activeTabId)
+      : undefined;
+    return activeTab ? (s.definitions[activeTab.pluginId] ?? null) : null;
+  });
+  const showHeader = !(activePluginDef?.hideHeader ?? false);
 
   // Session resolution from route param
   const sessionId = route.params?.sessionId as string | undefined;
@@ -45,26 +115,12 @@ export function WorkspaceScreen() {
   );
   const serverId = session?.serverId;
 
-  // Per-session tab state
-  const openTabs = usePluginRegistry((s) => s.getOpenTabs(sessionId));
-  const activeTabId = usePluginRegistry((s) => s.getActiveTabId(sessionId));
+  const bottomBarHeight = 56 + insets.bottom;
 
-  // Sidebar collapsed/expanded state
-  const [sidebarExpanded, setSidebarExpanded] = useState(false);
-
-  const handleToggleSidebar = useCallback(() => {
-    setSidebarExpanded((v) => !v);
-  }, []);
-
-  const handleNavigateHome = useCallback(() => {
-    setSidebarExpanded(false);
-    navigation.navigate('SessionsHome');
-  }, [navigation]);
-
-  const handleNavigateSettings = useCallback(() => {
-    setSidebarExpanded(false);
-    navigation.navigate('Settings');
-  }, [navigation]);
+  // Drawer state
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const handleOpenDrawer = useCallback(() => setDrawerOpen(true), []);
+  const handleCloseDrawer = useCallback(() => setDrawerOpen(false), []);
 
   // Initialize plugin tabs for this session on mount
   useEffect(() => {
@@ -73,8 +129,7 @@ export function WorkspaceScreen() {
     }
   }, [initialize, sessionId, session]);
 
-  // Log session.opened once on mount — dep is sessionId (stable string), not session
-  // object, to avoid re-firing on every Zustand store update.
+  // Log session.opened once on mount
   useEffect(() => {
     if (!sessionId) return;
     const s = useSessionsStore.getState().sessionsById[sessionId];
@@ -83,7 +138,7 @@ export function WorkspaceScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  // session.touch on mount — deps are stable strings only, not the session object.
+  // session.touch on mount
   useEffect(() => {
     if (!sessionId || !serverId) return;
     const client = useConnectionStore.getState().getClientForServer(serverId);
@@ -93,7 +148,7 @@ export function WorkspaceScreen() {
     });
   }, [sessionId, serverId]);
 
-  // session.touch on re-focus (after navigating back from Home)
+  // session.touch on re-focus
   useFocusEffect(
     useCallback(() => {
       if (!session || !serverId) return;
@@ -105,38 +160,20 @@ export function WorkspaceScreen() {
     }, [session, serverId]),
   );
 
-  // Hardware back (Android): consume event, navigate to SessionsHome
+  // Hardware back (Android): close drawer first, then navigate home
   useFocusEffect(
     useCallback(() => {
       const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (drawerOpen) {
+          setDrawerOpen(false);
+          return true;
+        }
         navigation.navigate('SessionsHome');
-        return true; // consume the event — do NOT exit the app
+        return true;
       });
       return () => handler.remove();
-    }, [navigation]),
+    }, [navigation, drawerOpen]),
   );
-
-  // Collapse sidebar when keyboard is open: handled by letting the content area
-  // absorb keyboard avoidance. The sidebar stays visible (collapsed rail).
-
-  const handleCreateInstance = useCallback(
-    (pluginId: string) => {
-      openTab(pluginId, undefined, sessionId);
-    },
-    [openTab, sessionId],
-  );
-
-  // Active plugin's ID for header
-  const activePluginId = (openTabs ?? []).find((t) => t.id === activeTabId)?.pluginId ?? null;
-  const activePluginAllowsMultiple = activePluginId
-    ? (definitions[activePluginId]?.allowMultipleInstances ?? false)
-    : false;
-
-  const handleHeaderCreateInstance = useCallback(() => {
-    if (activePluginId) {
-      handleCreateInstance(activePluginId);
-    }
-  }, [activePluginId, handleCreateInstance]);
 
   // ----------------------------------------------------------
   // Error states
@@ -145,7 +182,7 @@ export function WorkspaceScreen() {
   if (!sessionId || (!session && sessionId)) {
     return (
       <View style={styles.errorContainer}>
-        <StatusBar barStyle="light-content" backgroundColor={colors.bg.base} />
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.bg.base} />
         <SafeAreaView style={styles.errorContent} edges={['top', 'bottom']}>
           <AlertTriangle size={48} color={colors.semantic.warning} />
           <Text style={styles.errorTitle}>Workspace not found</Text>
@@ -164,7 +201,7 @@ export function WorkspaceScreen() {
   if (session?.status === 'archived') {
     return (
       <View style={styles.errorContainer}>
-        <StatusBar barStyle="light-content" backgroundColor={colors.bg.base} />
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.bg.base} />
         <SafeAreaView style={styles.errorContent} edges={['top', 'bottom']}>
           <AlertTriangle size={48} color={colors.semantic.warning} />
           <Text style={styles.errorTitle}>Workspace archived</Text>
@@ -183,123 +220,47 @@ export function WorkspaceScreen() {
   if (!isReady) {
     return (
       <View style={styles.loading}>
-        <StatusBar barStyle="light-content" backgroundColor={colors.bg.base} />
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.bg.base} />
         <ActivityIndicator size="large" color={colors.accent.primary} />
       </View>
     );
   }
 
   // ----------------------------------------------------------
-  // Main layout: flex-row sidebar + content area
+  // Main layout
   // ----------------------------------------------------------
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.bg.base} />
-
-      {/* Persistent sidebar — always visible icon rail, expands to full panel */}
-      <WorkspaceSidebar
-        sessionId={sessionId}
-        serverId={serverId}
-        expanded={sidebarExpanded}
-        onToggle={handleToggleSidebar}
-        onNavigateHome={handleNavigateHome}
-        onNavigateSettings={handleNavigateSettings}
-        onCreateInstance={handleCreateInstance}
-      />
-
-      {/* Content area — full remaining width × full height */}
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.bg.base} />
       <SafeAreaView style={styles.content} edges={['top']}>
-        {/* Plugin header */}
-        <PluginHeader
-          onOpenDrawer={handleToggleSidebar}
-          onCreateInstance={activePluginAllowsMultiple ? handleHeaderCreateInstance : undefined}
-          sessionId={sessionId}
-        />
-
-        {/* Plugin panels — full height, no bottom margin */}
+        {showHeader && (
+          <PluginHeader
+            onOpenDrawer={handleOpenDrawer}
+            sessionId={sessionId}
+          />
+        )}
         <View style={styles.panelArea}>
           <PluginRenderer
-            bottomBarHeight={0}
+            bottomBarHeight={bottomBarHeight}
             sessionId={sessionId}
             session={session}
           />
         </View>
       </SafeAreaView>
+      <PluginBottomBar sessionId={sessionId} />
 
-      {/* Tap-to-collapse scrim when expanded */}
-      {sidebarExpanded && (
-        <Pressable
-          style={StyleSheet.absoluteFill}
-          onPress={handleToggleSidebar}
-          accessible={false}
-          pointerEvents="box-only"
+      {/* Session drawer — absolute overlay, owns edge-zone touch when closed */}
+      {sessionId && (
+        <SessionDrawer
+          visible={drawerOpen}
+          sessionId={sessionId}
+          onClose={handleCloseDrawer}
+          onOpen={handleOpenDrawer}
         />
       )}
     </View>
   );
 }
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    flexDirection: 'row',
-    backgroundColor: colors.bg.base,
-  },
-  content: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-  loading: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  panelArea: {
-    flex: 1,
-  },
-
-  // Error state
-  errorContainer: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-  errorContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing[6],
-    gap: spacing[3],
-  },
-  errorTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-  },
-  errorSubtitle: {
-    fontSize: typography.fontSize.base,
-    color: colors.fg.tertiary,
-    textAlign: 'center',
-    lineHeight: typography.fontSize.base * 1.5,
-  },
-  errorButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    backgroundColor: colors.accent.primary,
-    paddingHorizontal: spacing[5],
-    paddingVertical: spacing[3],
-    borderRadius: radii.md,
-    marginTop: spacing[4],
-  },
-  errorButtonText: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.onAccent,
-  },
-});
+// Styles are created inside the component via useMemo (see WorkspaceScreen body above).

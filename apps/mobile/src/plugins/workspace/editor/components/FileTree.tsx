@@ -4,7 +4,7 @@
 //       (FileTreeMenus.tsx). Tap a file → editor.openFile event.
 // SEE:  FileTreeMenus.tsx, store.ts
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -24,7 +24,7 @@ import {
   Eye,
   EyeOff,
 } from 'lucide-react-native';
-import { colors, typography, spacing } from '../../../../theme';
+import { useTheme, typography, spacing } from '../../../../theme';
 import { useEditorStore } from '../store';
 import { useConnectionStore } from '../../../../stores/connection';
 import { eventBus } from '../../../../services/event-bus';
@@ -39,6 +39,14 @@ import {
 } from './FileTreeMenus';
 
 // ----------------------------------------------------------
+// Sentinels — stable references reused across renders to avoid
+// useSyncExternalStore false-changed loops (new Set() per call = infinite re-render)
+// ----------------------------------------------------------
+
+const EMPTY_EXPANDED_DIRS = new Set<string>();
+Object.freeze(EMPTY_EXPANDED_DIRS);
+
+// ----------------------------------------------------------
 // FileTree Component
 // ----------------------------------------------------------
 
@@ -47,10 +55,27 @@ interface FileTreeProps {
 }
 
 export const FileTree = React.memo(function FileTree({ session }: FileTreeProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.bg.raised },
+    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing[3], paddingVertical: spacing[2], backgroundColor: colors.bg.overlay },
+    headerTitle: { flex: 1, fontSize: typography.fontSize.xs, fontWeight: typography.fontWeight.medium, color: colors.fg.tertiary, textTransform: 'uppercase', letterSpacing: 0.8 },
+    headerActions: { flexDirection: 'row', gap: spacing[2] },
+    headerBtn: { padding: spacing[1] },
+    scroll: { flex: 1 },
+    loadingRow: { padding: spacing[3], alignItems: 'center' as const },
+    entryRow: { flexDirection: 'row', alignItems: 'center', height: 28, paddingRight: spacing[2] },
+    entryPressed: { backgroundColor: colors.bg.active },
+    chevron: { marginRight: spacing[1] },
+    chevronSpacer: { width: 12 + spacing[1] },
+    icon: { marginRight: spacing[2] },
+    entryName: { flex: 1, fontSize: typography.fontSize.sm, color: colors.fg.secondary, fontFamily: typography.fontFamily.mono },
+  }), [colors]);
+
   const { serverId, id: sessionId, folder } = session;
 
   const expandedDirs = useEditorStore(
-    (s) => s.expandedDirsBySession[sessionId] ?? new Set<string>(),
+    (s) => s.expandedDirsBySession[sessionId] ?? EMPTY_EXPANDED_DIRS,
   );
   const showHidden = useEditorStore((s) => s.showHiddenBySession[sessionId] ?? false);
   const { toggleExpanded, toggleShowHidden } = useEditorStore.getState();
@@ -291,7 +316,7 @@ export const FileTree = React.memo(function FileTree({ session }: FileTreeProps)
         );
       });
     },
-    [expandedDirs, handleTapEntry],
+    [expandedDirs, handleTapEntry, styles, colors],
   );
 
   // -------------------------------------------------------
@@ -351,47 +376,4 @@ export const FileTree = React.memo(function FileTree({ session }: FileTreeProps)
   );
 });
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg.raised,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    backgroundColor: colors.bg.overlay,
-  },
-  headerTitle: {
-    flex: 1,
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.tertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: spacing[2],
-  },
-  headerBtn: { padding: spacing[1] },
-  scroll: { flex: 1 },
-  loadingRow: { padding: spacing[3], alignItems: 'center' as const },
-  entryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 28,
-    paddingRight: spacing[2],
-  },
-  entryPressed: { backgroundColor: colors.bg.active },
-  chevron: { marginRight: spacing[1] },
-  chevronSpacer: { width: 12 + spacing[1] },
-  icon: { marginRight: spacing[2] },
-  entryName: {
-    flex: 1,
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.secondary,
-    fontFamily: typography.fontFamily.mono,
-  },
-});
+// Styles computed dynamically via useMemo — see component body.

@@ -1,18 +1,46 @@
-// WHAT: Plugin type system — discriminated union for workspace vs server plugins.
-// WHY:  Phase 2 splits plugins by scope so workspace plugins receive a Session and
-//       server plugins receive a serverId; mixing props caused client singleton leaks.
-// HOW:  WorkspacePluginDefinition and ServerPluginDefinition share a base interface.
-//       PluginPanelProps is a discriminated union on the `scope` discriminant.
+// WHAT: Plugin type system — workspace plugin definitions and panel props.
+// WHY:  Phase 2 introduced a server/workspace split; Phase 6 eliminates server scope
+//       since all plugins now use workspace scope with session.serverId.
+// HOW:  WorkspacePluginDefinition is the only definition type. PluginPanelProps simplified.
 // SEE:  apps/mobile/src/stores/plugin-registry.ts, apps/mobile/src/components/PluginRenderer.tsx
 
 import type { ComponentType } from 'react';
 import type { Session } from './domain-types';
 
 // ----------------------------------------------------------
+// Plugin Settings Schema — declarative field declarations
+// ----------------------------------------------------------
+
+export type PluginSettingFieldType = 'boolean' | 'string' | 'number' | 'select';
+
+export type PluginSettingField =
+  | { key: string; type: 'boolean'; label: string; description?: string; default: boolean }
+  | { key: string; type: 'string'; label: string; description?: string; default: string; placeholder?: string }
+  | { key: string; type: 'number'; label: string; description?: string; default: number; min?: number; max?: number; step?: number }
+  | {
+      key: string;
+      type: 'select';
+      label: string;
+      description?: string;
+      default: string;
+      options: Array<{ value: string; label: string; description?: string }>;
+    };
+
+export interface PluginSettingsSection {
+  title: string;
+  description?: string;
+  fields: PluginSettingField[];
+}
+
+export interface PluginSettingsSchema {
+  sections: PluginSettingsSection[];
+}
+
+// ----------------------------------------------------------
 // Plugin scope
 // ----------------------------------------------------------
 
-export type PluginScope = 'workspace' | 'server';
+export type PluginScope = 'workspace';
 
 // ----------------------------------------------------------
 // Plugin panel props (discriminated on scope)
@@ -27,16 +55,7 @@ export interface WorkspacePluginPanelProps {
   initialState?: Record<string, unknown>;
 }
 
-export interface ServerPluginPanelProps {
-  scope: 'server';
-  instanceId: string;
-  isActive: boolean;
-  serverId: string;
-  bottomBarHeight: number;
-  initialState?: Record<string, unknown>;
-}
-
-export type PluginPanelProps = WorkspacePluginPanelProps | ServerPluginPanelProps;
+export type PluginPanelProps = WorkspacePluginPanelProps;
 
 // ----------------------------------------------------------
 // Plugin kind / permissions
@@ -81,6 +100,13 @@ interface PluginDefinitionBase {
   api?: () => PluginAPI;
   onActivate?: (instanceId: string) => void;
   onDeactivate?: (instanceId: string) => void;
+  /** Declarative settings schema — auto-generates UI in SettingsScreen */
+  settings?: PluginSettingsSchema;
+  /**
+   * When true, WorkspaceScreen omits the PluginHeader bar for this plugin.
+   * Use for full-bleed plugins that manage their own top chrome (e.g. terminal).
+   */
+  hideHeader?: boolean;
 }
 
 // ----------------------------------------------------------
@@ -92,12 +118,7 @@ export interface WorkspacePluginDefinition extends PluginDefinitionBase {
   component: ComponentType<WorkspacePluginPanelProps>;
 }
 
-export interface ServerPluginDefinition extends PluginDefinitionBase {
-  scope: 'server';
-  component: ComponentType<ServerPluginPanelProps>;
-}
-
-export type PluginDefinition = WorkspacePluginDefinition | ServerPluginDefinition;
+export type PluginDefinition = WorkspacePluginDefinition;
 
 // ----------------------------------------------------------
 // Plugin Instance — runtime representation (one per open tab)

@@ -5,7 +5,7 @@
 //       using theme tokens exclusively. Drop-in: place inside any flex:1 parent.
 // SEE:  apps/mobile/src/theme/tokens.ts, apps/mobile/src/plugins/workspace/*/index.tsx
 
-import React, { type ComponentType } from 'react';
+import React, { type ComponentType, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,8 @@ import {
   ActivityIndicator,
   Pressable,
 } from 'react-native';
-import { colors, spacing, typography, radii } from '../theme';
+import { useTheme } from '../theme';
+import { spacing, typography, radii } from '../theme';
 
 // ----------------------------------------------------------
 // LoadingView — centered spinner with optional message
@@ -24,6 +25,8 @@ interface LoadingViewProps {
 }
 
 export function LoadingView({ message }: LoadingViewProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={styles.container}>
       <ActivityIndicator size="small" color={colors.accent.primary} />
@@ -51,6 +54,8 @@ export function ErrorView({
   onRetry,
   retryLabel = 'Retry',
 }: ErrorViewProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={styles.container}>
       {Icon ? <Icon size={32} color={colors.semantic.error} /> : null}
@@ -84,6 +89,8 @@ export function EmptyView({
   onAction,
   actionLabel,
 }: EmptyViewProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={styles.container}>
       {Icon ? <Icon size={32} color={colors.fg.muted} /> : null}
@@ -99,56 +106,60 @@ export function EmptyView({
 }
 
 // ----------------------------------------------------------
-// Styles — all use tokens, zero hardcoded values
+// Styles factory — all use tokens, zero hardcoded values
 // ----------------------------------------------------------
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing[6],
-    gap: spacing[3],
-    backgroundColor: colors.bg.base,
-  },
-  title: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.tertiary,
-    textAlign: 'center',
-    lineHeight: typography.fontSize.sm * typography.lineHeight.normal,
-  },
-  errorText: {
-    color: colors.semantic.error,
-  },
-  retryButton: {
-    marginTop: spacing[2],
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[2],
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.semantic.error,
-  },
-  retryButtonText: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.semantic.error,
-  },
-  ctaButton: {
-    marginTop: spacing[2],
-    paddingHorizontal: spacing[5],
-    paddingVertical: spacing[3],
-    borderRadius: radii.md,
-    backgroundColor: colors.accent.primary,
-  },
-  ctaButtonText: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.onAccent,
-  },
-});
+type Colors = ReturnType<typeof useTheme>['colors'];
+
+function makeStyles(colors: Colors) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: spacing[6],
+      gap: spacing[3],
+      backgroundColor: colors.bg.base,
+    },
+    title: {
+      fontSize: typography.fontSize.base,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.primary,
+      textAlign: 'center',
+    },
+    subtitle: {
+      fontSize: typography.fontSize.sm,
+      color: colors.fg.tertiary,
+      textAlign: 'center',
+      lineHeight: typography.fontSize.sm * typography.lineHeight.normal,
+    },
+    errorText: {
+      color: colors.semantic.error,
+    },
+    retryButton: {
+      marginTop: spacing[2],
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[2],
+      borderRadius: radii.md,
+      borderWidth: 1,
+      borderColor: colors.semantic.error,
+    },
+    retryButtonText: {
+      fontSize: typography.fontSize.sm,
+      fontWeight: typography.fontWeight.medium,
+      color: colors.semantic.error,
+    },
+    ctaButton: {
+      marginTop: spacing[2],
+      paddingHorizontal: spacing[5],
+      paddingVertical: spacing[3],
+      borderRadius: radii.md,
+      backgroundColor: colors.accent.primary,
+    },
+    ctaButtonText: {
+      fontSize: typography.fontSize.sm,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.onAccent,
+    },
+  });
+}

@@ -8,7 +8,7 @@
 // - Access chip (Supervised / Auto / Full)
 // - Send/Stop button
 
-import React, { memo, useState, useCallback, useRef } from 'react';
+import React, { memo, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -24,8 +24,10 @@ import {
   Zap,
   Sparkles,
 } from 'lucide-react-native';
-import { colors, typography, spacing, radii } from '../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../theme';
+import type { Colors } from '../../../theme';
 import { ProviderIcon } from './ProviderIcon';
+import { AnimatedPressable } from '../../../components/AnimatedPressable';
 
 // ----------------------------------------------------------
 // Types
@@ -76,12 +78,14 @@ function ToolbarChip({
   iconColor,
   onPress,
   active,
+  chipStyles,
 }: {
   label: string;
   icon: React.ReactNode;
   iconColor?: string;
   onPress?: () => void;
   active?: boolean;
+  chipStyles: ReturnType<typeof createChipStyles>;
 }) {
   return (
     <Pressable
@@ -97,29 +101,31 @@ function ToolbarChip({
   );
 }
 
-const chipStyles = StyleSheet.create({
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: spacing[2],
-    paddingVertical: 4,
-    borderRadius: radii.sm,
-    backgroundColor: colors.bg.input,
-  },
-  chipActive: {
-    backgroundColor: colors.accent.subtle,
-  },
-  chipLabel: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.tertiary,
-    maxWidth: 80,
-  },
-  chipLabelActive: {
-    color: colors.accent.primary,
-  },
-});
+function createChipStyles(colors: Colors) {
+  return StyleSheet.create({
+    chip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: spacing[2],
+      paddingVertical: 4,
+      borderRadius: radii.sm,
+      backgroundColor: colors.bg.input,
+    },
+    chipActive: {
+      backgroundColor: colors.accent.subtle,
+    },
+    chipLabel: {
+      fontSize: typography.fontSize.xs,
+      fontWeight: typography.fontWeight.medium,
+      color: colors.fg.tertiary,
+      maxWidth: 80,
+    },
+    chipLabelActive: {
+      color: colors.accent.primary,
+    },
+  });
+}
 
 // ----------------------------------------------------------
 // Access level helpers
@@ -140,7 +146,7 @@ const EFFORT_LABELS: Record<EffortLevel, string> = {
   'xhigh': 'Extra High',
 };
 
-function getEffortIcon(effort: EffortLevel) {
+function getEffortIcon(effort: EffortLevel, colors: Colors) {
   if (effort === 'high' || effort === 'max') {
     return <Sparkles size={12} color={colors.accent.primary} />;
   }
@@ -174,6 +180,83 @@ export const Composer = memo(function Composer({
   showFastModeToggle = false,
   contextWindowLabel,
 }: ComposerProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      backgroundColor: colors.bg.raised,
+      paddingHorizontal: spacing[3],
+      paddingTop: spacing[2],
+      paddingBottom: spacing[2],
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.divider,
+    },
+    inputRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: spacing[2],
+    },
+    input: {
+      flex: 1,
+      backgroundColor: colors.bg.input,
+      borderRadius: radii.lg,
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[3],
+      fontSize: typography.fontSize.base,
+      color: colors.fg.primary,
+      maxHeight: 160,
+      minHeight: 40,
+    },
+    actionButton: {
+      width: 40,
+      height: 40,
+      borderRadius: radii.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    sendButtonActive: {
+      backgroundColor: colors.accent.primary,
+    },
+    toolbar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing[2],
+      marginTop: spacing[2],
+      paddingHorizontal: spacing[1],
+    },
+    providerChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing[1],
+      paddingHorizontal: spacing[2],
+      paddingVertical: spacing[1],
+      borderRadius: radii.sm,
+      backgroundColor: colors.bg.input,
+    },
+    providerChipLabel: {
+      fontSize: typography.fontSize.xs,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.secondary,
+    },
+    modelChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing[1],
+      paddingHorizontal: spacing[2],
+      paddingVertical: spacing[1],
+      borderRadius: radii.sm,
+      backgroundColor: colors.bg.input,
+    },
+    modelLabel: {
+      fontSize: typography.fontSize.xs,
+      fontWeight: typography.fontWeight.medium,
+      color: colors.fg.secondary,
+      maxWidth: 110,
+    },
+    toolbarSpacer: {
+      flex: 1,
+    },
+  }), [colors]);
+  const chipStyles = useMemo(() => createChipStyles(colors), [colors]);
   const [text, setText] = useState('');
   const inputRef = useRef<TextInput>(null);
 
@@ -210,15 +293,16 @@ export const Composer = memo(function Composer({
         />
 
         {isWorking ? (
-          <Pressable
+          <AnimatedPressable
             style={styles.actionButton}
             onPress={handleInterrupt}
             hitSlop={8}
+            haptic="medium"
           >
             <StopCircle size={22} color={colors.semantic.error} />
-          </Pressable>
+          </AnimatedPressable>
         ) : (
-          <Pressable
+          <AnimatedPressable
             style={[
               styles.actionButton,
               hasText && styles.sendButtonActive,
@@ -226,12 +310,13 @@ export const Composer = memo(function Composer({
             onPress={handleSend}
             disabled={!hasText}
             hitSlop={8}
+            haptic={hasText ? 'medium' : undefined}
           >
             <Send
               size={18}
               color={hasText ? colors.fg.onAccent : colors.fg.muted}
             />
-          </Pressable>
+          </AnimatedPressable>
         )}
       </View>
 
@@ -272,13 +357,15 @@ export const Composer = memo(function Composer({
             icon={<Sparkles size={12} color={thinkingEnabled === false ? colors.fg.tertiary : colors.accent.primary} />}
             onPress={onThinkingPress}
             active={thinkingEnabled !== false}
+            chipStyles={chipStyles}
           />
         ) : onEffortPress ? (
           <ToolbarChip
             label={EFFORT_LABELS[effort] ?? effort}
-            icon={getEffortIcon(effort)}
+            icon={getEffortIcon(effort, colors)}
             onPress={onEffortPress}
             active={effort === 'high' || effort === 'max' || effort === 'xhigh' || effort === 'ultrathink'}
+            chipStyles={chipStyles}
           />
         ) : null}
 
@@ -288,6 +375,7 @@ export const Composer = memo(function Composer({
             icon={<Zap size={12} color={fastMode ? colors.accent.primary : colors.fg.tertiary} />}
             onPress={onFastModePress}
             active={fastMode}
+            chipStyles={chipStyles}
           />
         ) : null}
 
@@ -296,6 +384,7 @@ export const Composer = memo(function Composer({
             label={contextWindowLabel}
             icon={<ChevronDown size={12} color={colors.fg.tertiary} />}
             onPress={onContextWindowPress}
+            chipStyles={chipStyles}
           />
         ) : null}
 
@@ -305,6 +394,7 @@ export const Composer = memo(function Composer({
           icon={<Sparkles size={12} color={mode === 'plan' ? colors.accent.primary : colors.fg.tertiary} />}
           onPress={onModePress}
           active={mode === 'plan'}
+          chipStyles={chipStyles}
         />
 
         {/* Access chip */}
@@ -312,90 +402,11 @@ export const Composer = memo(function Composer({
           label={ACCESS_LABELS[accessLevel]}
           icon={null}
           onPress={onAccessPress}
+          chipStyles={chipStyles}
         />
       </ScrollView>
     </View>
   );
 });
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: colors.bg.raised,
-    paddingHorizontal: spacing[3],
-    paddingTop: spacing[2],
-    paddingBottom: spacing[2],
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.divider,
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: spacing[2],
-  },
-  input: {
-    flex: 1,
-    backgroundColor: colors.bg.input,
-    borderRadius: radii.lg,
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    fontSize: typography.fontSize.base,
-    color: colors.fg.primary,
-    maxHeight: 160,
-    minHeight: 40,
-  },
-  actionButton: {
-    width: 40,
-    height: 40,
-    borderRadius: radii.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sendButtonActive: {
-    backgroundColor: colors.accent.primary,
-  },
-
-  // Toolbar
-  toolbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    marginTop: spacing[2],
-    paddingHorizontal: spacing[1],
-  },
-  providerChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-    paddingHorizontal: spacing[2],
-    paddingVertical: spacing[1],   // was 5 (off-grid) → 4
-    borderRadius: radii.sm,
-    backgroundColor: colors.bg.input,
-  },
-  providerChipLabel: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.secondary,
-  },
-  modelChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-    paddingHorizontal: spacing[2],
-    paddingVertical: spacing[1],   // was 5 (off-grid) → 4
-    borderRadius: radii.sm,
-    backgroundColor: colors.bg.input,
-  },
-  modelLabel: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.secondary,
-    maxWidth: 110,
-  },
-  toolbarSpacer: {
-    flex: 1,
-  },
-});
+// Styles live in Composer component via useMemo — see component body.

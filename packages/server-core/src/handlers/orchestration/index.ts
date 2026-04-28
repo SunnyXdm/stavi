@@ -98,6 +98,33 @@ export function createOrchestrationHandlers(ctx: ServerContext): Record<string, 
         return;
       }
 
+      // User-input response for AskUserQuestion form (Phase E2).
+      // Mirrors thread.approval.respond: the mobile client dispatches this
+      // after the user submits answers; we hand them to the adapter which
+      // resolves the pending Deferred inside canUseTool().
+      if (type === 'thread.user-input.respond') {
+        if (!threadId) {
+          sendJson(ws, makeFailure(id, 'threadId is required'));
+          return;
+        }
+        const requestId = String(command.requestId ?? '');
+        const rawAnswers = Array.isArray(command.answers) ? command.answers : [];
+        const answers = rawAnswers.map((a: any) => ({
+          question: String(a?.question ?? ''),
+          selections: Array.isArray(a?.selections) ? a.selections.map((s: any) => String(s)) : [],
+          notes: typeof a?.notes === 'string' ? a.notes : undefined,
+        }));
+        const providerKind = (command.provider as string | undefined) ?? ctx.activeTurnAdapters.get(threadId);
+        const adapter = providerKind
+          ? ctx.providerRegistry.getAdapter(providerKind as any)
+          : ctx.providerRegistry.getDefaultAdapter();
+        if (adapter && requestId && 'respondToUserInput' in adapter) {
+          void (adapter as any).respondToUserInput(threadId, requestId, answers);
+        }
+        sendJson(ws, makeSuccess(id, { ok: true }));
+        return;
+      }
+
       // Unknown command type — still send ok (legacy behaviour)
       sendJson(ws, makeSuccess(id, { ok: true }));
     },

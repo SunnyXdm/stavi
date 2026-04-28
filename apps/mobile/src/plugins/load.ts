@@ -4,9 +4,9 @@
 // Import this file once (in App.tsx) to register all plugins.
 // Side-effect import: `import './plugins/load'`
 //
-// Directory layout (post Phase 0 rename):
-//   workspace/  — AI, Editor, Terminal, Git, Browser, workspace-search
-//   server/     — Processes, Ports, Monitor, system-search
+// Directory layout (post Phase 6 move):
+//   workspace/  — AI, Editor, Terminal, Git, Browser
+//   extra/      — Processes, Ports, Monitor, Search, Tools
 //   shared/     — Explorer
 
 import { usePluginRegistry } from '../stores/plugin-registry';
@@ -17,16 +17,17 @@ import { aiPlugin } from './workspace/ai';
 import { editorPlugin } from './workspace/editor';
 import { gitPlugin } from './workspace/git';
 import { browserPlugin } from './workspace/browser';
-import { workspaceSearchPlugin } from './workspace/workspace-search';
 
 // Shared plugins
 import { explorerPlugin } from './shared/explorer';
 
-// Server plugins
-import { processesPlugin } from './server/processes';
-import { portsPlugin } from './server/ports';
-import { monitorPlugin } from './server/monitor';
-import { systemSearchPlugin } from './server/system-search';
+// Extra plugins (processes/ports/monitor moved from server/ in Phase 6)
+import { processesPlugin } from './extra/processes';
+import { portsPlugin } from './extra/ports';
+import { monitorPlugin } from './extra/monitor';
+import { systemSearchPlugin } from './extra/system-search';
+
+import { toolsPlugin } from './extra/tools';
 
 const { register } = usePluginRegistry.getState();
 
@@ -39,10 +40,10 @@ register(browserPlugin, browserPlugin.component);
 
 // Register shared plugins
 register(explorerPlugin, explorerPlugin.component);
-register(workspaceSearchPlugin, workspaceSearchPlugin.component);
 
-// Register server plugins
+// Register extra plugins (processes/ports/monitor/search)
 register(processesPlugin, processesPlugin.component);
 register(portsPlugin, portsPlugin.component);
 register(monitorPlugin, monitorPlugin.component);
 register(systemSearchPlugin, systemSearchPlugin.component);
+register(toolsPlugin, toolsPlugin.component);

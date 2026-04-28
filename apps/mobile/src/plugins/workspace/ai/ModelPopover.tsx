@@ -7,7 +7,7 @@
 //       plugins/workspace/ai/ConfigSheet.tsx (alternative full-sheet selector),
 //       theme/provider-brands.ts (brand colors — NOT theme tokens)
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,8 @@ import {
   Modal,
 } from 'react-native';
 import { Check, ChevronRight, ChevronLeft, Shield, ShieldCheck, ShieldOff } from 'lucide-react-native';
-import { colors, typography, spacing, radii } from '../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../theme';
+import type { Colors } from '../../../theme';
 import { providerBrands } from '../../../theme/provider-brands';
 import type { ProviderInfo, ConfigSelection } from './ConfigSheet';
 import { ProviderIcon } from './ProviderIcon';
@@ -83,6 +84,43 @@ function normalizeSelectionForModel(selection: ConfigSelection, model?: Provider
 }
 
 // ----------------------------------------------------------
+// Styles factory
+// ----------------------------------------------------------
+
+function createPopoverStyles(colors: Colors) {
+  return StyleSheet.create({
+    // Quick popover (effort/mode/access) — floats above the toolbar
+    quickOverlay: { flex: 1, justifyContent: 'flex-end', paddingBottom: 90, paddingHorizontal: spacing[3] },
+    quickBox: { backgroundColor: colors.bg.overlay, borderRadius: radii.lg, maxHeight: 380, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.divider, elevation: 24 },
+    // Bottom sheet (providers/models)
+    sheetOverlay: { flex: 1, justifyContent: 'flex-end' },
+    sheetBox: { backgroundColor: colors.bg.overlay, borderTopLeftRadius: radii.xl, borderTopRightRadius: radii.xl, maxHeight: '65%', borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.divider, elevation: 20 },
+    // Row
+    row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing[3], paddingVertical: spacing[3], gap: spacing[2] },
+    rowPressed: { backgroundColor: colors.bg.active },
+    rowCheck: { width: 18, alignItems: 'center' },
+    rowIcon: { width: 22, alignItems: 'center' },
+    rowText: { flex: 1, gap: 2 },
+    rowLabel: { fontSize: typography.fontSize.sm, color: colors.fg.secondary, fontWeight: typography.fontWeight.medium },
+    rowLabelSelected: { color: colors.fg.primary },
+    rowLabelMuted: { color: colors.fg.muted },
+    rowSublabel: { fontSize: typography.fontSize.xs, color: colors.fg.muted, lineHeight: 16 },
+    // Section header
+    sectionHeader: { fontSize: typography.fontSize.xs, fontWeight: typography.fontWeight.semibold, color: colors.fg.muted, textTransform: 'uppercase', letterSpacing: 0.5, paddingHorizontal: spacing[3], paddingTop: spacing[2], paddingBottom: 4 },
+    divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.divider, marginVertical: 4 },
+    // Back row (models view)
+    backRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], paddingHorizontal: spacing[3], paddingVertical: 12 },
+    backLabel: { fontSize: typography.fontSize.base, fontWeight: typography.fontWeight.semibold, color: colors.fg.primary },
+    lockedBadge: { marginLeft: 'auto', fontSize: 10, fontWeight: typography.fontWeight.semibold, color: colors.fg.muted, letterSpacing: 0.5 },
+    // Provider list
+    activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent.primary },
+    comingSoon: { fontSize: 10, fontWeight: typography.fontWeight.semibold, color: colors.fg.muted, letterSpacing: 0.3 },
+  });
+}
+
+type PopoverStyles = ReturnType<typeof createPopoverStyles>;
+
+// ----------------------------------------------------------
 // Shared row component
 // ----------------------------------------------------------
 
@@ -92,12 +130,16 @@ function MenuRow({
   icon,
   selected,
   onPress,
+  s,
+  colors,
 }: {
   label: string;
   sublabel?: string;
   icon?: React.ReactNode;
   selected?: boolean;
   onPress?: () => void;
+  s: PopoverStyles;
+  colors: Colors;
 }) {
   return (
     <Pressable
@@ -120,11 +162,13 @@ function MenuRow({
 // Effort section content
 // ----------------------------------------------------------
 
-function EffortContent({ selection, providers, onSelect, onClose }: {
+function EffortContent({ selection, providers, onSelect, onClose, s, colors }: {
   selection: ConfigSelection;
   providers: ProviderInfo[];
   onSelect: (s: ConfigSelection) => void;
   onClose: () => void;
+  s: PopoverStyles;
+  colors: Colors;
 }) {
   const model = getCurrentModel(providers, selection);
   const options = model?.capabilities.reasoningEffortLevels ?? [];
@@ -137,16 +181,20 @@ function EffortContent({ selection, providers, onSelect, onClose }: {
           label={opt.label}
           selected={selection.effort === opt.value}
           onPress={() => { onSelect({ ...selection, effort: opt.value }); onClose(); }}
+          s={s}
+          colors={colors}
         />
       ))}
     </>
   );
 }
 
-function ThinkingContent({ selection, onSelect, onClose }: {
+function ThinkingContent({ selection, onSelect, onClose, s, colors }: {
   selection: ConfigSelection;
   onSelect: (s: ConfigSelection) => void;
   onClose: () => void;
+  s: PopoverStyles;
+  colors: Colors;
 }) {
   return (
     <>
@@ -157,16 +205,20 @@ function ThinkingContent({ selection, onSelect, onClose }: {
           label={val ? 'On' : 'Off'}
           selected={selection.thinking === val}
           onPress={() => { onSelect({ ...selection, thinking: val }); onClose(); }}
+          s={s}
+          colors={colors}
         />
       ))}
     </>
   );
 }
 
-function FastModeContent({ selection, onSelect, onClose }: {
+function FastModeContent({ selection, onSelect, onClose, s, colors }: {
   selection: ConfigSelection;
   onSelect: (s: ConfigSelection) => void;
   onClose: () => void;
+  s: PopoverStyles;
+  colors: Colors;
 }) {
   return (
     <>
@@ -177,17 +229,21 @@ function FastModeContent({ selection, onSelect, onClose }: {
           label={val ? 'On' : 'Off'}
           selected={Boolean(selection.fastMode) === val}
           onPress={() => { onSelect({ ...selection, fastMode: val }); onClose(); }}
+          s={s}
+          colors={colors}
         />
       ))}
     </>
   );
 }
 
-function ContextWindowContent({ selection, providers, onSelect, onClose }: {
+function ContextWindowContent({ selection, providers, onSelect, onClose, s, colors }: {
   selection: ConfigSelection;
   providers: ProviderInfo[];
   onSelect: (s: ConfigSelection) => void;
   onClose: () => void;
+  s: PopoverStyles;
+  colors: Colors;
 }) {
   const model = getCurrentModel(providers, selection);
   const options = model?.capabilities.contextWindowOptions ?? [];
@@ -200,6 +256,8 @@ function ContextWindowContent({ selection, providers, onSelect, onClose }: {
           label={opt.label}
           selected={selection.contextWindow === opt.value}
           onPress={() => { onSelect({ ...selection, contextWindow: opt.value }); onClose(); }}
+          s={s}
+          colors={colors}
         />
       ))}
     </>
@@ -210,16 +268,18 @@ function ContextWindowContent({ selection, providers, onSelect, onClose }: {
 // Mode section content
 // ----------------------------------------------------------
 
-function ModeContent({ mode, onModeChange, onClose }: {
+function ModeContent({ mode, onModeChange, onClose, s, colors }: {
   mode: InteractionMode;
   onModeChange: (m: InteractionMode) => void;
   onClose: () => void;
+  s: PopoverStyles;
+  colors: Colors;
 }) {
   return (
     <>
       <Text style={s.sectionHeader}>Mode</Text>
-      <MenuRow label="Chat" selected={mode === 'default'} onPress={() => { onModeChange('default'); onClose(); }} />
-      <MenuRow label="Plan" selected={mode === 'plan'} onPress={() => { onModeChange('plan'); onClose(); }} />
+      <MenuRow label="Chat" selected={mode === 'default'} onPress={() => { onModeChange('default'); onClose(); }} s={s} colors={colors} />
+      <MenuRow label="Plan" selected={mode === 'plan'} onPress={() => { onModeChange('plan'); onClose(); }} s={s} colors={colors} />
     </>
   );
 }
@@ -228,31 +288,33 @@ function ModeContent({ mode, onModeChange, onClose }: {
 // Access section content
 // ----------------------------------------------------------
 
-const ACCESS_OPTIONS: Array<{ value: AccessLevel; label: string; sublabel: string; icon: React.ReactNode }> = [
+const ACCESS_OPTIONS: Array<{ value: AccessLevel; label: string; sublabel: string; icon: (colors: Colors) => React.ReactNode }> = [
   {
     value: 'supervised',
     label: 'Supervised',
     sublabel: 'Ask before commands and file changes.',
-    icon: <Shield size={16} color={colors.fg.secondary} />,
+    icon: (colors) => <Shield size={16} color={colors.fg.secondary} />,
   },
   {
     value: 'auto-accept',
     label: 'Auto-accept edits',
     sublabel: 'Auto-approve edits, ask before other actions.',
-    icon: <ShieldCheck size={16} color={colors.fg.secondary} />,
+    icon: (colors) => <ShieldCheck size={16} color={colors.fg.secondary} />,
   },
   {
     value: 'full-access',
     label: 'Full access',
     sublabel: 'Allow commands and edits without prompts.',
-    icon: <ShieldOff size={16} color={colors.fg.secondary} />,
+    icon: (colors) => <ShieldOff size={16} color={colors.fg.secondary} />,
   },
 ];
 
-function AccessContent({ accessLevel, onAccessChange, onClose }: {
+function AccessContent({ accessLevel, onAccessChange, onClose, s, colors }: {
   accessLevel: AccessLevel;
   onAccessChange: (a: AccessLevel) => void;
   onClose: () => void;
+  s: PopoverStyles;
+  colors: Colors;
 }) {
   return (
     <>
@@ -261,9 +323,11 @@ function AccessContent({ accessLevel, onAccessChange, onClose }: {
           key={opt.value}
           label={opt.label}
           sublabel={opt.sublabel}
-          icon={opt.icon}
+          icon={opt.icon(colors)}
           selected={accessLevel === opt.value}
           onPress={() => { onAccessChange(opt.value); onClose(); }}
+          s={s}
+          colors={colors}
         />
       ))}
     </>
@@ -274,11 +338,13 @@ function AccessContent({ accessLevel, onAccessChange, onClose }: {
 // Providers list content
 // ----------------------------------------------------------
 
-function ProvidersContent({ providers, selection, onSelect, onShowModels }: {
+function ProvidersContent({ providers, selection, onSelect, onShowModels, s, colors }: {
   providers: ProviderInfo[];
   selection: ConfigSelection;
   onSelect: (s: ConfigSelection) => void;
   onShowModels: () => void;
+  s: PopoverStyles;
+  colors: Colors;
 }) {
   return (
     <>
@@ -326,12 +392,14 @@ function ProvidersContent({ providers, selection, onSelect, onShowModels }: {
 // Models list content
 // ----------------------------------------------------------
 
-function ModelsContent({ providers, selection, onSelect, onBack, providerLocked }: {
+function ModelsContent({ providers, selection, onSelect, onBack, providerLocked, s, colors }: {
   providers: ProviderInfo[];
   selection: ConfigSelection;
   onSelect: (s: ConfigSelection) => void;
   onBack: () => void;
   providerLocked?: boolean;
+  s: PopoverStyles;
+  colors: Colors;
 }) {
   const provider = providers.find((p) => p.provider === selection.provider);
   return (
@@ -356,6 +424,8 @@ function ModelsContent({ providers, selection, onSelect, onBack, providerLocked 
           label={model.name}
           selected={model.id === selection.modelId}
           onPress={() => onSelect(normalizeSelectionForModel(selection, model))}
+          s={s}
+          colors={colors}
         />
       ))}
       <View style={{ height: spacing[2] }} />
@@ -380,6 +450,8 @@ export function ModelPopover({
   accessLevel,
   onAccessChange,
 }: ModelPopoverProps) {
+  const { colors } = useTheme();
+  const s = useMemo(() => createPopoverStyles(colors), [colors]);
   const [view, setView] = useState<'providers' | 'models'>('providers');
 
   useEffect(() => {
@@ -406,22 +478,22 @@ export function ModelPopover({
         <View style={isQuick ? s.quickBox : s.sheetBox}>
           <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
             {section === 'effort' && (
-              <EffortContent selection={selection} providers={providers} onSelect={onSelect} onClose={onClose} />
+              <EffortContent selection={selection} providers={providers} onSelect={onSelect} onClose={onClose} s={s} colors={colors} />
             )}
             {section === 'thinking' && (
-              <ThinkingContent selection={selection} onSelect={onSelect} onClose={onClose} />
+              <ThinkingContent selection={selection} onSelect={onSelect} onClose={onClose} s={s} colors={colors} />
             )}
             {section === 'fastMode' && (
-              <FastModeContent selection={selection} onSelect={onSelect} onClose={onClose} />
+              <FastModeContent selection={selection} onSelect={onSelect} onClose={onClose} s={s} colors={colors} />
             )}
             {section === 'contextWindow' && (
-              <ContextWindowContent selection={selection} providers={providers} onSelect={onSelect} onClose={onClose} />
+              <ContextWindowContent selection={selection} providers={providers} onSelect={onSelect} onClose={onClose} s={s} colors={colors} />
             )}
             {section === 'mode' && (
-              <ModeContent mode={mode} onModeChange={onModeChange} onClose={onClose} />
+              <ModeContent mode={mode} onModeChange={onModeChange} onClose={onClose} s={s} colors={colors} />
             )}
             {section === 'access' && (
-              <AccessContent accessLevel={accessLevel} onAccessChange={onAccessChange} onClose={onClose} />
+              <AccessContent accessLevel={accessLevel} onAccessChange={onAccessChange} onClose={onClose} s={s} colors={colors} />
             )}
             {(section === 'providers' || section === 'models') && (
               view === 'providers' ? (
@@ -430,6 +502,8 @@ export function ModelPopover({
                   selection={selection}
                   onSelect={onSelect}
                   onShowModels={() => setView('models')}
+                  s={s}
+                  colors={colors}
                 />
               ) : (
                 <ModelsContent
@@ -438,6 +512,8 @@ export function ModelPopover({
                   onSelect={onSelect}
                   providerLocked={providerLocked}
                   onBack={() => setView('providers')}
+                  s={s}
+                  colors={colors}
                 />
               )
             )}
@@ -448,132 +524,4 @@ export function ModelPopover({
   );
 }
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const s = StyleSheet.create({
-  // Quick popover (effort/mode/access) — floats above the toolbar
-  quickOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    paddingBottom: 90, // above the composer toolbar
-    paddingHorizontal: spacing[3],
-  },
-  quickBox: {
-    backgroundColor: colors.bg.overlay,
-    borderRadius: radii.lg,
-    maxHeight: 380,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.divider,
-    elevation: 24,
-  },
-
-  // Bottom sheet (providers/models)
-  sheetOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  sheetBox: {
-    backgroundColor: colors.bg.overlay,
-    borderTopLeftRadius: radii.xl,
-    borderTopRightRadius: radii.xl,
-    maxHeight: '65%',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.divider,
-    elevation: 20,
-  },
-
-  // Row
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[3], // was 10 (off-grid) → spacing[3] = 12
-    gap: spacing[2],
-  },
-  rowPressed: {
-    backgroundColor: colors.bg.active,
-  },
-  rowCheck: {
-    width: 18,
-    alignItems: 'center',
-  },
-  rowIcon: {
-    width: 22,
-    alignItems: 'center',
-  },
-  rowText: {
-    flex: 1,
-    gap: 2,
-  },
-  rowLabel: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.secondary,
-    fontWeight: typography.fontWeight.medium,
-  },
-  rowLabelSelected: {
-    color: colors.fg.primary,
-  },
-  rowLabelMuted: {
-    color: colors.fg.muted,
-  },
-  rowSublabel: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-    lineHeight: 16,
-  },
-
-  // Section header
-  sectionHeader: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    paddingHorizontal: spacing[3],
-    paddingTop: spacing[2],
-    paddingBottom: 4,
-  },
-
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.divider,
-    marginVertical: 4,
-  },
-
-  // Back row (models view)
-  backRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    paddingHorizontal: spacing[3],
-    paddingVertical: 12,
-  },
-  backLabel: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-  },
-  lockedBadge: {
-    marginLeft: 'auto',
-    fontSize: 10,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.muted,
-    letterSpacing: 0.5,
-  },
-
-  // Provider list
-  activeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.accent.primary,
-  },
-  comingSoon: {
-    fontSize: 10,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.muted,
-    letterSpacing: 0.3,
-  },
-});
+// Styles computed dynamically via createPopoverStyles — see factory above.

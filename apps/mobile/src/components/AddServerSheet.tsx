@@ -6,14 +6,15 @@
 // SEE:  apps/mobile/src/components/AddServerModal.tsx, apps/mobile/src/stores/connection.ts,
 //       apps/mobile/src/navigation/PairServerScreen.tsx
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { AppNavigation } from '../navigation/types';
 import { QrCode } from 'lucide-react-native';
 import { AddServerModal } from './AddServerModal';
 import { useConnectionStore, type SavedConnection } from '../stores/connection';
-import { colors, spacing, radii, typography } from '../theme';
+import { useTheme } from '../theme';
+import { spacing, radii, typography } from '../theme';
 
 interface AddServerSheetProps {
   visible: boolean;
@@ -22,8 +23,9 @@ interface AddServerSheetProps {
 }
 
 export function AddServerSheet({ visible, onClose, onComplete }: AddServerSheetProps) {
-  const navigation = useNavigation<NativeStackNavigationProp<any>>();
+  const navigation = useNavigation<AppNavigation>();
   const connectServer = useConnectionStore((state) => state.connectServer);
+  const { colors } = useTheme();
 
   const handleComplete = useCallback(
     async (connection: SavedConnection) => {
@@ -46,6 +48,28 @@ export function AddServerSheet({ visible, onClose, onComplete }: AddServerSheetP
     navigation.navigate('PairServer');
   }, [navigation, onClose]);
 
+  const styles = useMemo(() => StyleSheet.create({
+    qrButton: {
+      position: 'absolute',
+      bottom: spacing[6],
+      alignSelf: 'center',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing[2],
+      paddingVertical: spacing[2],
+      paddingHorizontal: spacing[4],
+      borderRadius: radii.full,
+      backgroundColor: colors.bg.raised,
+      borderWidth: 1,
+      borderColor: colors.divider,
+    },
+    qrButtonText: {
+      fontSize: typography.fontSize.sm,
+      color: colors.accent.primary,
+      fontWeight: typography.fontWeight.medium,
+    },
+  }), [colors]);
+
   return (
     <>
       <AddServerModal
@@ -63,25 +87,3 @@ export function AddServerSheet({ visible, onClose, onComplete }: AddServerSheetP
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  qrButton: {
-    position: 'absolute',
-    bottom: spacing[6],
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    paddingVertical: spacing[2],
-    paddingHorizontal: spacing[4],
-    borderRadius: radii.full,
-    backgroundColor: colors.bg.raised,
-    borderWidth: 1,
-    borderColor: colors.divider,
-  },
-  qrButtonText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.accent.primary,
-    fontWeight: typography.fontWeight.medium,
-  },
-});

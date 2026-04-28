@@ -12,7 +12,7 @@
 //       apps/mobile/src/plugins/shared/explorer/index.tsx,
 //       apps/mobile/src/services/event-bus.ts
 
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -31,7 +31,9 @@ import {
 } from 'lucide-react-native';
 import { FlashList } from '@shopify/flash-list';
 import type { FsEntry } from '../store';
-import { colors, typography, spacing, radii } from '../../../../theme';
+import { useTheme } from '../../../../theme';
+import { typography, spacing, radii } from '../../../../theme';
+import type { Colors } from '../../../../theme';
 import { eventBus } from '../../../../services/event-bus';
 
 // ----------------------------------------------------------
@@ -51,10 +53,70 @@ interface ExplorerListProps {
 }
 
 // ----------------------------------------------------------
+// Style factory
+// ----------------------------------------------------------
+
+function createListStyles(colors: Colors) {
+  return StyleSheet.create({
+    row: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[2],
+      gap: spacing[3],
+      minHeight: 44,
+    },
+    rowPressed: {
+      backgroundColor: colors.bg.active,
+    },
+    rowSelected: {
+      backgroundColor: colors.accent.subtle,
+    },
+    checkbox: {
+      width: 20,
+      height: 20,
+      borderRadius: radii.sm,
+      borderWidth: 1.5,
+      borderColor: colors.fg.muted,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+    },
+    checkboxSelected: {
+      backgroundColor: colors.accent.primary,
+      borderColor: colors.accent.primary,
+    },
+    name: {
+      flex: 1,
+      fontSize: typography.fontSize.sm,
+      fontFamily: typography.fontFamily.mono,
+      color: colors.fg.secondary,
+    },
+    nameDir: {
+      color: colors.fg.primary,
+      fontFamily: typography.fontFamily.monoMedium,
+    },
+    meta: {
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.muted,
+    },
+    empty: {
+      paddingTop: spacing[16],
+      alignItems: 'center' as const,
+    },
+    emptyText: {
+      fontSize: typography.fontSize.sm,
+      color: colors.fg.muted,
+    },
+  });
+}
+
+type ListStyles = ReturnType<typeof createListStyles>;
+
+// ----------------------------------------------------------
 // File icon helper
 // ----------------------------------------------------------
 
-function FileIcon({ name, size = 16 }: { name: string; size?: number }) {
+function FileIcon({ name, size = 16, colors }: { name: string; size?: number; colors: Colors }) {
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
   const codeExts = [
     'ts','tsx','js','jsx','mjs','cjs','py','rs','go','java','kt','swift',
@@ -100,6 +162,8 @@ const EntryRow = memo(function EntryRow({
   onLongPress: (path: string) => void;
   onToggleSelect: (path: string) => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createListStyles(colors), [colors]);
   const isDir = entry.type === 'directory';
 
   const handlePress = useCallback(() => {
@@ -140,7 +204,7 @@ const EntryRow = memo(function EntryRow({
       {isDir ? (
         <Folder size={18} color={colors.semantic.warning} />
       ) : (
-        <FileIcon name={entry.name} size={18} />
+        <FileIcon name={entry.name} size={18} colors={colors} />
       )}
 
       {/* Name */}
@@ -160,6 +224,8 @@ const EntryRow = memo(function EntryRow({
 // List
 // ----------------------------------------------------------
 
+const LIST_CONTENT_STYLE = { paddingBottom: spacing[4] };
+
 export const ExplorerList = memo(function ExplorerList({
   sessionId,
   entries,
@@ -171,6 +237,10 @@ export const ExplorerList = memo(function ExplorerList({
   onRefresh,
   refreshing,
 }: ExplorerListProps) {
+  const { colors } = useTheme();
+  // Shared empty state styles (these don't belong to EntryRow)
+  const emptyStyles = useMemo(() => createListStyles(colors), [colors]);
+
   const renderItem = useCallback(({ item }: { item: FsEntry }) => (
     <EntryRow
       entry={item}
@@ -192,71 +262,14 @@ export const ExplorerList = memo(function ExplorerList({
       keyExtractor={keyExtractor}
       onRefresh={onRefresh}
       refreshing={refreshing}
-      contentContainerStyle={styles.listContent}
+      contentContainerStyle={LIST_CONTENT_STYLE}
       ListEmptyComponent={
-        <View style={styles.empty}>
-          <Text style={styles.emptyText}>This folder is empty</Text>
+        <View style={emptyStyles.empty}>
+          <Text style={emptyStyles.emptyText}>This folder is empty</Text>
         </View>
       }
     />
   );
 });
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[2],
-    gap: spacing[3],
-    minHeight: 44,
-  },
-  rowPressed: {
-    backgroundColor: colors.bg.active,
-  },
-  rowSelected: {
-    backgroundColor: colors.accent.subtle,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: radii.sm,
-    borderWidth: 1.5,
-    borderColor: colors.fg.muted,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxSelected: {
-    backgroundColor: colors.accent.primary,
-    borderColor: colors.accent.primary,
-  },
-  name: {
-    flex: 1,
-    fontSize: typography.fontSize.sm,
-    fontFamily: typography.fontFamily.mono,
-    color: colors.fg.secondary,
-  },
-  nameDir: {
-    color: colors.fg.primary,
-    fontFamily: typography.fontFamily.monoMedium,
-  },
-  meta: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-  },
-  listContent: {
-    paddingBottom: spacing[4],
-  },
-  empty: {
-    paddingTop: spacing[16],
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.muted,
-  },
-});
+// Styles computed dynamically via useMemo (createListStyles factory) — see EntryRow body.

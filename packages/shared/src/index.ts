@@ -7,16 +7,18 @@ export type {
   PluginKind,
   PluginDefinition,
   WorkspacePluginDefinition,
-  ServerPluginDefinition,
   PluginInstance,
   PluginStatus,
   PluginPanelProps,
   WorkspacePluginPanelProps,
-  ServerPluginPanelProps,
   PluginPermission,
   PluginAPI,
   SessionRegistration,
   SessionEntry,
+  PluginSettingFieldType,
+  PluginSettingField,
+  PluginSettingsSection,
+  PluginSettingsSchema,
 } from './plugin-types';
 
 // Plugin events
@@ -45,6 +47,21 @@ export type {
   SubscriptionMessage,
   PairingPayload,
 } from './transport-types';
+
+// Terminal (cells-mode VT diff — Phase C1)
+export type {
+  CellStyle,
+  CellDiff,
+  TerminalFrame,
+  TerminalSubscribeMode,
+} from './terminal';
+export {
+  CELL_FLAG_BOLD,
+  CELL_FLAG_ITALIC,
+  CELL_FLAG_UNDERLINE,
+  CELL_FLAG_INVERSE,
+  CELL_COLOR_RGB_FLAG,
+} from './terminal';
 
 // Domain types
 export type {

@@ -9,7 +9,7 @@
 //       apps/mobile/src/plugins/workspace/editor/language-map.ts,
 //       apps/mobile/src/plugins/workspace/editor/store.ts
 
-import React, { useRef, useEffect, useCallback, useId } from 'react';
+import React, { useRef, useEffect, useCallback, useId, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,7 +21,7 @@ import {
 import WebView from 'react-native-webview';
 import type { WebViewMessageEvent } from 'react-native-webview';
 import { FileText, AlertCircle } from 'lucide-react-native';
-import { colors, typography, spacing } from '../../../../theme';
+import { useTheme, typography, spacing } from '../../../../theme';
 import { useEditorStore } from '../store';
 import { isBinary, detectLanguage } from '../language-map';
 import type { EditorAction } from './EditorToolbar';
@@ -161,10 +161,24 @@ export function EditorSurface({
   onCursorMoved,
   bridgeRef,
 }: EditorSurfaceProps) {
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1 },
+    webview: { flex: 1, backgroundColor: colors.bg.base },
+    overlay: { ...StyleSheet.absoluteFill, backgroundColor: colors.bg.base, alignItems: 'center', justifyContent: 'center', gap: spacing[3], padding: spacing[6] },
+    emptyText: { fontSize: typography.fontSize.sm, color: colors.fg.muted, textAlign: 'center' },
+    binaryPath: { fontSize: typography.fontSize.xs, color: colors.fg.muted, fontFamily: typography.fontFamily.mono },
+  }), [colors]);
+
   const webviewRef = useRef<WebView>(null);
   const bridgeInstance = useRef(new EditorBridge(webviewRef));
   const lastLoadedPath = useRef<string | null>(null);
   const { setFileDirty, setFileContent } = useEditorStore.getState();
+
+  // Inject theme on mount and whenever isDark changes
+  useEffect(() => {
+    bridgeInstance.current.send({ type: 'setTheme', theme: isDark ? 'dark' : 'light' });
+  }, [isDark]);
 
   // Expose bridge handle to parent (for toolbar actions)
   useEffect(() => {
@@ -349,36 +363,4 @@ export function EditorSurface({
   );
 }
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  webview: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-  // Overlay covers the WebView for empty/loading/error/binary states.
-  // Uses bg.base background so the WebView beneath is fully hidden.
-  overlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: colors.bg.base,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing[3],
-    padding: spacing[6],
-  },
-  emptyText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.muted,
-    textAlign: 'center',
-  },
-  binaryPath: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-    fontFamily: typography.fontFamily.mono,
-  },
-});
+// Styles computed dynamically via useMemo — see component body.

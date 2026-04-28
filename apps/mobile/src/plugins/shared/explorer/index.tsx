@@ -13,7 +13,7 @@
 //       packages/server-core/src/handlers/fs-batch.ts,
 //       docs/PROTOCOL.md §5.5
 
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -32,22 +32,68 @@ import { ExplorerList } from './components/ExplorerList';
 import { ExplorerToolbar } from './components/ExplorerToolbar';
 import { EntryMetaSheet } from './components/EntryMetaSheet';
 import { DestinationPicker } from './components/DestinationPicker';
-import { colors, typography, spacing } from '../../../theme';
-import { textStyles } from '../../../theme/styles';
+import { useTheme } from '../../../theme';
+import { typography, spacing } from '../../../theme';
 import { logEvent } from '../../../services/telemetry';
 import { ErrorView, LoadingView, EmptyView } from '../../../components/StateViews';
+
+// Sentinels — frozen empty values reused by Zustand selectors to avoid new-object-per-snapshot.
+const EMPTY_ENTRIES: never[] = Object.freeze([]) as never[];
+const EMPTY_SELECTION: ReadonlySet<string> = Object.freeze(new Set<string>());
 
 // ----------------------------------------------------------
 // Panel
 // ----------------------------------------------------------
 
 function ExplorerPanel({ session, instanceId }: WorkspacePluginPanelProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.bg.base,
+    },
+    headerRow: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[1],
+      gap: spacing[2],
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.dividerSubtle,
+      backgroundColor: colors.bg.base,
+    },
+    headerBtn: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: spacing[1],
+      paddingHorizontal: spacing[2],
+      paddingVertical: spacing[1],
+    },
+    headerBtnText: {
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.muted,
+    },
+    progressBanner: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: spacing[2],
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[2],
+      backgroundColor: colors.accent.subtle,
+    },
+    progressText: {
+      fontSize: typography.fontSize.xs,
+      color: colors.accent.primary,
+      fontFamily: typography.fontFamily.mono,
+    },
+  }), [colors]);
+
   const { serverId, id: sessionId, folder: sessionFolder, title: sessionTitle } = session;
 
   // Store slices
   const cwd = useExplorerStore((s) => s.cwdBySession[sessionId] ?? sessionFolder);
-  const entries = useExplorerStore((s) => s.entriesBySession[sessionId] ?? []);
-  const selection = useExplorerStore((s) => s.selectionBySession[sessionId] ?? new Set<string>());
+  const entries = useExplorerStore((s) => s.entriesBySession[sessionId] ?? EMPTY_ENTRIES);
+  const selection = useExplorerStore((s) => s.selectionBySession[sessionId] ?? EMPTY_SELECTION);
   const isSelecting = useExplorerStore((s) => s.isSelectingBySession[sessionId] ?? false);
   const loading = useExplorerStore((s) => s.loadingBySession[sessionId] ?? false);
   const error = useExplorerStore((s) => s.errorBySession[sessionId] ?? null);
@@ -336,47 +382,5 @@ export const explorerPlugin: WorkspacePluginDefinition = {
   component: ExplorerPanel,
 };
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
+// Styles computed dynamically via useMemo — see component body.
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[1],
-    gap: spacing[2],
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.dividerSubtle,
-    backgroundColor: colors.bg.base,
-  },
-  headerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-    paddingHorizontal: spacing[2],
-    paddingVertical: spacing[1],
-  },
-  headerBtnText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-  },
-  progressBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[2],
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[2],
-    backgroundColor: colors.accent.subtle,
-  },
-  progressText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.accent.primary,
-    fontFamily: typography.fontFamily.mono,
-  },
-});

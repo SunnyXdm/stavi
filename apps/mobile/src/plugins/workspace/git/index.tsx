@@ -5,7 +5,7 @@
 // State and RPC calls live in hooks/useGit.ts
 // CommitSheet component lives in components/CommitSheet.tsx
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable,
   RefreshControl, ActivityIndicator, ScrollView, Animated,
@@ -20,21 +20,45 @@ import type {
   WorkspacePluginPanelProps,
 } from '@stavi/shared';
 import type { GitPluginAPI } from '@stavi/shared';
-import { colors, typography, spacing, radii } from '../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../theme';
+import type { Colors } from '../../../theme';
 import { textStyles } from '../../../theme/styles';
-import { EmptyView, LoadingView } from '../../../components/StateViews';
+import { EmptyView } from '../../../components/StateViews';
+import { SkeletonRows } from '../../../components/Skeleton';
 import { useConnectionStore } from '../../../stores/connection';
 import { useGit, type TabId, type GitFile } from './hooks/useGit';
 import { CommitSheet } from './components/CommitSheet';
+
+// ----------------------------------------------------------
+// Styles factories for sub-components
+// ----------------------------------------------------------
+
+function createActionStyles(colors: Colors) {
+  return StyleSheet.create({
+    btn: { width: 28, height: 28, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg.input },
+  });
+}
+
+function createSectionStyles(colors: Colors) {
+  return StyleSheet.create({
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing[4], paddingVertical: spacing[2], paddingTop: spacing[3] },
+    left: { flexDirection: 'row', alignItems: 'center', gap: spacing[2] },
+    dot: { width: 8, height: 8, borderRadius: 4 },
+    label: { fontSize: typography.fontSize.xs, fontWeight: typography.fontWeight.semibold, letterSpacing: 0.5 },
+    count: { fontSize: typography.fontSize.xs, color: colors.fg.muted, fontFamily: typography.fontFamily.mono },
+    actions: { flexDirection: 'row', gap: spacing[1] },
+  });
+}
 
 // ----------------------------------------------------------
 // Small pure UI helpers (too small to extract to their own files)
 // ----------------------------------------------------------
 
 function FileActionButton({
-  icon: Icon, color, onPress, disabled,
+  icon: Icon, color, onPress, disabled, actionStyles,
 }: {
   icon: typeof Plus; color: string; onPress: () => void; disabled?: boolean;
+  actionStyles: ReturnType<typeof createActionStyles>;
 }) {
   return (
     <Pressable
@@ -45,12 +69,10 @@ function FileActionButton({
     </Pressable>
   );
 }
-const actionStyles = StyleSheet.create({
-  btn: { width: 28, height: 28, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg.input },
-});
 
-function SectionHeader({ label, count, color: headerColor, actions }: {
+function SectionHeader({ label, count, color: headerColor, actions, sectionStyles }: {
   label: string; count: number; color: string; actions?: React.ReactNode;
+  sectionStyles: ReturnType<typeof createSectionStyles>;
 }) {
   return (
     <View style={sectionStyles.header}>
@@ -63,14 +85,6 @@ function SectionHeader({ label, count, color: headerColor, actions }: {
     </View>
   );
 }
-const sectionStyles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing[4], paddingVertical: spacing[2], paddingTop: spacing[3] },
-  left: { flexDirection: 'row', alignItems: 'center', gap: spacing[2] },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  label: { fontSize: typography.fontSize.xs, fontWeight: typography.fontWeight.semibold, letterSpacing: 0.5 },
-  count: { fontSize: typography.fontSize.xs, color: colors.fg.muted, fontFamily: typography.fontFamily.mono },
-  actions: { flexDirection: 'row', gap: spacing[1] },
-});
 
 function getFileStatusIcon(status: string) {
   switch (status) {
@@ -81,7 +95,7 @@ function getFileStatusIcon(status: string) {
     default: return FileEdit;
   }
 }
-function getFileStatusColor(status: string, staged: boolean) {
+function getFileStatusColor(status: string, staged: boolean, colors: Colors) {
   if (staged) return colors.semantic.success;
   switch (status) {
     case 'added': return colors.semantic.success;
@@ -122,6 +136,54 @@ const TABS: Array<{ id: TabId; label: string; icon: typeof Layers }> = [
 // ----------------------------------------------------------
 
 function GitPanel({ session }: WorkspacePluginPanelProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.bg.base },
+    branchHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing[4], paddingVertical: spacing[3], backgroundColor: colors.bg.raised },
+    branchInfo: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], flex: 1 },
+    branchName: { fontSize: typography.fontSize.base, fontWeight: typography.fontWeight.semibold, color: colors.fg.primary, fontFamily: typography.fontFamily.mono },
+    aheadBehind: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    aheadBehindText: { fontSize: typography.fontSize.xs, color: colors.fg.tertiary, fontFamily: typography.fontFamily.mono },
+    headerActions: { flexDirection: 'row', gap: spacing[1] },
+    smallButton: { width: 32, height: 32, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center' },
+    tabBar: { flexDirection: 'row', backgroundColor: colors.bg.raised, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+    tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing[1], paddingVertical: spacing[2] },
+    tabActive: { borderBottomWidth: 2, borderBottomColor: colors.accent.primary },
+    tabText: { fontSize: typography.fontSize.xs, fontWeight: typography.fontWeight.medium, color: colors.fg.muted },
+    tabTextActive: { color: colors.accent.primary },
+    listContent: { paddingBottom: spacing[4] },
+    fileRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[3], paddingHorizontal: spacing[4], paddingVertical: spacing[2] },
+    filePath: { flex: 1, fontSize: typography.fontSize.sm, color: colors.fg.secondary, fontFamily: typography.fontFamily.mono },
+    fileActions: { flexDirection: 'row', gap: spacing[1] },
+    sectionAction: { paddingHorizontal: spacing[2], paddingVertical: 2 },
+    sectionActionText: { fontSize: typography.fontSize.xs, fontWeight: typography.fontWeight.medium, color: colors.accent.primary },
+    emptyList: { alignItems: 'center', justifyContent: 'center', paddingTop: spacing[16], gap: spacing[2] },
+    emptyListText: { fontSize: typography.fontSize.sm, color: colors.fg.tertiary },
+    commitBar: { paddingHorizontal: spacing[4], paddingVertical: spacing[2], backgroundColor: colors.bg.raised, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.divider },
+    commitBarButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing[2], backgroundColor: colors.accent.primary, borderRadius: radii.md, paddingVertical: spacing[3] },
+    commitBarText: { fontSize: typography.fontSize.base, fontWeight: typography.fontWeight.semibold, color: colors.fg.onAccent },
+    commitRow: { flexDirection: 'row', paddingHorizontal: spacing[4], paddingVertical: spacing[2], gap: spacing[3] },
+    commitDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent.primary, marginTop: 6 },
+    commitInfo: { flex: 1, gap: 2 },
+    commitMessage: { fontSize: typography.fontSize.sm, color: colors.fg.primary, fontWeight: typography.fontWeight.medium },
+    commitMeta: { flexDirection: 'row', gap: spacing[2] },
+    commitHash: { fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.mono, color: colors.accent.primary },
+    commitAuthor: { fontSize: typography.fontSize.xs, color: colors.fg.tertiary },
+    commitDate: { fontSize: typography.fontSize.xs, color: colors.fg.muted },
+    branchRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[3], paddingHorizontal: spacing[4], paddingVertical: spacing[3] },
+    branchRowActive: { backgroundColor: colors.accent.subtle },
+    branchRowName: { flex: 1, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.mono, color: colors.fg.secondary },
+    branchRowNameActive: { color: colors.accent.primary, fontWeight: typography.fontWeight.medium },
+    currentBadge: { backgroundColor: colors.accent.subtle, paddingHorizontal: spacing[2], paddingVertical: 2, borderRadius: radii.sm },
+    currentBadgeText: { fontSize: typography.fontSize.xs, color: colors.accent.primary, fontWeight: typography.fontWeight.medium },
+    branchHash: { fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.mono, color: colors.fg.muted },
+    gitErrorBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], paddingHorizontal: spacing[4], paddingVertical: spacing[2], backgroundColor: colors.semantic.errorSubtle },
+    gitErrorText: { flex: 1, fontSize: typography.fontSize.sm, color: colors.semantic.error },
+  }), [colors]);
+
+  const actionStyles = useMemo(() => createActionStyles(colors), [colors]);
+  const sectionStyles = useMemo(() => createSectionStyles(colors), [colors]);
+
   const [activeTab, setActiveTab] = useState<TabId>('changes');
   const git = useGit(activeTab, session.serverId);
   const { status, stagedFiles, unstagedFiles, untrackedFiles } = git;
@@ -166,7 +228,9 @@ function GitPanel({ session }: WorkspacePluginPanelProps) {
   }
   if (status.loading) {
     return (
-      <LoadingView message="Loading git status..." />
+      <View style={[styles.container, { padding: 16, gap: 12 }]}>
+        <SkeletonRows count={5} rowHeight={48} />
+      </View>
     );
   }
 
@@ -240,6 +304,7 @@ function GitPanel({ session }: WorkspacePluginPanelProps) {
                   : item.section === 'unstaged' ? colors.semantic.warning : colors.fg.muted;
                 return (
                   <SectionHeader label={item.label!} count={item.count!} color={headerColor}
+                    sectionStyles={sectionStyles}
                     actions={
                       item.section === 'staged' ? (
                         <Pressable style={styles.sectionAction} onPress={() => git.unstage(stagedFiles.map((f) => f.path))}>
@@ -258,19 +323,19 @@ function GitPanel({ session }: WorkspacePluginPanelProps) {
               const Icon = getFileStatusIcon(file.status);
               return (
                 <View style={styles.fileRow}>
-                  <Icon size={14} color={getFileStatusColor(file.status, file.staged)} />
+                  <Icon size={14} color={getFileStatusColor(file.status, file.staged, colors)} />
                   <Text style={styles.filePath} numberOfLines={1}>{file.path}</Text>
                   {git.actionLoading === file.path ? (
                     <ActivityIndicator size="small" color={colors.accent.primary} />
                   ) : (
                     <View style={styles.fileActions}>
                       {file.staged ? (
-                        <FileActionButton icon={Minus} color={colors.semantic.error} onPress={() => git.unstage([file.path])} />
+                        <FileActionButton icon={Minus} color={colors.semantic.error} onPress={() => git.unstage([file.path])} actionStyles={actionStyles} />
                       ) : (
                         <>
-                          <FileActionButton icon={Plus} color={colors.semantic.success} onPress={() => git.stage([file.path])} />
+                          <FileActionButton icon={Plus} color={colors.semantic.success} onPress={() => git.stage([file.path])} actionStyles={actionStyles} />
                           {file.status !== 'untracked' && (
-                            <FileActionButton icon={Undo2} color={colors.semantic.error} onPress={() => git.discard([file.path])} />
+                            <FileActionButton icon={Undo2} color={colors.semantic.error} onPress={() => git.discard([file.path])} actionStyles={actionStyles} />
                           )}
                         </>
                       )}
@@ -407,50 +472,4 @@ export const gitPlugin: WorkspacePluginDefinition = {
   scope: 'workspace', kind: 'core', icon: GitBranch, component: GitPanel, navOrder: 3, api: gitApi,
 };
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg.base },
-  branchHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing[4], paddingVertical: spacing[3], backgroundColor: colors.bg.raised },
-  branchInfo: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], flex: 1 },
-  branchName: { fontSize: typography.fontSize.base, fontWeight: typography.fontWeight.semibold, color: colors.fg.primary, fontFamily: typography.fontFamily.mono },
-  aheadBehind: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  aheadBehindText: { fontSize: typography.fontSize.xs, color: colors.fg.tertiary, fontFamily: typography.fontFamily.mono },
-  headerActions: { flexDirection: 'row', gap: spacing[1] },
-  smallButton: { width: 32, height: 32, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center' },
-  tabBar: { flexDirection: 'row', backgroundColor: colors.bg.raised, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
-  tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing[1], paddingVertical: spacing[2] },
-  tabActive: { borderBottomWidth: 2, borderBottomColor: colors.accent.primary },
-  tabText: { fontSize: typography.fontSize.xs, fontWeight: typography.fontWeight.medium, color: colors.fg.muted },
-  tabTextActive: { color: colors.accent.primary },
-  listContent: { paddingBottom: spacing[4] },
-  fileRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[3], paddingHorizontal: spacing[4], paddingVertical: spacing[2] },
-  filePath: { flex: 1, fontSize: typography.fontSize.sm, color: colors.fg.secondary, fontFamily: typography.fontFamily.mono },
-  fileActions: { flexDirection: 'row', gap: spacing[1] },
-  sectionAction: { paddingHorizontal: spacing[2], paddingVertical: 2 },
-  sectionActionText: { fontSize: typography.fontSize.xs, fontWeight: typography.fontWeight.medium, color: colors.accent.primary },
-  emptyList: { alignItems: 'center', justifyContent: 'center', paddingTop: spacing[16], gap: spacing[2] },
-  emptyListText: { fontSize: typography.fontSize.sm, color: colors.fg.tertiary },
-  commitBar: { paddingHorizontal: spacing[4], paddingVertical: spacing[2], backgroundColor: colors.bg.raised, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.divider },
-  commitBarButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing[2], backgroundColor: colors.accent.primary, borderRadius: radii.md, paddingVertical: spacing[3] },
-  commitBarText: { fontSize: typography.fontSize.base, fontWeight: typography.fontWeight.semibold, color: colors.fg.onAccent },
-  commitRow: { flexDirection: 'row', paddingHorizontal: spacing[4], paddingVertical: spacing[2], gap: spacing[3] },
-  commitDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent.primary, marginTop: 6 },
-  commitInfo: { flex: 1, gap: 2 },
-  commitMessage: { fontSize: typography.fontSize.sm, color: colors.fg.primary, fontWeight: typography.fontWeight.medium },
-  commitMeta: { flexDirection: 'row', gap: spacing[2] },
-  commitHash: { fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.mono, color: colors.accent.primary },
-  commitAuthor: { fontSize: typography.fontSize.xs, color: colors.fg.tertiary },
-  commitDate: { fontSize: typography.fontSize.xs, color: colors.fg.muted },
-  branchRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[3], paddingHorizontal: spacing[4], paddingVertical: spacing[3] },
-  branchRowActive: { backgroundColor: colors.accent.subtle },
-  branchRowName: { flex: 1, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.mono, color: colors.fg.secondary },
-  branchRowNameActive: { color: colors.accent.primary, fontWeight: typography.fontWeight.medium },
-  currentBadge: { backgroundColor: colors.accent.subtle, paddingHorizontal: spacing[2], paddingVertical: 2, borderRadius: radii.sm },
-  currentBadgeText: { fontSize: typography.fontSize.xs, color: colors.accent.primary, fontWeight: typography.fontWeight.medium },
-  branchHash: { fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.mono, color: colors.fg.muted },
-  gitErrorBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], paddingHorizontal: spacing[4], paddingVertical: spacing[2], backgroundColor: colors.semantic.errorSubtle },
-  gitErrorText: { flex: 1, fontSize: typography.fontSize.sm, color: colors.semantic.error },
-});
+// Styles computed dynamically via useMemo — see component body.

@@ -11,13 +11,15 @@
 //   - Progress indicator
 //   - Local dev server detection (server IP prefix)
 
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useMemo } from 'react';
 import {
   View,
   TextInput,
   StyleSheet,
   Pressable,
   Text,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Globe, ArrowLeft, ArrowRight, RotateCw, X, AlertTriangle } from 'lucide-react-native';
 import { WebView, type WebViewNavigation } from 'react-native-webview';
@@ -26,8 +28,9 @@ import type {
   WorkspacePluginPanelProps,
   PluginAPI,
 } from '@stavi/shared';
-import { colors, typography, spacing, radii } from '../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../theme';
 import { ErrorView } from '../../../components/StateViews';
+import { useConnectionStore } from '../../../stores/connection';
 
 // ----------------------------------------------------------
 // Types
@@ -42,6 +45,14 @@ interface BrowserPluginAPI extends PluginAPI {
 // ----------------------------------------------------------
 
 const DEFAULT_URL = 'https://google.com';
+
+// Matches localhost / 127.0.0.1 URLs with or without scheme.
+// Used to decide whether to rewrite through the server's /proxy endpoint.
+const LOCALHOST_RE = /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i;
+
+function isLocalhostUrl(input: string): boolean {
+  return LOCALHOST_RE.test(input.trim());
+}
 
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
@@ -64,7 +75,46 @@ function displayUrl(url: string): string {
 // Panel Component
 // ----------------------------------------------------------
 
-function BrowserPanel({ instanceId, isActive, bottomBarHeight }: WorkspacePluginPanelProps) {
+function BrowserPanel({ instanceId, isActive, bottomBarHeight, session }: WorkspacePluginPanelProps) {
+  const { colors } = useTheme();
+
+  // Resolve the connection for this workspace's server. Used to build the
+  // /proxy URL for localhost rewrites and to detect relay-mode connections
+  // (where direct HTTP to the server isn't reachable).
+  const savedConnection = useConnectionStore((s) =>
+    s.savedConnections.find((c) => c.id === session.serverId),
+  );
+  const isRelay = !!savedConnection?.relayUrl;
+  const serverBaseUrl = useMemo(() => {
+    if (!savedConnection) return null;
+    const protocol = savedConnection.tls ? 'https' : 'http';
+    return `${protocol}://${savedConnection.host}:${savedConnection.port}`;
+  }, [savedConnection]);
+
+  const rewriteForProxy = useCallback(
+    (url: string): string => {
+      if (!serverBaseUrl || !savedConnection) return url;
+      if (!isLocalhostUrl(url)) return url;
+      const withScheme = /^https?:\/\//i.test(url) ? url : `http://${url}`;
+      const encoded = encodeURIComponent(withScheme);
+      const token = encodeURIComponent(savedConnection.bearerToken);
+      return `${serverBaseUrl}/proxy?url=${encoded}&token=${token}`;
+    },
+    [serverBaseUrl, savedConnection],
+  );
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.bg.base },
+    toolbar: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.bg.raised, paddingHorizontal: spacing[2], paddingVertical: spacing[2], gap: spacing[1], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+    navButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: radii.sm },
+    navButtonDisabled: { opacity: 0.4 },
+    urlBar: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.bg.overlay, borderRadius: radii.md, paddingHorizontal: spacing[2], height: 32 },
+    urlInput: { flex: 1, fontSize: typography.fontSize.sm, color: colors.fg.primary, fontFamily: typography.fontFamily.sans, height: 32, paddingVertical: 0 },
+    progressTrack: { height: 2, backgroundColor: colors.bg.overlay },
+    progressBar: { height: 2, backgroundColor: colors.accent.primary },
+    webView: { flex: 1, backgroundColor: colors.bg.base },
+    relayBanner: { backgroundColor: colors.bg.overlay, paddingHorizontal: spacing[3], paddingVertical: spacing[2], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+    relayBannerText: { color: colors.fg.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.sans },
+  }), [colors]);
 
   const webViewRef = useRef<WebView>(null);
   const [currentUrl, setCurrentUrl] = useState(DEFAULT_URL);
@@ -78,11 +128,22 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight }: WorkspacePlugin
   const urlInputRef = useRef<TextInput>(null);
 
   const handleNavigate = useCallback((input: string) => {
-    const url = normalizeUrl(input);
-    setCurrentUrl(url);
+    const trimmed = input.trim();
+    // Block localhost navigation in relay mode — the proxy isn't reachable
+    // over the WS tunnel in v1.
+    if (isRelay && isLocalhostUrl(trimmed)) {
+      setWebViewError('Localhost proxy is not yet supported over relay connections.');
+      setIsEditingUrl(false);
+      return;
+    }
+    const normalized = normalizeUrl(trimmed);
+    // Rewrite localhost URLs through the server's /proxy endpoint so they
+    // resolve against the server machine's loopback rather than the phone's.
+    const final = isLocalhostUrl(trimmed) ? rewriteForProxy(normalized) : normalized;
+    setCurrentUrl(final);
     setIsEditingUrl(false);
     setWebViewError(null);
-  }, []);
+  }, [isRelay, rewriteForProxy]);
 
   const handleUrlSubmit = useCallback(() => {
     handleNavigate(urlInput);
@@ -90,8 +151,16 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight }: WorkspacePlugin
 
   const handleUrlFocus = useCallback(() => {
     setIsEditingUrl(true);
-    setUrlInput(displayUrl(currentUrl));
-  }, [currentUrl]);
+    // Prefer the unwrapped target if we're on a proxied URL.
+    let toShow = currentUrl;
+    if (serverBaseUrl && currentUrl.startsWith(`${serverBaseUrl}/proxy?`)) {
+      try {
+        const orig = new URL(currentUrl).searchParams.get('url');
+        if (orig) toShow = orig;
+      } catch { /* noop */ }
+    }
+    setUrlInput(displayUrl(toShow));
+  }, [currentUrl, serverBaseUrl]);
 
   const handleUrlBlur = useCallback(() => {
     setIsEditingUrl(false);
@@ -123,10 +192,34 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight }: WorkspacePlugin
     webViewRef.current?.reload();
   }, []);
 
-  const displayedUrl = isEditingUrl ? urlInput : displayUrl(currentUrl);
+  // If currentUrl is pointing at our /proxy endpoint, show the original
+  // target URL in the address bar instead of the wrapped proxy URL.
+  const visibleUrl = useMemo(() => {
+    if (!serverBaseUrl) return currentUrl;
+    if (currentUrl.startsWith(`${serverBaseUrl}/proxy?`)) {
+      try {
+        const u = new URL(currentUrl);
+        const orig = u.searchParams.get('url');
+        if (orig) return orig;
+      } catch { /* noop */ }
+    }
+    return currentUrl;
+  }, [currentUrl, serverBaseUrl]);
+
+  const displayedUrl = isEditingUrl ? urlInput : displayUrl(visibleUrl);
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      {isRelay && (
+        <View style={styles.relayBanner}>
+          <Text style={styles.relayBannerText}>
+            Localhost proxy not yet supported over relay. Use a LAN connection to preview dev servers.
+          </Text>
+        </View>
+      )}
       {/* URL Bar */}
       <View style={styles.toolbar}>
         {/* Back */}
@@ -229,7 +322,7 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight }: WorkspacePlugin
           applicationNameForUserAgent="StaviBrowser/1.0"
         />
       )}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -264,68 +357,4 @@ export const browserPlugin: WorkspacePluginDefinition = {
   api: browserApi,
 };
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-
-  // Toolbar
-  toolbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.bg.raised,
-    paddingHorizontal: spacing[2],
-    paddingVertical: spacing[2],
-    gap: spacing[1],
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  navButton: {
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radii.sm,
-  },
-  navButtonDisabled: {
-    opacity: 0.4,
-  },
-  urlBar: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.bg.overlay,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing[2],
-    height: 32,
-  },
-  urlInput: {
-    flex: 1,
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.primary,
-    fontFamily: typography.fontFamily.sans,
-    height: 32,
-    paddingVertical: 0,
-  },
-
-  // Progress
-  progressTrack: {
-    height: 2,
-    backgroundColor: colors.bg.overlay,
-  },
-  progressBar: {
-    height: 2,
-    backgroundColor: colors.accent.primary,
-  },
-
-  // WebView
-  webView: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-});
+// Styles computed dynamically via useMemo — see component body.

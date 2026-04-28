@@ -10,9 +10,10 @@
 //       apps/mobile/src/plugins/workspace/editor/store.ts,
 //       packages/shared/src/plugin-events.ts
 
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   View,
+  Pressable,
   StyleSheet,
   useWindowDimensions,
 } from 'react-native';
@@ -22,7 +23,7 @@ import type {
   WorkspacePluginPanelProps,
 } from '@stavi/shared';
 import type { EditorPluginAPI } from '@stavi/shared';
-import { colors } from '../../../theme';
+import { useTheme } from '../../../theme';
 import { useEditorStore } from './store';
 import { FileTree } from './components/FileTree';
 import { EditorTabs } from './components/EditorTabs';
@@ -35,11 +36,40 @@ import { eventBus } from '../../../services/event-bus';
 // Width threshold: ≥ 900 = tablet (tree pinned), < 900 = phone (tree toggleable)
 const TABLET_BREAKPOINT = 900;
 
+// Sentinel empty array — reused by Zustand selectors to avoid new-array-per-call
+// (which triggers the useSyncExternalStore infinite-loop guard).
+const EMPTY_OPEN_FILES: never[] = Object.freeze([]) as never[];
+
 // ----------------------------------------------------------
 // Panel Component
 // ----------------------------------------------------------
 
 function EditorPanel({ instanceId, session, isActive }: WorkspacePluginPanelProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.bg.base },
+    body: { flex: 1, flexDirection: 'row' },
+    treePane: { backgroundColor: colors.bg.raised },
+    // Tablet: pinned side panel — occupies 220px in the flex row
+    treePinned: { width: 220 },
+    // Phone: overlay drawer — absolutely positioned over the editor, full height,
+    // casts a shadow so the editor content is still visible behind it
+    treeOverlay: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      bottom: 0,
+      width: 220,
+      zIndex: 10,
+      elevation: 8,
+      shadowColor: '#000',
+      shadowOffset: { width: 2, height: 0 },
+      shadowOpacity: 0.35,
+      shadowRadius: 8,
+    },
+    content: { flex: 1, flexDirection: 'column' },
+  }), [colors]);
+
   const { width } = useWindowDimensions();
   const isTablet = width >= TABLET_BREAKPOINT;
 
@@ -56,7 +86,7 @@ function EditorPanel({ instanceId, session, isActive }: WorkspacePluginPanelProp
   // Cursor position for toolbar display
   const [cursor, setCursor] = useState<{ line: number; col: number } | undefined>(undefined);
 
-  const openFiles = useEditorStore((s) => s.openFilesBySession[sessionId] ?? []);
+  const openFiles = useEditorStore((s) => s.openFilesBySession[sessionId] ?? EMPTY_OPEN_FILES);
   const activeFilePath = useEditorStore(
     (s) => s.activeFileBySession[sessionId] ?? null,
   );
@@ -132,14 +162,7 @@ function EditorPanel({ instanceId, session, isActive }: WorkspacePluginPanelProp
 
       {/* Main area: tree + content */}
       <View style={styles.body}>
-        {/* File tree */}
-        {treeVisible && (
-          <View style={[styles.treePane, isTablet ? styles.treePinned : styles.treeOverlay]}>
-            <FileTree session={session} />
-          </View>
-        )}
-
-        {/* Content area */}
+        {/* Content area always fills the row — tree overlays on top on phone */}
         <View style={styles.content}>
           <EditorTabs sessionId={sessionId} />
           {/* EditorSurface is always rendered — never conditionally mounted.
@@ -155,6 +178,23 @@ function EditorPanel({ instanceId, session, isActive }: WorkspacePluginPanelProp
             bridgeRef={bridgeRef}
           />
         </View>
+
+        {/* File tree — pinned column (tablet) or absolute overlay (phone) */}
+        {treeVisible && (
+          <>
+            {/* Phone backdrop — tapping outside dismisses the drawer */}
+            {!isTablet && (
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={() => setPhoneTreeVisible(false)}
+                accessible={false}
+              />
+            )}
+            <View style={[styles.treePane, isTablet ? styles.treePinned : styles.treeOverlay]}>
+              <FileTree session={session} />
+            </View>
+          </>
+        )}
       </View>
     </View>
   );
@@ -209,36 +249,4 @@ export const editorPlugin: WorkspacePluginDefinition = {
   api: editorApi,
 };
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg.base,
-  },
-  body: {
-    flex: 1,
-    flexDirection: 'row',
-  },
-
-  // Tree pane
-  treePane: {
-    backgroundColor: colors.bg.raised,
-  },
-  treePinned: {
-    width: 220,
-  },
-  treeOverlay: {
-    width: 220,
-    // On phone the tree is toggled — it occupies its 220px and the content shifts right.
-    // A future enhancement could make it a drawer overlay, but keeping it simple in 4a.
-  },
-
-  // Content area
-  content: {
-    flex: 1,
-    flexDirection: 'column',
-  },
-});
+// Styles computed dynamically via useMemo — see component body.

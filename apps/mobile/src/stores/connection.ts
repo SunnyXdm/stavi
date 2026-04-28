@@ -17,8 +17,9 @@ import {
   type StaviClientState,
   type StaviConnectionConfig,
 } from './stavi-client';
-import { prefetchServerId } from './connection-preflight';
+import { prefetchServerInfo } from './connection-preflight';
 import { RelayTransport } from '../transports/RelayTransport';
+import { useSessionsStore } from './sessions-store';
 import { logEvent } from '../services/telemetry';
 
 // Re-export for consumers that import SavedConnection from this file.
@@ -98,6 +99,9 @@ const _relayReconnectAttempts = new Map<string, number>();
 const _relayReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 const MAX_RELAY_RECONNECT_ATTEMPTS = 7;
+
+// Concurrency guard: prevents double-connect race when autoConnect + hydrateConnected fire simultaneously.
+const _connectingServers = new Map<string, Promise<void>>();
 
 function scheduleRelayReconnect(serverId: string, connectServer: (id: string) => Promise<void>): void {
   // Cancel any pending timer for this server.
@@ -230,13 +234,15 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
         _wasConnectedById: {},
 
         addServer: async (conn) => {
-          // Phase 5: Pre-flight to learn remote serverId for dedup.
-          const remoteServerId = await prefetchServerId(
+          // Phase 5: Pre-flight to learn remote serverId + hostname for dedup.
+          const preflight = await prefetchServerInfo(
             conn.host,
             conn.port,
             conn.bearerToken,
             conn.tls,
           );
+          const remoteServerId = preflight.serverId;
+          const remoteHostname = preflight.hostname;
 
           if (remoteServerId) {
             // Check for existing saved connection with the same remote serverId.
@@ -268,6 +274,7 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
                 bearerToken: conn.bearerToken,
                 tls: conn.tls,
                 name: conn.name || existing.name,
+                hostname: remoteHostname ?? existing.hostname,
               };
 
               set((state) => ({
@@ -294,6 +301,7 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
             id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
             createdAt: Date.now(),
             serverId: remoteServerId ?? undefined,
+            hostname: remoteHostname ?? undefined,
           };
           set((state) => ({
             savedConnections: [...state.savedConnections, saved],
@@ -303,12 +311,21 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
         },
 
         connectServer: async (serverId) => {
+          // Concurrency guard: if already connecting this server, await the existing attempt.
+          const inflight = _connectingServers.get(serverId);
+          if (inflight) return inflight;
+
+          const promise = (async () => {
           const savedConnection = get().savedConnections.find((conn) => conn.id === serverId);
           if (!savedConnection) {
             throw new Error(`Unknown server: ${serverId}`);
           }
 
           const runtime = ensureRuntimeConnection(savedConnection);
+
+          // Close any existing transport before creating a new one.
+          // Prevents transport leak during relay reconnect or double-connect.
+          runtime.client.disconnect();
 
           set((state) => ({
             connectionsById: {
@@ -344,15 +361,18 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
               await runtime.client.connect(config);
             }
 
-            // Bind remote serverId after connect (best-effort).
+            // Bind remote serverId + hostname after connect (best-effort).
             void runtime.client
-              .request<{ serverId?: string }>('server.getConfig', {}, 10000)
+              .request<{ serverId?: string; hostname?: string }>('server.getConfig', {}, 10000)
               .then((cfg) => {
-                if (cfg.serverId && savedConnection.serverId !== cfg.serverId) {
-                  get().updateSavedConnection(serverId, { serverId: cfg.serverId });
-                }
+                const updates: Partial<SavedConnection> = {};
+                if (cfg.serverId && savedConnection.serverId !== cfg.serverId) updates.serverId = cfg.serverId;
+                if (cfg.hostname && savedConnection.hostname !== cfg.hostname) updates.hostname = cfg.hostname;
+                if (Object.keys(updates).length > 0) get().updateSavedConnection(serverId, updates);
               })
-              .catch(() => {});
+              .catch((err: unknown) => {
+                console.warn('[connection] server.getConfig bind failed:', err);
+              });
 
             set((state) => ({
               savedConnections: state.savedConnections.map((conn) =>
@@ -381,6 +401,14 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
               },
             }));
             throw err;
+          }
+          })();
+
+          _connectingServers.set(serverId, promise);
+          try {
+            await promise;
+          } finally {
+            _connectingServers.delete(serverId);
           }
         },
 
@@ -434,6 +462,8 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
 
           const runtime = get().connectionsById[serverId];
           runtime?.client.disconnect();
+          // Clear sessions + subscriptions for this server.
+          useSessionsStore.getState().clearServer(serverId);
           set((state) => {
             const nextConnections = { ...state.connectionsById };
             delete nextConnections[serverId];
@@ -468,7 +498,11 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
         },
 
         autoConnectSavedServers: () => {
-          for (const c of get().savedConnections) void get().connectServer(c.id).catch(() => {});
+          for (const c of get().savedConnections) {
+            void get().connectServer(c.id).catch((err) => {
+              console.warn(`[autoConnect] ${c.name ?? c.id} failed:`, err);
+            });
+          }
         },
 
         onReconnect: (listener) => {

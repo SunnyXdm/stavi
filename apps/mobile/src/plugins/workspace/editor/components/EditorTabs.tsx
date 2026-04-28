@@ -7,7 +7,7 @@
 // SEE:  apps/mobile/src/plugins/workspace/editor/store.ts,
 //       apps/mobile/src/plugins/workspace/editor/index.tsx
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,8 +17,11 @@ import {
   Modal,
 } from 'react-native';
 import { Code2, X } from 'lucide-react-native';
-import { colors, typography, spacing } from '../../../../theme';
+import { useTheme, typography, spacing } from '../../../../theme';
 import { useEditorStore } from '../store';
+
+// Sentinel — frozen empty array reused by selectors to avoid new-array-per-snapshot.
+const EMPTY_OPEN_FILES: never[] = Object.freeze([]) as never[];
 
 // ----------------------------------------------------------
 // Types
@@ -38,8 +41,29 @@ interface EditorTabsProps {
 }
 
 export const EditorTabs = React.memo(function EditorTabs({ sessionId }: EditorTabsProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    tabBar: { backgroundColor: colors.bg.raised, height: 36, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+    tabScroll: { flexDirection: 'row', alignItems: 'stretch' },
+    tab: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing[3], height: 36, maxWidth: 180, gap: spacing[1], borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.divider },
+    tabActive: { backgroundColor: colors.bg.base, borderBottomWidth: 2, borderBottomColor: colors.accent.primary },
+    tabIcon: { flexShrink: 0 },
+    tabText: { flex: 1, fontSize: typography.fontSize.xs, color: colors.fg.muted, fontFamily: typography.fontFamily.mono },
+    tabTextActive: { color: colors.fg.primary },
+    dirtyDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.semantic.warning, flexShrink: 0 },
+    dirtyDotActive: { backgroundColor: colors.accent.primary },
+    tabClose: { width: 16, height: 16, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+    menuBackdrop: { flex: 1, backgroundColor: colors.bg.scrim, justifyContent: 'flex-end' },
+    menuSheet: { backgroundColor: colors.bg.overlay, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingTop: spacing[2], paddingBottom: spacing[6], paddingHorizontal: spacing[2] },
+    menuTitle: { fontSize: typography.fontSize.xs, color: colors.fg.muted, paddingHorizontal: spacing[3], paddingVertical: spacing[2], fontFamily: typography.fontFamily.mono },
+    menuItem: { paddingHorizontal: spacing[3], paddingVertical: spacing[3], borderRadius: 8 },
+    menuItemPressed: { backgroundColor: colors.bg.active },
+    menuItemText: { fontSize: typography.fontSize.base, color: colors.fg.secondary },
+    menuItemDanger: { color: colors.semantic.error },
+  }), [colors]);
+
   const openFiles = useEditorStore(
-    (s) => s.openFilesBySession[sessionId] ?? [],
+    (s) => s.openFilesBySession[sessionId] ?? EMPTY_OPEN_FILES,
   );
   const activeFilePath = useEditorStore(
     (s) => s.activeFileBySession[sessionId] ?? null,
@@ -159,19 +183,23 @@ export const EditorTabs = React.memo(function EditorTabs({ sessionId }: EditorTa
                 hideMenu();
                 closeFile(sessionId, ctxMenu.path);
               }}
+              styles={styles}
             />
             <TabMenuItem
               label="Close Others"
               onPress={() => handleCloseOthers(ctxMenu.path)}
+              styles={styles}
             />
             <TabMenuItem
               label="Close to the Right"
               onPress={() => handleCloseToRight(ctxMenu.path)}
+              styles={styles}
             />
             <TabMenuItem
               label="Close All"
               onPress={handleCloseAll}
               danger
+              styles={styles}
             />
           </View>
         </Pressable>
@@ -180,14 +208,18 @@ export const EditorTabs = React.memo(function EditorTabs({ sessionId }: EditorTa
   );
 });
 
+type TabStyles = ReturnType<typeof StyleSheet.create>;
+
 function TabMenuItem({
   label,
   onPress,
   danger,
+  styles,
 }: {
   label: string;
   onPress: () => void;
   danger?: boolean;
+  styles: TabStyles;
 }) {
   return (
     <Pressable
@@ -199,100 +231,4 @@ function TabMenuItem({
   );
 }
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  tabBar: {
-    backgroundColor: colors.bg.raised,
-    height: 36,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  tabScroll: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-  },
-  tab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[3],
-    height: 36,
-    maxWidth: 180,
-    gap: spacing[1],
-    borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: colors.divider,
-  },
-  tabActive: {
-    backgroundColor: colors.bg.base,
-    borderBottomWidth: 2,
-    borderBottomColor: colors.accent.primary,
-  },
-  tabIcon: {
-    flexShrink: 0,
-  },
-  tabText: {
-    flex: 1,
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-    fontFamily: typography.fontFamily.mono,
-  },
-  tabTextActive: {
-    color: colors.fg.primary,
-  },
-  dirtyDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.semantic.warning,
-    flexShrink: 0,
-  },
-  dirtyDotActive: {
-    backgroundColor: colors.accent.primary,
-  },
-  tabClose: {
-    width: 16,
-    height: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-
-  // Menu
-  menuBackdrop: {
-    flex: 1,
-    backgroundColor: colors.bg.scrim,
-    justifyContent: 'flex-end',
-  },
-  menuSheet: {
-    backgroundColor: colors.bg.overlay,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingTop: spacing[2],
-    paddingBottom: spacing[6],
-    paddingHorizontal: spacing[2],
-  },
-  menuTitle: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    fontFamily: typography.fontFamily.mono,
-  },
-  menuItem: {
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[3],
-    borderRadius: 8,
-  },
-  menuItemPressed: {
-    backgroundColor: colors.bg.active,
-  },
-  menuItemText: {
-    fontSize: typography.fontSize.base,
-    color: colors.fg.secondary,
-  },
-  menuItemDanger: {
-    color: colors.semantic.error,
-  },
-});
+// Styles computed dynamically via useMemo — see component body.

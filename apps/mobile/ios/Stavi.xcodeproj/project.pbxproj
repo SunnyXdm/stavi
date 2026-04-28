@@ -130,6 +130,7 @@
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
+				STAV1E0000000000EDITORCOPY /* Copy Editor WebView Assets */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				00EEFC60759A1932668264C0 /* [CP] Embed Pods Frameworks */,
 				E235C05ADACE081382539298 /* [CP] Copy Pods Resources */,
@@ -267,7 +268,29 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Stavi/Pods-Stavi-resources.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
-/* End PBXShellScriptBuildPhase section */
+		STAV1E0000000000EDITORCOPY /* Copy Editor WebView Assets */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../assets/editor/index.html",
+				"$(SRCROOT)/../assets/editor/bundle.js",
+			);
+			name = "Copy Editor WebView Assets";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/editor/index.html",
+				"$(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/editor/bundle.js",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Copy CodeMirror editor assets into the iOS app bundle.\n# The WebView loads editor/index.html from the bundle via the bundlePath helper.\nSRC=\"$SRCROOT/../assets/editor\"\nDST=\"$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/editor\"\nmkdir -p \"$DST\"\ncp \"$SRC/index.html\" \"$DST/index.html\"\ncp \"$SRC/bundle.js\" \"$DST/bundle.js\"\n";
+		};
+		/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		13B07F871A680F5B00A75B9A /* Sources */ = {

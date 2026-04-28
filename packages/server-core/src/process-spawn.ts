@@ -7,6 +7,7 @@
 
 import type { ManagedProcess, TerminalSession } from './types';
 import { resolveWorkspacePath, truncateHistory, getShell } from './utils';
+import { feedVt } from './terminal-vt';
 
 // ----------------------------------------------------------
 // Factory
@@ -141,7 +142,18 @@ export function createProcessHelpers(
         data(_terminal: any, chunk: Uint8Array) {
           const text = new TextDecoder().decode(chunk);
           session.history = truncateHistory(session.history + text);
+          // Raw byte stream — existing xterm.js WebView consumers.
           emitTerminalEvent({ type: 'output', threadId, terminalId, data: text });
+          // Phase C1: if a `cells` subscriber has attached a VT, feed it.
+          // Debounced flush inside feedVt() will emit TerminalFrame events
+          // via emitTerminalEvent(..., mode: 'cells').
+          if (session.vt) {
+            try {
+              feedVt(session.vt, chunk);
+            } catch (err) {
+              console.warn('[terminal] feedVt failed', err);
+            }
+          }
         },
         exit(_terminal: any) {
           session.status = 'exited';

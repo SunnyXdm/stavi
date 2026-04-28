@@ -5,9 +5,10 @@
 //       Pressable wrapper enables tap-to-dismiss. Uses zIndex.toast token.
 // SEE:  apps/mobile/src/navigation/SessionsHomeScreen.tsx
 
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Animated, Pressable, StyleSheet, Text } from 'react-native';
-import { colors, radii, spacing, typography, zIndex } from '../theme';
+import { useTheme } from '../theme';
+import { radii, spacing, typography, zIndex } from '../theme';
 
 interface ReconnectToastProps {
   serverName: string;
@@ -17,6 +18,24 @@ interface ReconnectToastProps {
 export function ReconnectToast({ serverName, onDismiss }: ReconnectToastProps) {
   const opacity = useRef(new Animated.Value(0)).current;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { colors } = useTheme();
+
+  const styles = useMemo(() => StyleSheet.create({
+    toast: {
+      position: 'absolute',
+      bottom: 32,
+      alignSelf: 'center',
+      backgroundColor: colors.bg.raised,
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[2],
+      borderRadius: radii.lg,
+      zIndex: zIndex.toast,
+    },
+    toastText: {
+      fontSize: typography.fontSize.sm,
+      color: colors.fg.primary,
+    },
+  }), [colors]);
 
   useEffect(() => {
     // Fade in
@@ -50,19 +69,4 @@ export function ReconnectToast({ serverName, onDismiss }: ReconnectToastProps) {
   );
 }
 
-const styles = StyleSheet.create({
-  toast: {
-    position: 'absolute',
-    bottom: 32,
-    alignSelf: 'center',
-    backgroundColor: colors.bg.raised,
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[2],
-    borderRadius: radii.lg,
-    zIndex: zIndex.toast,
-  },
-  toastText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.primary,
-  },
-});
+// Styles are created inside the component via useMemo (see ReconnectToast body above).

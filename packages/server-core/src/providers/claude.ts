@@ -30,6 +30,9 @@ import {
   turnComplete,
   turnError,
   approvalRequired,
+  userInputRequired,
+  type UserInputQuestion,
+  type UserInputAnswer,
 } from './types';
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -131,6 +134,11 @@ interface ClaudeSession {
     toolName: string;
     toolInput: unknown;
   }>;
+  // Pending AskUserQuestion resolvers (keyed by requestId)
+  pendingUserInputs: Map<string, {
+    resolve: (answers: UserInputAnswer[]) => void;
+    questions: UserInputQuestion[];
+  }>;
 }
 
 function normalizeApprovalDecision(decision: ApprovalDecision): 'accept' | 'reject' | 'always-allow' {
@@ -158,6 +166,25 @@ function isAutoApprovedClaudeTool(
   ].some((token) => normalized.includes(token));
 }
 
+function formatUserInputAnswersForModel(answers: UserInputAnswer[]): string {
+  const lines: string[] = [];
+  answers.forEach((a, i) => {
+    lines.push(`Q${i + 1}: "${a.question}"`);
+    if (a.selections.length === 0) {
+      lines.push('→ (no answer)');
+    } else if (a.selections.length === 1) {
+      lines.push(`→ Selected: "${a.selections[0]}"`);
+    } else {
+      lines.push(`→ Selected: ${a.selections.map((s) => `"${s}"`).join(', ')}`);
+    }
+    if (a.notes && a.notes.trim()) {
+      lines.push(`Notes: "${a.notes.trim()}"`);
+    }
+    lines.push('');
+  });
+  return lines.join('\n').trimEnd();
+}
+
 function getClaudeModelInfo(modelId: string | undefined): ModelInfo {
   return CLAUDE_MODELS.find((model) => model.id === modelId) ?? CLAUDE_MODELS[0];
 }
@@ -179,6 +206,21 @@ export class ClaudeAdapter implements ProviderAdapter {
   private sessions = new Map<string, ClaudeSession>();
   private ready = false;
   private claudeBinaryPath: string | null = null;
+
+  // Callbacks wired at boot (server.ts) to persist / fetch resume cursors.
+  // Using callbacks (same pattern as onApprovalRequired) keeps the adapter
+  // free of direct DB coupling.
+  private _onCursorPersist: ((threadId: string, sessionId: string | null) => void) | null = null;
+  private _getCursor: ((threadId: string) => string | null) | null = null;
+
+  /** Wire cursor persistence.  Called once in server.ts after adapter init. */
+  onCursorPersist(
+    persist: (threadId: string, sessionId: string | null) => void,
+    getCursor: (threadId: string) => string | null,
+  ): void {
+    this._onCursorPersist = persist;
+    this._getCursor = getCursor;
+  }
 
   constructor(private _getApiKey: () => string | undefined) {}
 
@@ -261,6 +303,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       interruptFn: null,
       closeFn: null,
       pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
     };
 
     this.sessions.set(threadId, session);
@@ -269,8 +312,19 @@ export class ClaudeAdapter implements ProviderAdapter {
   async *sendTurn(input: SendTurnInput): AsyncGenerator<ProviderEvent> {
     let session = this.sessions.get(input.threadId);
     if (!session) {
+      // No in-memory session — check for a stored resume cursor first.
+      // This is the server-restart recovery path: the DB has a cursor from a
+      // previous run, so we reconstruct the session with hasStarted=true and
+      // the stored sessionId so the first query() call uses `resume:` rather
+      // than `sessionId:` (which would start a brand-new blank session).
+      const storedSessionId = this._getCursor?.(input.threadId) ?? null;
       await this.startSession(input.threadId, input.cwd ?? '.');
       session = this.sessions.get(input.threadId)!;
+      if (storedSessionId) {
+        session.sessionId = storedSessionId;
+        session.hasStarted = true;
+        console.log(`[Claude] Restored session for thread ${input.threadId} from stored cursor`);
+      }
     } else if (input.cwd && session.cwd === '.') {
       // Backfill cwd if it wasn't set at session creation time
       session.cwd = input.cwd;
@@ -278,6 +332,22 @@ export class ClaudeAdapter implements ProviderAdapter {
 
     session.aborted = false;
 
+    // If this session was restored from a stored cursor, attempt the turn.
+    // On SDK rejection of a stale cursor (session expired / pruned on the CLI
+    // side), we detect the error, wipe the stored cursor, start a fresh
+    // session, and retry once — transparently, without surfacing a turnError.
+    // We pass a flag through a local boolean to avoid a recursive generator;
+    // the retry is an explicit yield* delegation.
+    const isRestoredSession = session.hasStarted && this._getCursor?.(input.threadId) !== null;
+    yield* this._doSendTurn(input, session, isRestoredSession);
+  }
+
+  /** Inner turn generator. Extracted so sendTurn can retry once on stale-cursor errors. */
+  private async *_doSendTurn(
+    input: SendTurnInput,
+    session: ClaudeSession,
+    allowStaleCursorRetry: boolean,
+  ): AsyncGenerator<ProviderEvent> {
     const turnId = `turn-${Date.now()}`;
     const modelInfo = getClaudeModelInfo(input.modelSelection?.modelId);
     const rawEffort = input.modelSelection?.effort;
@@ -336,6 +406,73 @@ export class ClaudeAdapter implements ProviderAdapter {
                 ? 'acceptEdits'
                 : undefined,
         canUseTool: async (toolName: string, toolInput: Record<string, unknown>, opts: any) => {
+          // ----------------------------------------------------------
+          // AskUserQuestion — intercept the SDK's built-in interactive
+          // question tool and route it to a proper mobile question form
+          // instead of the generic approval dialog.
+          //
+          // Contract: the SDK calls canUseTool with the tool input. We
+          // surface a `user-input-required` event, wait for the user to
+          // submit answers, and return `{ behavior: 'deny', message: <formatted answers> }`.
+          // Denying with a message feeds that message back to the model
+          // as the tool_result content — the model treats it as the
+          // tool's output and continues the turn with the user's choices.
+          //
+          // Edge cases:
+          //  - Turn interrupted before submit → resolve with empty answers
+          //    so the Deferred never leaks; model sees "(no answer)" text.
+          //  - Server restart while the prompt is pending → the request
+          //    is lost (pendingUserInputs is in-memory only). Documented.
+          // ----------------------------------------------------------
+          if (toolName === 'AskUserQuestion') {
+            const rawQuestions = Array.isArray((toolInput as any)?.questions)
+              ? ((toolInput as any).questions as unknown[])
+              : [];
+            const questions: UserInputQuestion[] = rawQuestions.map((q: any) => ({
+              question: String(q?.question ?? ''),
+              header: String(q?.header ?? ''),
+              multiSelect: Boolean(q?.multiSelect),
+              options: Array.isArray(q?.options)
+                ? q.options.map((o: any) => ({
+                    label: String(o?.label ?? ''),
+                    description: String(o?.description ?? ''),
+                    preview: typeof o?.preview === 'string' ? o.preview : undefined,
+                  }))
+                : [],
+            }));
+
+            const requestId = `userinput-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+            const deferred: {
+              resolve: (answers: UserInputAnswer[]) => void;
+              questions: UserInputQuestion[];
+            } = { resolve: null as any, questions };
+            const promise = new Promise<UserInputAnswer[]>((resolve) => {
+              deferred.resolve = resolve;
+            });
+            session!.pendingUserInputs.set(requestId, deferred);
+            this._pendingUserInputEmitter?.(input.threadId, requestId, questions, turnId);
+
+            if (opts?.signal) {
+              opts.signal.addEventListener('abort', () => {
+                session!.pendingUserInputs.delete(requestId);
+                deferred.resolve([]);
+              });
+            }
+
+            const answers = await promise;
+            const formatted = answers.length
+              ? formatUserInputAnswersForModel(answers)
+              : 'User did not answer (turn interrupted).';
+            // Returning `deny` with a `message` hands the message back to
+            // the model as the tool_result content. This is the only
+            // PermissionResult shape that lets us substitute output
+            // without actually invoking the SDK-provided tool handler.
+            return {
+              behavior: 'deny',
+              message: formatted,
+            };
+          }
+
           if (isAutoApprovedClaudeTool(toolName, input.runtimeMode)) {
             return {
               behavior: 'allow',
@@ -486,11 +623,9 @@ export class ClaudeAdapter implements ProviderAdapter {
               }
             }
 
-            if (event.type === 'message_stop') {
-              if (fullText) {
-                yield textDone(input.threadId, fullText, turnId);
-              }
-            }
+            // NOTE: message_stop is NOT the authoritative completion signal — the
+            // 'result' message is. textDone is emitted there (see case 'result' below).
+            // Emitting here too caused duplicate text-done events to the client.
             break;
           }
 
@@ -532,12 +667,14 @@ export class ClaudeAdapter implements ProviderAdapter {
             }
             yield turnComplete(input.threadId, turnId, usage);
 
-            // Store session ID for future resume
+            // Store session ID for future resume — persisted to DB so the
+            // cursor survives a server restart.
             if ((message as any).session_id) {
               session.sessionId = (message as any).session_id;
             }
             session.hasStarted = true;
             session.queryRuntime = null;
+            this._onCursorPersist?.(input.threadId, session.sessionId);
 
             return;
           }
@@ -565,13 +702,11 @@ export class ClaudeAdapter implements ProviderAdapter {
         return;
       }
 
-      // If we get here without a result, the stream ended unexpectedly
-      if (fullText) {
-        yield textDone(input.threadId, fullText, turnId);
-      }
-      yield turnComplete(input.threadId, turnId);
+      // If we get here without a result message, the stream ended unexpectedly.
+      // Emit turnError — NOT turnComplete — and do NOT set hasStarted=true since
+      // the session may be in a corrupted state (resume would use a bad sessionId).
       session.queryRuntime = null;
-      session.hasStarted = true;
+      yield turnError(input.threadId, 'Stream ended unexpectedly without completion', turnId);
     } catch (error: unknown) {
       if (session.aborted) {
         yield turnError(input.threadId, 'Turn interrupted by user', turnId);
@@ -594,6 +729,29 @@ export class ClaudeAdapter implements ProviderAdapter {
           }
         }
         console.error('[Claude] Stream error:', msg);
+
+        // Stale cursor recovery: if this turn was started from a restored
+        // (DB-persisted) cursor and the SDK rejected it (session no longer
+        // exists on the CLI side), silently drop the cursor and retry once
+        // with a fresh session.  We only attempt this if no tokens were
+        // streamed (fullText empty) so we never silently swallow partial
+        // responses.
+        const isStaleCursor =
+          allowStaleCursorRetry &&
+          !fullText &&
+          (msg.includes('session') || msg.includes('resume') || msg.includes('not found') || msg.includes('expired'));
+
+        if (isStaleCursor) {
+          console.warn(`[Claude] Stale cursor for thread ${input.threadId} — clearing and retrying fresh`);
+          this._onCursorPersist?.(input.threadId, null);
+          session.sessionId = randomUUID();
+          session.hasStarted = false;
+          session.queryRuntime = null;
+          session.aborted = false;
+          yield* this._doSendTurn(input, session, false /* no further retry */);
+          return;
+        }
+
         yield turnError(input.threadId, msg, turnId);
       }
       // Clean up session so next message starts a fresh query
@@ -618,6 +776,35 @@ export class ClaudeAdapter implements ProviderAdapter {
     this._pendingApprovalEmitter = emitter;
   }
 
+  // User-input event emitter — set by the server to broadcast AskUserQuestion events
+  private _pendingUserInputEmitter: ((
+    threadId: string,
+    requestId: string,
+    questions: UserInputQuestion[],
+    turnId: string,
+  ) => void) | null = null;
+
+  /** Set a callback to emit user-input-required events to the server's broadcast */
+  onUserInputRequired(
+    emitter: (threadId: string, requestId: string, questions: UserInputQuestion[], turnId: string) => void,
+  ) {
+    this._pendingUserInputEmitter = emitter;
+  }
+
+  /** Called from server.ts when the mobile client submits the AskUserQuestion form. */
+  async respondToUserInput(
+    threadId: string,
+    requestId: string,
+    answers: UserInputAnswer[],
+  ): Promise<void> {
+    const session = this.sessions.get(threadId);
+    if (!session) return;
+    const pending = session.pendingUserInputs.get(requestId);
+    if (!pending) return;
+    session.pendingUserInputs.delete(requestId);
+    pending.resolve(answers);
+  }
+
   async interruptTurn(threadId: string): Promise<void> {
     const session = this.sessions.get(threadId);
     if (!session) return;
@@ -636,6 +823,12 @@ export class ClaudeAdapter implements ProviderAdapter {
       pending.resolve({ behavior: 'deny', message: 'Turn interrupted' });
     }
     session.pendingApprovals.clear();
+
+    // Resolve pending user-input requests with empty answers
+    for (const [, pending] of session.pendingUserInputs) {
+      pending.resolve([]);
+    }
+    session.pendingUserInputs.clear();
   }
 
   async respondToApproval(
@@ -685,6 +878,12 @@ export class ClaudeAdapter implements ProviderAdapter {
       pending.resolve({ behavior: 'deny', message: 'Session stopped' });
     }
     session.pendingApprovals.clear();
+
+    // Resolve pending user-input requests with empty answers
+    for (const [, pending] of session.pendingUserInputs) {
+      pending.resolve([]);
+    }
+    session.pendingUserInputs.clear();
 
     this.sessions.delete(threadId);
   }

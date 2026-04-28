@@ -8,7 +8,7 @@
 // SEE:  apps/mobile/src/plugins/shared/explorer/index.tsx (host),
 //       apps/mobile/src/plugins/shared/explorer/store.ts (cwd source)
 
-import React, { memo, useRef, useEffect } from 'react';
+import React, { memo, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,8 @@ import {
   StyleSheet,
 } from 'react-native';
 import { FolderOpen, ChevronRight } from 'lucide-react-native';
-import { colors, typography, spacing } from '../../../../theme';
+import { useTheme } from '../../../../theme';
+import { typography, spacing } from '../../../../theme';
 
 // ----------------------------------------------------------
 // Types
@@ -69,6 +70,44 @@ export const BreadcrumbBar = memo(function BreadcrumbBar({
   sessionTitle,
   onNavigate,
 }: BreadcrumbBarProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => StyleSheet.create({
+    wrapper: {
+      backgroundColor: colors.bg.raised,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.divider,
+    },
+    scroll: {
+      flexGrow: 0,
+    },
+    content: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[2],
+      gap: spacing[1],
+      minHeight: 36,
+    },
+    segment: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: spacing[1],
+    },
+    segLabel: {
+      fontSize: typography.fontSize.sm,
+      color: colors.fg.secondary,
+      fontFamily: typography.fontFamily.mono,
+    },
+    segLabelActive: {
+      color: colors.fg.primary,
+      fontFamily: typography.fontFamily.monoMedium,
+    },
+    segLabelRoot: {
+      color: colors.accent.primary,
+      fontFamily: typography.fontFamily.monoMedium,
+    },
+  }), [colors]);
+
   const scrollRef = useRef<ScrollView>(null);
   const segments = buildSegments(cwd, sessionFolder, sessionTitle);
 
@@ -119,43 +158,4 @@ export const BreadcrumbBar = memo(function BreadcrumbBar({
   );
 });
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  wrapper: {
-    backgroundColor: colors.bg.raised,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  scroll: {
-    flexGrow: 0,
-  },
-  content: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    gap: spacing[1],
-    minHeight: 36,
-  },
-  segment: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-  },
-  segLabel: {
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.secondary,
-    fontFamily: typography.fontFamily.mono,
-  },
-  segLabelActive: {
-    color: colors.fg.primary,
-    fontFamily: typography.fontFamily.monoMedium,
-  },
-  segLabelRoot: {
-    color: colors.accent.primary,
-    fontFamily: typography.fontFamily.monoMedium,
-  },
-});
+// Styles computed dynamically via useMemo — see component body.

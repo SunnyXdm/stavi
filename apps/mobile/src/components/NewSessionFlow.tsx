@@ -5,12 +5,14 @@
 // SEE:  apps/mobile/src/stores/connection.ts, apps/mobile/src/stores/sessions-store.ts
 
 import React, { useCallback, useMemo, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Session } from '@stavi/shared';
-import { colors, radii, spacing, typography } from '../theme';
+import { useTheme } from '../theme';
+import { radii, spacing, typography } from '../theme';
 import { useConnectionStore } from '../stores/connection';
 import { useSessionsStore } from '../stores/sessions-store';
 import { DirectoryPicker } from './DirectoryPicker';
+import { AnimatedPressable } from './AnimatedPressable';
 
 interface NewSessionFlowProps {
   visible: boolean;
@@ -20,7 +22,9 @@ interface NewSessionFlowProps {
 
 type Step = 1 | 2 | 3;
 
-function StepPill({ step, current }: { step: Step; current: Step }) {
+type FlowStyles = ReturnType<typeof createStyles>;
+
+function StepPill({ step, current, styles }: { step: Step; current: Step; styles: FlowStyles }) {
   const active = step <= current;
   return (
     <View style={[styles.stepPill, active && styles.stepPillActive]}>
@@ -29,10 +33,99 @@ function StepPill({ step, current }: { step: Step; current: Step }) {
   );
 }
 
+function createStyles(colors: ReturnType<typeof useTheme>['colors']) {
+  return StyleSheet.create({
+    backdrop: { flex: 1, backgroundColor: colors.bg.scrim, justifyContent: 'flex-end' },
+    backdropPress: { flex: 1 },
+    sheet: {
+      backgroundColor: colors.bg.overlay,
+      borderTopLeftRadius: radii.xl,
+      borderTopRightRadius: radii.xl,
+      padding: spacing[4],
+      gap: spacing[3],
+    },
+    title: {
+      fontSize: typography.fontSize.lg,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.primary,
+    },
+    stepRow: { flexDirection: 'row', gap: spacing[2] },
+    stepPill: {
+      width: 24,
+      height: 24,
+      borderRadius: 999,
+      backgroundColor: colors.bg.input,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    stepPillActive: { backgroundColor: colors.accent.primary },
+    stepPillText: { color: colors.fg.secondary, fontSize: typography.fontSize.xs },
+    stepPillTextActive: { color: colors.fg.onAccent, fontWeight: typography.fontWeight.semibold },
+    label: {
+      fontSize: typography.fontSize.sm,
+      fontWeight: typography.fontWeight.medium,
+      color: colors.fg.secondary,
+    },
+    chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing[2] },
+    chip: {
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[2],
+      borderRadius: radii.full,
+      backgroundColor: colors.bg.input,
+    },
+    chipActive: { backgroundColor: colors.accent.primary },
+    chipText: { color: colors.fg.secondary, fontSize: typography.fontSize.sm },
+    chipTextActive: { color: colors.fg.onAccent },
+    inputLike: {
+      backgroundColor: colors.bg.input,
+      borderRadius: radii.md,
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[3],
+    },
+    inputLikeText: { color: colors.fg.primary, fontSize: typography.fontSize.sm },
+    input: {
+      backgroundColor: colors.bg.input,
+      borderRadius: radii.md,
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[3],
+      color: colors.fg.primary,
+    },
+    meta: { fontSize: typography.fontSize.xs, color: colors.fg.muted },
+    error: { fontSize: typography.fontSize.sm, color: colors.semantic.error },
+    actions: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing[2] },
+    secondaryButton: {
+      flex: 1,
+      backgroundColor: colors.bg.input,
+      borderRadius: radii.md,
+      alignItems: 'center',
+      paddingVertical: spacing[3],
+    },
+    secondaryButtonText: {
+      color: colors.fg.secondary,
+      fontSize: typography.fontSize.base,
+      fontWeight: typography.fontWeight.medium,
+    },
+    primaryButton: {
+      flex: 1,
+      backgroundColor: colors.accent.primary,
+      borderRadius: radii.md,
+      alignItems: 'center',
+      paddingVertical: spacing[3],
+    },
+    primaryButtonText: {
+      color: colors.fg.onAccent,
+      fontSize: typography.fontSize.base,
+      fontWeight: typography.fontWeight.semibold,
+    },
+  });
+}
+
 export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowProps) {
   const savedConnections = useConnectionStore((state) => state.savedConnections);
   const getClientForServer = useConnectionStore((state) => state.getClientForServer);
   const refreshForServer = useSessionsStore((state) => state.refreshForServer);
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [step, setStep] = useState<Step>(1);
   const [serverId, setServerId] = useState('');
@@ -40,6 +133,7 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
   const [title, setTitle] = useState('');
   const [showDirectoryPicker, setShowDirectoryPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const selectedServer = useMemo(
     () => savedConnections.find((connection) => connection.id === serverId) ?? null,
@@ -90,6 +184,7 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
     }
 
     try {
+      setCreating(true);
       const session = await client.request<Session>('session.create', {
         folder,
         title: title.trim() || folder.split('/').filter(Boolean).pop() || 'Workspace',
@@ -100,21 +195,26 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
       onCreated(session);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create workspace');
+    } finally {
+      setCreating(false);
     }
   }, [folder, getClientForServer, onCreated, refreshForServer, reset, serverId, title]);
 
   return (
     <>
       <Modal visible={visible} animationType="slide" transparent onRequestClose={closeFlow}>
-        <View style={styles.backdrop}>
+        <KeyboardAvoidingView
+          style={styles.backdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
           <Pressable style={styles.backdropPress} onPress={closeFlow} />
           <View style={styles.sheet}>
             <Text style={styles.title}>New Workspace</Text>
 
             <View style={styles.stepRow}>
-              <StepPill step={1} current={step} />
-              <StepPill step={2} current={step} />
-              <StepPill step={3} current={step} />
+              <StepPill step={1} current={step} styles={styles} />
+              <StepPill step={2} current={step} styles={styles} />
+              <StepPill step={3} current={step} styles={styles} />
             </View>
 
             {step === 1 ? (
@@ -180,17 +280,26 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
               )}
 
               {step < 3 ? (
-                <Pressable style={styles.primaryButton} onPress={moveNext}>
+                <AnimatedPressable style={styles.primaryButton} onPress={moveNext} haptic="light">
                   <Text style={styles.primaryButtonText}>Next</Text>
-                </Pressable>
+                </AnimatedPressable>
               ) : (
-                <Pressable style={styles.primaryButton} onPress={handleCreate}>
-                  <Text style={styles.primaryButtonText}>Create</Text>
-                </Pressable>
+                <AnimatedPressable
+                  style={styles.primaryButton}
+                  onPress={handleCreate}
+                  disabled={creating}
+                  haptic="medium"
+                >
+                  {creating ? (
+                    <ActivityIndicator size="small" color={colors.fg.onAccent} />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Create</Text>
+                  )}
+                </AnimatedPressable>
               )}
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <DirectoryPicker
@@ -207,87 +316,4 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
   );
 }
 
-const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: colors.bg.scrim, justifyContent: 'flex-end' },
-  backdropPress: { flex: 1 },
-  sheet: {
-    backgroundColor: colors.bg.overlay,
-    borderTopLeftRadius: radii.xl,
-    borderTopRightRadius: radii.xl,
-    padding: spacing[4],
-    gap: spacing[3],
-  },
-  title: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.fg.primary,
-  },
-  stepRow: { flexDirection: 'row', gap: spacing[2] },
-  stepPill: {
-    width: 24,
-    height: 24,
-    borderRadius: 999,
-    backgroundColor: colors.bg.input,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepPillActive: { backgroundColor: colors.accent.primary },
-  stepPillText: { color: colors.fg.secondary, fontSize: typography.fontSize.xs },
-  stepPillTextActive: { color: colors.fg.onAccent, fontWeight: typography.fontWeight.semibold },
-  label: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.secondary,
-  },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing[2] },
-  chip: {
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    borderRadius: radii.full,
-    backgroundColor: colors.bg.input,
-  },
-  chipActive: { backgroundColor: colors.accent.primary },
-  chipText: { color: colors.fg.secondary, fontSize: typography.fontSize.sm },
-  chipTextActive: { color: colors.fg.onAccent },
-  inputLike: {
-    backgroundColor: colors.bg.input,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[3],
-  },
-  inputLikeText: { color: colors.fg.primary, fontSize: typography.fontSize.sm },
-  input: {
-    backgroundColor: colors.bg.input,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[3],
-    color: colors.fg.primary,
-  },
-  meta: { fontSize: typography.fontSize.xs, color: colors.fg.muted },
-  error: { fontSize: typography.fontSize.sm, color: colors.semantic.error },
-  actions: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing[2] },
-  secondaryButton: {
-    flex: 1,
-    backgroundColor: colors.bg.input,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    paddingVertical: spacing[3],
-  },
-  secondaryButtonText: {
-    color: colors.fg.secondary,
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.medium,
-  },
-  primaryButton: {
-    flex: 1,
-    backgroundColor: colors.accent.primary,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    paddingVertical: spacing[3],
-  },
-  primaryButtonText: {
-    color: colors.fg.onAccent,
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-  },
-});
+// Styles are created via createStyles() + useMemo in NewSessionFlow (see above).

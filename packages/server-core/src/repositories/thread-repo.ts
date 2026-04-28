@@ -18,6 +18,22 @@ function parseModelSelection(raw: string | null): OrchestrationThread['modelSele
   }
 }
 
+// JSON shape stored in resume_cursor:
+//   Claude: { provider: 'claude', sessionId: string }
+//   Codex:  { provider: 'codex', providerThreadId: string }
+export type ResumeCursor =
+  | { provider: 'claude'; sessionId: string }
+  | { provider: 'codex'; providerThreadId: string };
+
+function parseResumeCursor(raw: string | null): ResumeCursor | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as ResumeCursor;
+  } catch {
+    return undefined;
+  }
+}
+
 function toThread(row: any): OrchestrationThread {
   return {
     threadId: row.id,
@@ -102,6 +118,21 @@ export class ThreadRepository {
       id,
     );
     return next;
+  }
+
+  /** Persist or clear the resume cursor for a thread. Runs a targeted single-column UPDATE
+   *  to avoid a full read-modify-write cycle on the hot path (called after every turn). */
+  setResumeCursor(threadId: string, cursor: ResumeCursor | null): void {
+    this.db.query('UPDATE threads SET resume_cursor = ? WHERE id = ?').run(
+      cursor ? JSON.stringify(cursor) : null,
+      threadId,
+    );
+  }
+
+  getResumeCursor(threadId: string): ResumeCursor | undefined {
+    const row = this.db.query('SELECT resume_cursor FROM threads WHERE id = ?').get(threadId) as any;
+    if (!row) return undefined;
+    return parseResumeCursor(row.resume_cursor);
   }
 
   deleteThread(id: string): void {

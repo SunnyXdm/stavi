@@ -5,9 +5,10 @@
 // usable without a hardware keyboard on mobile.
 // Matches lunel's pattern.
 
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
-import { colors, typography, spacing, radii } from '../theme';
+import { useTheme } from '../theme';
+import { typography, spacing, radii } from '../theme';
 
 interface TerminalToolbarProps {
   onKey: (data: string) => void;
@@ -37,9 +38,43 @@ const KEYS: KeyDef[] = [
 ];
 
 export const TerminalToolbar = memo(function TerminalToolbar({ onKey }: TerminalToolbarProps) {
+  const { colors } = useTheme();
   const handlePress = useCallback((data: string) => {
     onKey(data);
   }, [onKey]);
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      backgroundColor: colors.bg.raised,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.divider,
+      height: 40,
+    },
+    scroll: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: spacing[2],
+      gap: spacing[1],
+    },
+    key: {
+      height: 28,
+      minWidth: 36,
+      paddingHorizontal: spacing[2],
+      backgroundColor: colors.bg.overlay,
+      borderRadius: radii.sm,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    keyPressed: {
+      backgroundColor: colors.bg.active,
+    },
+    keyLabel: {
+      fontSize: typography.fontSize.xs,
+      fontWeight: typography.fontWeight.medium,
+      color: colors.fg.secondary,
+      fontFamily: typography.fontFamily.mono,
+    },
+  }), [colors]);
 
   return (
     <View style={styles.container}>
@@ -62,37 +97,4 @@ export const TerminalToolbar = memo(function TerminalToolbar({ onKey }: Terminal
       </ScrollView>
     </View>
   );
-});
-
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: colors.bg.raised,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.divider,
-    height: 40,
-  },
-  scroll: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[2],
-    gap: spacing[1],
-  },
-  key: {
-    height: 28,
-    minWidth: 36,
-    paddingHorizontal: spacing[2],
-    backgroundColor: colors.bg.overlay,
-    borderRadius: radii.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  keyPressed: {
-    backgroundColor: colors.bg.active,
-  },
-  keyLabel: {
-    fontSize: typography.fontSize.xs,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.fg.secondary,
-    fontFamily: typography.fontFamily.mono,
-  },
 });

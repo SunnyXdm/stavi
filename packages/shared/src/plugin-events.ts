@@ -26,6 +26,7 @@ export const PluginEvents = {
   AI_TURN_COMPLETED: 'ai:turn:completed',
   AI_TURN_INTERRUPTED: 'ai:turn:interrupted',
   AI_APPROVAL_REQUESTED: 'ai:approval:requested',
+  AI_USER_INPUT_REQUESTED: 'ai:user-input:requested',
   AI_ACTIVITY: 'ai:activity',
 
   // Navigation
@@ -66,6 +67,16 @@ export interface PluginEventPayloads {
   [PluginEvents.AI_TURN_COMPLETED]: { threadId: string; turnId: string; backend: string };
   [PluginEvents.AI_TURN_INTERRUPTED]: { threadId: string; turnId: string };
   [PluginEvents.AI_APPROVAL_REQUESTED]: { threadId: string; requestId: string; tool: string; description: string };
+  [PluginEvents.AI_USER_INPUT_REQUESTED]: {
+    threadId: string;
+    requestId: string;
+    questions: Array<{
+      question: string;
+      header: string;
+      multiSelect: boolean;
+      options: Array<{ label: string; description: string; preview?: string }>;
+    }>;
+  };
   [PluginEvents.AI_ACTIVITY]: { threadId: string; type: string; description: string };
 
   [PluginEvents.NAVIGATE_TO_FILE]: { path: string; line?: number; column?: number };

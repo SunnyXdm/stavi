@@ -39,6 +39,8 @@ export interface SavedConnection {
   lastConnectedAt?: number;
   /** Bound after first successful connect via server.getConfig.serverId. */
   serverId?: string;
+  /** Machine hostname from server.getConfig — displayed instead of user-set name. */
+  hostname?: string;
   /** Relay server URL — set when connection was created via QR pairing. */
   relayUrl?: string;
   /** Server's static X25519 public key (base64) — required when relayUrl is set. */

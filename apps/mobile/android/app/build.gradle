@@ -101,6 +101,16 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
     }
+
+    // Serve the pre-built editor WebView assets (CodeMirror bundle) from the
+    // monorepo assets/ directory. Android merges all srcDirs into the APK's
+    // assets/ root, so the file becomes accessible at:
+    //   file:///android_asset/editor/index.html
+    sourceSets {
+        main {
+            assets.srcDirs += ['../../assets']
+        }
+    }
 }
 
 dependencies {

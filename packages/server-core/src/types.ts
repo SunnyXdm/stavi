@@ -42,6 +42,12 @@ export interface Subscription {
   threadId?: string;
   /** For terminal subscriptions: if set, only emit events for this terminalId. */
   terminalId?: string;
+  /**
+   * Terminal subscription mode (Phase C1). Default 'raw' (byte stream,
+   * existing xterm.js WebView behavior). 'cells' receives TerminalFrame
+   * events produced by the server-side VT parser.
+   */
+  mode?: 'raw' | 'cells';
 }
 
 // ----------------------------------------------------------
@@ -55,6 +61,13 @@ export interface TerminalSession {
   history: string;
   proc: any; // Bun.Subprocess with terminal
   status: 'running' | 'exited';
+  /**
+   * Phase C1: lazily-attached headless xterm for server-side VT parsing.
+   * Created on the first `cells`-mode subscription to avoid the cost on
+   * raw-only sessions. All subsequent pty chunks are also fed into it
+   * (via feedVt) so the buffer stays in sync.
+   */
+  vt?: import('./terminal-vt').VtSessionState;
 }
 
 // ----------------------------------------------------------

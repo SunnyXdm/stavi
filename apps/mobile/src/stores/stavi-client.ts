@@ -109,6 +109,15 @@ export class StaviClient {
   }
 
   async connectViaTransport(transport: Transport): Promise<void> {
+    // Close existing transport + drain old engine to prevent ghost handlers.
+    if (this._transport && this._transport !== transport) {
+      try { this._transport.close?.(); } catch {}
+    }
+    if (this.engine) {
+      this.engine.drainPending('Replacing transport');
+      this.engine = null;
+    }
+
     this._transport = transport;
     this.config = null;
     this.isIntentionalClose = false;

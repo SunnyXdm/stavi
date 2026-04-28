@@ -150,6 +150,15 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
   const DEFAULT_WS_TOKEN_TTL_MS = 15 * 60 * 1000;
   const wsTokens = new Map<string, { sessionId: string; expiresAt: number }>();
 
+  // Prune unconsumed ws tokens every minute to prevent unbounded growth
+  const wsTokenCleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of wsTokens) {
+      if (now > v.expiresAt) wsTokens.delete(k);
+    }
+  }, 60_000);
+  wsTokenCleanupInterval.unref();
+
   // Build provider registry
   const providerRegistry = new ProviderRegistry(baseDir);
   await providerRegistry.initialize();
@@ -167,6 +176,57 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
           occurredAt: nowIso(),
           payload: { threadId, turnId, requestId, toolName, toolInput },
         });
+      },
+    );
+  }
+
+  // Wire Claude adapter's AskUserQuestion emitter. Mirrors onApprovalRequired,
+  // but emits `thread.user-input-requested` with the question schema so the
+  // mobile client can render a proper form instead of a generic approval card.
+  if (claudeAdapter && 'onUserInputRequired' in claudeAdapter) {
+    (claudeAdapter as any).onUserInputRequired(
+      (threadId: string, requestId: string, questions: unknown, turnId: string) => {
+        ctx.broadcastOrchestrationEvent({
+          type: 'thread.user-input-requested',
+          occurredAt: nowIso(),
+          payload: { threadId, turnId, requestId, questions },
+        });
+      },
+    );
+  }
+
+  // Wire Claude adapter's cursor persistence callbacks so sessions survive
+  // server restarts.  onCursorPersist(persist, getCursor) follows the same
+  // pattern as onApprovalRequired — callbacks keep the adapter DB-free.
+  if (claudeAdapter && 'onCursorPersist' in claudeAdapter) {
+    (claudeAdapter as any).onCursorPersist(
+      // persist: called after every successful turn to save the new cursor
+      (threadId: string, sessionId: string | null) => {
+        if (sessionId) {
+          ctx.threadRepo.setResumeCursor(threadId, { provider: 'claude', sessionId });
+        } else {
+          ctx.threadRepo.setResumeCursor(threadId, null);
+        }
+      },
+      // getCursor: called at the start of sendTurn when no in-memory session exists
+      (threadId: string): string | null => {
+        const cursor = ctx.threadRepo.getResumeCursor(threadId);
+        if (cursor?.provider === 'claude') return cursor.sessionId;
+        return null;
+      },
+    );
+  }
+
+  // Wire Codex adapter's cursor persistence (observability only — no restart resume).
+  const codexAdapter = providerRegistry.getAdapter('codex');
+  if (codexAdapter && 'onCursorPersist' in codexAdapter) {
+    (codexAdapter as any).onCursorPersist(
+      (threadId: string, providerThreadId: string | null) => {
+        if (providerThreadId) {
+          ctx.threadRepo.setResumeCursor(threadId, { provider: 'codex', providerThreadId });
+        } else {
+          ctx.threadRepo.setResumeCursor(threadId, null);
+        }
       },
     );
   }
@@ -192,8 +252,121 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
 
     if (req.method === 'GET' && url.pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', cwd: workspaceRoot }));
+      res.end(JSON.stringify({ status: 'ok' }));
       return;
+    }
+
+    // ------------------------------------------------------------------
+    // GET /proxy?url=<encoded>&token=<bearer>  (or Authorization: Bearer)
+    // ------------------------------------------------------------------
+    // LAN-only localhost proxy for the mobile Browser plugin.
+    // Security:
+    //   - Requires bearer auth (header OR ?token= query because WebView
+    //     cannot set Authorization headers cleanly for top-level navigation).
+    //   - Allowlists only http(s)://(localhost|127.0.0.1|0.0.0.0)(:port)?(/...)?
+    //     — rejects everything else with 400.
+    // v1 limitations (documented, intentional):
+    //   - No HTML rewriting. The WebView's top-level URL points at the proxy,
+    //     but relative subresources (CSS/JS/XHR) resolve against the proxy
+    //     origin — the proxy happily serves them. Absolute URLs pointing to
+    //     `http://localhost:<other-port>` inside HTML will not be rewritten
+    //     and will fail to load from the phone. A future iteration should
+    //     inject `<base href>` or rewrite `localhost:` refs in text/html.
+    //   - WebSocket upgrade is NOT forwarded — HMR will not work on first
+    //     load. Planned for a follow-up (needs http.upgrade wiring here
+    //     distinct from the /ws path used by the RPC WebSocket).
+    if (req.method === 'GET' && url.pathname === '/proxy') {
+      // Auth: Bearer header OR ?token= query param.
+      const authHeader = req.headers.authorization ?? '';
+      const headerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      const queryToken = url.searchParams.get('token') ?? '';
+      const providedToken = headerToken || queryToken;
+      if (providedToken !== bearerToken) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid bearer token' }));
+        return;
+      }
+
+      const target = url.searchParams.get('url') ?? '';
+      // Allowlist: only localhost/127.0.0.1/0.0.0.0 over http(s).
+      const ALLOW_RE = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?(\/.*)?$/i;
+      if (!ALLOW_RE.test(target)) {
+        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Invalid or disallowed url. Only http(s)://localhost|127.0.0.1|0.0.0.0 permitted.');
+        return;
+      }
+
+      let parsed: URL;
+      try {
+        parsed = new URL(target);
+      } catch {
+        res.writeHead(400).end('Malformed url');
+        return;
+      }
+
+      const portForError = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+
+      try {
+        const upstream = await fetch(parsed.toString(), {
+          method: 'GET',
+          // Forward a minimal set of headers; browsers send lots we don't
+          // want to forward (host, origin, cookie for the proxy origin, …).
+          headers: {
+            'user-agent': req.headers['user-agent'] ?? 'StaviProxy/1.0',
+            accept: (req.headers['accept'] as string) ?? '*/*',
+            'accept-language': (req.headers['accept-language'] as string) ?? 'en',
+          },
+          redirect: 'manual',
+        });
+
+        const contentType = upstream.headers.get('content-type') ?? 'application/octet-stream';
+        const headers: Record<string, string> = { 'content-type': contentType };
+        const cacheControl = upstream.headers.get('cache-control');
+        if (cacheControl) headers['cache-control'] = cacheControl;
+
+        res.writeHead(upstream.status, headers);
+
+        if (!upstream.body) {
+          res.end();
+          return;
+        }
+
+        // Stream the body through. Works for Node fetch (web ReadableStream).
+        const reader = upstream.body.getReader();
+        const pump = async () => {
+          try {
+            for (;;) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              if (value) res.write(Buffer.from(value));
+            }
+            res.end();
+          } catch (err) {
+            try { res.end(); } catch { /* noop */ }
+            console.warn('[proxy] stream error:', err);
+          }
+        };
+        void pump();
+        return;
+      } catch (err: unknown) {
+        const code = (err as { cause?: { code?: string }; code?: string })?.cause?.code
+          ?? (err as { code?: string })?.code
+          ?? '';
+        if (code === 'ECONNREFUSED' || code === 'ECONNRESET') {
+          res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(
+            `<!doctype html><html><head><meta charset="utf-8"><title>Dev server not running</title>` +
+            `<style>body{font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;background:#1a1a1a;color:#eee;padding:2rem;max-width:40rem;margin:0 auto}h1{color:#ff8a65}code{background:#000;padding:.1rem .3rem;border-radius:.2rem}</style>` +
+            `</head><body><h1>Dev server on port ${portForError} is not running</h1>` +
+            `<p>Stavi tried to reach <code>${parsed.protocol}//${parsed.host}</code> on the server machine, but no process is listening there.</p>` +
+            `<p>Start your dev server (e.g. <code>npm run dev</code>) and reload.</p></body></html>`,
+          );
+          return;
+        }
+        res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end(`Upstream fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
     }
 
     if (req.method === 'POST' && url.pathname === '/api/auth/ws-token') {
@@ -219,7 +392,7 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
 
   // -- WebSocket server --
 
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 5 * 1024 * 1024 } as ConstructorParameters<typeof WebSocketServer>[0]);
 
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
@@ -250,6 +423,14 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
       ctx.connectionSubscriptions.delete(ws);
     }
     ctx.maybeStopGitPolling();
+
+    // Stop all AI sessions when a client disconnects.
+    // TRADEOFF: adapters don't track which sessions belong to which WS client,
+    // so we stop everything. This is safe for the single-client use case (one
+    // mobile app connected at a time). If stavi ever supports multiple concurrent
+    // clients, the adapters will need a clientId→threadId mapping so we can stop
+    // only the disconnecting client's sessions.
+    void providerRegistry.stopAll();
   };
 
   wss.on('connection', (ws: WebSocket) => {

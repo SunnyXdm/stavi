@@ -144,6 +144,35 @@ export function useOrchestrationActions({
     [serverId, setState],
   );
 
+  // AskUserQuestion response (Phase E2).  Dispatches thread.user-input.respond
+  // with the user's selections so the server resolves the Deferred inside
+  // claude.ts canUseTool() and the SDK continues the turn.
+  const respondToUserInput = useCallback(
+    async (
+      threadId: string,
+      requestId: string,
+      answers: Array<{ question: string; selections: string[]; notes?: string }>,
+    ) => {
+      setState((prev) => {
+        const existing = prev.userInputs.get(threadId) || [];
+        const updated = new Map(prev.userInputs);
+        updated.set(threadId, existing.map((r) => r.requestId === requestId ? { ...r, pending: false } : r));
+        return { ...prev, userInputs: updated };
+      });
+      await getOrchestrationClient(serverId)?.request('orchestration.dispatchCommand', {
+        command: {
+          type: 'thread.user-input.respond',
+          commandId: `cmd-${Date.now()}`,
+          threadId,
+          requestId,
+          answers,
+          createdAt: new Date().toISOString(),
+        },
+      });
+    },
+    [serverId, setState],
+  );
+
   const setActiveThread = useCallback((threadId: string) => {
     if (instanceId) {
       useAiBindingsStore.getState().bind(
@@ -171,5 +200,5 @@ export function useOrchestrationActions({
     } catch { /* ignore */ }
   }, [serverId, setState]);
 
-  return { sendMessage, interruptTurn, respondToApproval, setActiveThread, updateSettings, refreshProviders };
+  return { sendMessage, interruptTurn, respondToApproval, respondToUserInput, setActiveThread, updateSettings, refreshProviders };
 }

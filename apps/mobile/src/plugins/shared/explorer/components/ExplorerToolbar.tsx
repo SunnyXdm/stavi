@@ -9,7 +9,7 @@
 // SEE:  apps/mobile/src/plugins/shared/explorer/index.tsx (host),
 //       apps/mobile/src/plugins/shared/explorer/components/ExplorerList.tsx
 
-import React, { memo } from 'react';
+import React, { memo, useMemo } from 'react';
 import {
   View,
   Text,
@@ -27,7 +27,9 @@ import {
   FileCode,
   X,
 } from 'lucide-react-native';
-import { colors, typography, spacing, radii } from '../../../../theme';
+import { useTheme } from '../../../../theme';
+import { typography, spacing, radii } from '../../../../theme';
+import type { Colors } from '../../../../theme';
 
 // ----------------------------------------------------------
 // Types
@@ -46,6 +48,72 @@ interface ExplorerToolbarProps {
 }
 
 // ----------------------------------------------------------
+// Style factory
+// ----------------------------------------------------------
+
+function createToolbarStyles(colors: Colors) {
+  return StyleSheet.create({
+    container: {
+      backgroundColor: colors.bg.overlay,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.divider,
+    },
+    selectionBadge: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      justifyContent: 'space-between' as const,
+      paddingHorizontal: spacing[4],
+      paddingTop: spacing[2],
+      paddingBottom: spacing[1],
+    },
+    selectionCount: {
+      fontSize: typography.fontSize.xs,
+      fontFamily: typography.fontFamily.sansMedium,
+      color: colors.accent.primary,
+      letterSpacing: 0.5,
+    },
+    actions: {
+      flexGrow: 0,
+    },
+    actionsContent: {
+      flexDirection: 'row' as const,
+      paddingHorizontal: spacing[3],
+      paddingBottom: spacing[2],
+      gap: spacing[1],
+    },
+    button: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: spacing[1],
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[2],
+      borderRadius: radii.md,
+      backgroundColor: colors.bg.surfaceAlt,
+      minHeight: 32,
+    },
+    buttonPressed: {
+      backgroundColor: colors.bg.active,
+    },
+    buttonDisabled: {
+      opacity: 0.4,
+    },
+    buttonLabel: {
+      fontSize: typography.fontSize.xs,
+      fontFamily: typography.fontFamily.sansMedium,
+      color: colors.fg.secondary,
+    },
+    buttonLabelDanger: {
+      color: colors.semantic.error,
+    },
+    buttonLabelDisabled: {
+      color: colors.fg.muted,
+    },
+  });
+}
+
+type ToolbarStyles = ReturnType<typeof createToolbarStyles>;
+
+// ----------------------------------------------------------
 // Toolbar button
 // ----------------------------------------------------------
 
@@ -55,12 +123,16 @@ const ToolbarButton = memo(function ToolbarButton({
   onPress,
   disabled = false,
   danger = false,
+  styles,
+  colors,
 }: {
   icon: React.ComponentType<{ size?: number; color?: string }>;
   label: string;
   onPress: () => void;
   disabled?: boolean;
   danger?: boolean;
+  styles: ToolbarStyles;
+  colors: Colors;
 }) {
   const iconColor = danger
     ? colors.semantic.error
@@ -101,6 +173,9 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
   onOpenInEditor,
   onClearSelection,
 }: ExplorerToolbarProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createToolbarStyles(colors), [colors]);
+
   return (
     <View style={styles.container}>
       {/* Selection count + clear */}
@@ -118,106 +193,16 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
         style={styles.actions}
         contentContainerStyle={styles.actionsContent}
       >
-        <ToolbarButton
-          icon={Trash2}
-          label="Delete"
-          onPress={onDelete}
-          danger
-        />
-        <ToolbarButton
-          icon={Move}
-          label="Move"
-          onPress={onMove}
-        />
-        <ToolbarButton
-          icon={Copy}
-          label="Copy"
-          onPress={onCopy}
-        />
-        <ToolbarButton
-          icon={Archive}
-          label="Zip"
-          onPress={onZip}
-        />
-        <ToolbarButton
-          icon={Info}
-          label="Info"
-          onPress={onInfo}
-          disabled={selectionCount !== 1}
-        />
-        <ToolbarButton
-          icon={Terminal}
-          label="Terminal"
-          onPress={onOpenInTerminal}
-        />
-        <ToolbarButton
-          icon={FileCode}
-          label="Editor"
-          onPress={onOpenInEditor}
-        />
+        <ToolbarButton icon={Trash2} label="Delete" onPress={onDelete} danger styles={styles} colors={colors} />
+        <ToolbarButton icon={Move} label="Move" onPress={onMove} styles={styles} colors={colors} />
+        <ToolbarButton icon={Copy} label="Copy" onPress={onCopy} styles={styles} colors={colors} />
+        <ToolbarButton icon={Archive} label="Zip" onPress={onZip} styles={styles} colors={colors} />
+        <ToolbarButton icon={Info} label="Info" onPress={onInfo} disabled={selectionCount !== 1} styles={styles} colors={colors} />
+        <ToolbarButton icon={Terminal} label="Terminal" onPress={onOpenInTerminal} styles={styles} colors={colors} />
+        <ToolbarButton icon={FileCode} label="Editor" onPress={onOpenInEditor} styles={styles} colors={colors} />
       </ScrollView>
     </View>
   );
 });
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: colors.bg.overlay,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  selectionBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing[4],
-    paddingTop: spacing[2],
-    paddingBottom: spacing[1],
-  },
-  selectionCount: {
-    fontSize: typography.fontSize.xs,
-    fontFamily: typography.fontFamily.sansMedium,
-    color: colors.accent.primary,
-    letterSpacing: 0.5,
-  },
-  actions: {
-    flexGrow: 0,
-  },
-  actionsContent: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing[3],
-    paddingBottom: spacing[2],
-    gap: spacing[1],
-  },
-  button: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing[1],
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    borderRadius: radii.md,
-    backgroundColor: colors.bg.surfaceAlt,
-    minHeight: 32,
-  },
-  buttonPressed: {
-    backgroundColor: colors.bg.active,
-  },
-  buttonDisabled: {
-    opacity: 0.4,
-  },
-  buttonLabel: {
-    fontSize: typography.fontSize.xs,
-    fontFamily: typography.fontFamily.sansMedium,
-    color: colors.fg.secondary,
-  },
-  buttonLabelDanger: {
-    color: colors.semantic.error,
-  },
-  buttonLabelDisabled: {
-    color: colors.fg.muted,
-  },
-});
+// Styles computed dynamically via useMemo (createToolbarStyles factory) — see component body.

@@ -9,7 +9,7 @@
 //       packages/server-core/src/handlers/fs-batch.ts (fs.stat RPC),
 //       docs/PROTOCOL.md §5.5 (fs.stat response shape)
 
-import React, { memo, useState, useEffect, useCallback } from 'react';
+import React, { memo, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,7 +23,9 @@ import {
 import { X, FileText, Folder, Lock } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useConnectionStore } from '../../../../stores/connection';
-import { colors, typography, spacing, radii } from '../../../../theme';
+import { useTheme } from '../../../../theme';
+import { typography, spacing, radii } from '../../../../theme';
+import type { Colors } from '../../../../theme';
 
 // ----------------------------------------------------------
 // Types
@@ -69,6 +71,104 @@ function entryType(stat: StatResult): string {
 }
 
 // ----------------------------------------------------------
+// Style factory
+// ----------------------------------------------------------
+
+function createSheetStyles(colors: Colors) {
+  return StyleSheet.create({
+    backdrop: {
+      flex: 1,
+      backgroundColor: colors.bg.scrim,
+      justifyContent: 'flex-end' as const,
+    },
+    backdropDismiss: {
+      flex: 1,
+    },
+    sheet: {
+      backgroundColor: colors.bg.overlay,
+      borderTopLeftRadius: radii.lg,
+      borderTopRightRadius: radii.lg,
+      paddingTop: spacing[2],
+    },
+    handle: {
+      width: 36,
+      height: 4,
+      borderRadius: radii.full,
+      backgroundColor: colors.fg.muted,
+      alignSelf: 'center' as const,
+      marginBottom: spacing[3],
+    },
+    header: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      paddingHorizontal: spacing[4],
+      paddingBottom: spacing[3],
+      gap: spacing[2],
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.divider,
+    },
+    fileName: {
+      flex: 1,
+      fontSize: typography.fontSize.md,
+      fontFamily: typography.fontFamily.sansSemiBold,
+      color: colors.fg.primary,
+    },
+    centered: {
+      paddingVertical: spacing[8],
+      alignItems: 'center' as const,
+    },
+    errorText: {
+      fontSize: typography.fontSize.sm,
+      color: colors.semantic.error,
+      textAlign: 'center' as const,
+      paddingHorizontal: spacing[4],
+    },
+    metaList: {
+      paddingTop: spacing[2],
+      paddingBottom: spacing[2],
+    },
+    metaRow: {
+      flexDirection: 'row' as const,
+      alignItems: 'flex-start' as const,
+      paddingHorizontal: spacing[4],
+      paddingVertical: spacing[3],
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.dividerSubtle,
+      gap: spacing[4],
+    },
+    metaLabel: {
+      width: 90,
+      fontSize: typography.fontSize.sm,
+      fontFamily: typography.fontFamily.sansMedium,
+      color: colors.fg.muted,
+      flexShrink: 0,
+    },
+    metaValue: {
+      flex: 1,
+      fontSize: typography.fontSize.sm,
+      color: colors.fg.primary,
+    },
+    metaValueMono: {
+      fontFamily: typography.fontFamily.mono,
+      color: colors.fg.secondary,
+    },
+    copyHint: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      paddingHorizontal: spacing[4],
+      paddingTop: spacing[2],
+      gap: spacing[1],
+    },
+    copyHintText: {
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.muted,
+    },
+  });
+}
+
+type SheetStyles = ReturnType<typeof createSheetStyles>;
+
+// ----------------------------------------------------------
 // MetaRow
 // ----------------------------------------------------------
 
@@ -77,11 +177,13 @@ const MetaRow = memo(function MetaRow({
   value,
   mono = false,
   onLongPress,
+  styles,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   onLongPress?: () => void;
+  styles: SheetStyles;
 }) {
   return (
     <View style={styles.metaRow}>
@@ -105,6 +207,8 @@ export const EntryMetaSheet = memo(function EntryMetaSheet({
   serverId,
   onClose,
 }: EntryMetaSheetProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createSheetStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const getClientForServer = useConnectionStore((s) => s.getClientForServer);
   const [stat, setStat] = useState<StatResult | null>(null);
@@ -186,20 +290,17 @@ export const EntryMetaSheet = memo(function EntryMetaSheet({
           )}
           {stat && !loading && (
             <View style={styles.metaList}>
-              <MetaRow label="Type" value={entryType(stat)} />
-              <MetaRow label="Size" value={formatBytes(stat.size)} />
-              <MetaRow label="Modified" value={formatDate(stat.mtime)} />
-              <MetaRow label="Accessed" value={formatDate(stat.atime)} />
-              <MetaRow
-                label="Permissions"
-                value={stat.mode}
-                mono
-              />
+              <MetaRow label="Type" value={entryType(stat)} styles={styles} />
+              <MetaRow label="Size" value={formatBytes(stat.size)} styles={styles} />
+              <MetaRow label="Modified" value={formatDate(stat.mtime)} styles={styles} />
+              <MetaRow label="Accessed" value={formatDate(stat.atime)} styles={styles} />
+              <MetaRow label="Permissions" value={stat.mode} mono styles={styles} />
               <MetaRow
                 label="Full path"
                 value={path}
                 mono
                 onLongPress={handleCopyPath}
+                styles={styles}
               />
               <View style={styles.copyHint}>
                 <Lock size={12} color={colors.fg.muted} />
@@ -213,96 +314,4 @@ export const EntryMetaSheet = memo(function EntryMetaSheet({
   );
 });
 
-// ----------------------------------------------------------
-// Styles
-// ----------------------------------------------------------
-
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: colors.bg.scrim,
-    justifyContent: 'flex-end',
-  },
-  backdropDismiss: {
-    flex: 1,
-  },
-  sheet: {
-    backgroundColor: colors.bg.overlay,
-    borderTopLeftRadius: radii.lg,
-    borderTopRightRadius: radii.lg,
-    paddingTop: spacing[2],
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    borderRadius: radii.full,
-    backgroundColor: colors.fg.muted,
-    alignSelf: 'center',
-    marginBottom: spacing[3],
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[4],
-    paddingBottom: spacing[3],
-    gap: spacing[2],
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
-  },
-  fileName: {
-    flex: 1,
-    fontSize: typography.fontSize.md,
-    fontFamily: typography.fontFamily.sansSemiBold,
-    color: colors.fg.primary,
-  },
-  centered: {
-    paddingVertical: spacing[8],
-    alignItems: 'center',
-  },
-  errorText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.semantic.error,
-    textAlign: 'center',
-    paddingHorizontal: spacing[4],
-  },
-  metaList: {
-    paddingTop: spacing[2],
-    paddingBottom: spacing[2],
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[3],
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.dividerSubtle,
-    gap: spacing[4],
-  },
-  metaLabel: {
-    width: 90,
-    fontSize: typography.fontSize.sm,
-    fontFamily: typography.fontFamily.sansMedium,
-    color: colors.fg.muted,
-    flexShrink: 0,
-  },
-  metaValue: {
-    flex: 1,
-    fontSize: typography.fontSize.sm,
-    color: colors.fg.primary,
-  },
-  metaValueMono: {
-    fontFamily: typography.fontFamily.mono,
-    color: colors.fg.secondary,
-  },
-  copyHint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing[4],
-    paddingTop: spacing[2],
-    gap: spacing[1],
-  },
-  copyHintText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.fg.muted,
-  },
-});
+// Styles computed dynamically via useMemo (createSheetStyles factory) — see component body.

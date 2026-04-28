@@ -19,6 +19,10 @@ import type {
 // Component registry (module-level, not serialized)
 // ----------------------------------------------------------
 
+// Sentinel — frozen empty array returned by getOpenTabs when a session has no tabs.
+// Reusing the same reference prevents new-array-per-snapshot in useSyncExternalStore.
+const EMPTY_TABS: PluginInstance[] = Object.freeze([]) as unknown as PluginInstance[];
+
 const componentRegistry = new Map<string, ComponentType<any>>();
 
 export function getPluginComponent(pluginId: string): ComponentType<any> | undefined {
@@ -131,12 +135,6 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
           console.warn(`[PluginRegistry] Cannot open tab: plugin "${pluginId}" not registered`);
           return '';
         }
-        // Server-scoped plugins cannot be opened as tabs
-        if (definition.scope === 'server') {
-          console.warn(`[PluginRegistry] Rejected openTab for server-scoped plugin "${pluginId}"`);
-          return '';
-        }
-
         const sessionTabs = state.openTabsBySession[sessionId] ?? [];
 
         if (!definition.allowMultipleInstances) {
@@ -224,7 +222,7 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
       initialize: (sessionId = DEFAULT_SESSION) => {
         const state = get();
         const corePlugins = Object.values(state.definitions)
-          .filter((d) => d.kind === 'core' && d.scope !== 'server')
+          .filter((d) => d.kind === 'core')
           .sort((a, b) => (a.navOrder ?? 99) - (b.navOrder ?? 99));
 
         let tabs = [...(state.openTabsBySession[sessionId] ?? [])];
@@ -244,10 +242,10 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
           }
         }
 
-        // Remove stale tabs (plugin no longer registered or is server-scoped)
+        // Remove stale tabs (plugin no longer registered)
         tabs = tabs.filter((t) => {
           const def = state.definitions[t.pluginId];
-          return def && def.scope !== 'server';
+          return !!def;
         });
 
         const aiTab = tabs.find((t) => state.definitions[t.pluginId]?.navOrder === 0);
@@ -289,7 +287,7 @@ export const usePluginRegistry = create<PluginRegistryState & PluginRegistryActi
         return def.kind !== 'core' || (def.allowMultipleInstances ?? false);
       },
 
-      getOpenTabs: (sessionId = DEFAULT_SESSION) => get().openTabsBySession[sessionId] ?? [],
+      getOpenTabs: (sessionId = DEFAULT_SESSION) => get().openTabsBySession[sessionId] ?? EMPTY_TABS,
 
       getActiveTabId: (sessionId = DEFAULT_SESSION) => get().activeTabIdBySession[sessionId] ?? null,
     }),
