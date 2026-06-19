@@ -68,10 +68,47 @@ export function createOrchestrationHandlers(ctx: ServerContext): Record<string, 
           return;
         }
         const activeKind = ctx.activeTurnAdapters.get(threadId);
-        const adapter = activeKind
-          ? ctx.providerRegistry.getAdapter(activeKind as any)
-          : ctx.providerRegistry.getDefaultAdapter();
-        if (adapter) void adapter.interruptTurn(threadId);
+        if (activeKind) {
+          // A turn is live — interrupt the real adapter (don't fall back to
+          // the default adapter, which would be a no-op against no stream).
+          const adapter = ctx.providerRegistry.getAdapter(activeKind as any);
+          if (adapter) void adapter.interruptTurn(threadId);
+        } else {
+          // No live adapter — this is a "ghost streaming" message (e.g. one
+          // left by a crash before boot reconciliation, or any thread whose
+          // turn died without flipping the flag). Clear the streaming flag in
+          // the DB + cache and broadcast so the client unlocks the composer.
+          const cached = messages.get(threadId) ?? [];
+          let changed = false;
+          const cleared = cached.map((m) => {
+            if (m.role === 'assistant' && m.streaming) {
+              changed = true;
+              const next = { ...m, streaming: false };
+              ctx.messageRepo.replaceMessage(m.messageId, next);
+              ctx.broadcastOrchestrationEvent({
+                type: 'thread.message-sent',
+                occurredAt: nowIso(),
+                payload: next,
+              });
+              return next;
+            }
+            return m;
+          });
+          if (changed) messages.set(threadId, cleared);
+        }
+        // Interrupt resolves the adapter's pending approvals as denied —
+        // clear our tracking + clear cards on every client.
+        const pend = ctx.pendingApprovals.get(threadId);
+        if (pend?.length) {
+          for (const p of pend) {
+            ctx.broadcastOrchestrationEvent({
+              type: 'thread.approval-resolved',
+              occurredAt: nowIso(),
+              payload: { threadId, requestId: p.requestId, decision: 'cancelled' },
+            });
+          }
+          ctx.pendingApprovals.delete(threadId);
+        }
         sendJson(ws, makeSuccess(id, { ok: true }));
         return;
       }
@@ -94,6 +131,22 @@ export function createOrchestrationHandlers(ctx: ServerContext): Record<string, 
           ? ctx.providerRegistry.getAdapter(providerKind as any)
           : ctx.providerRegistry.getDefaultAdapter();
         if (adapter && requestId) void adapter.respondToApproval(threadId, requestId, decision);
+        // Clear from snapshot tracking and tell every client (multi-device,
+        // reloaded app) the card is resolved — without this, a second device
+        // shows a ghost approval forever.
+        if (requestId) {
+          const pend = ctx.pendingApprovals.get(threadId);
+          if (pend) {
+            const next = pend.filter((p) => p.requestId !== requestId);
+            if (next.length) ctx.pendingApprovals.set(threadId, next);
+            else ctx.pendingApprovals.delete(threadId);
+          }
+          ctx.broadcastOrchestrationEvent({
+            type: 'thread.approval-resolved',
+            occurredAt: nowIso(),
+            payload: { threadId, requestId, decision },
+          });
+        }
         sendJson(ws, makeSuccess(id, { ok: true }));
         return;
       }

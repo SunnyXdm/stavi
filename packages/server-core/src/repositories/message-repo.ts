@@ -77,11 +77,42 @@ class PendingWrites {
 // MessageRepository
 // ----------------------------------------------------------
 
+// Appended to any assistant message left mid-stream by a server crash/restart.
+// The marker text is also the idempotency key (instr check), so keep it stable.
+const INTERRUPT_MARKER = '\n\n---\n_⚠ The server restarted mid-response; this turn was interrupted._';
+const INTERRUPT_MARKER_KEY = 'this turn was interrupted';
+
 export class MessageRepository {
   private pendingWrites: PendingWrites;
 
   constructor(private db: Database) {
     this.pendingWrites = new PendingWrites(db);
+    this.reconcileStreamingOnBoot();
+  }
+
+  /**
+   * Clear "ghost streaming" rows left by a crash/restart mid-turn.
+   *
+   * A turn's assistant placeholder is persisted with streaming=1 and only
+   * flipped to 0 inside the live turn loop (complete/error/catch). If the
+   * process dies before any of those fire, the row stays streaming=1 and the
+   * client re-renders a perpetual cursor with no live adapter behind it —
+   * locking the composer on a no-op Stop button. This runs once at construction
+   * (before context.ts warm-caches messages), synchronously bypassing the 50ms
+   * write coalescing, so the snapshot served on reconnect is already clean.
+   *
+   * Not a migration: migrations run once-ever, but ghosts appear on every crash.
+   */
+  private reconcileStreamingOnBoot(): void {
+    const appendMarker = this.db.prepare(
+      "UPDATE messages SET text = text || ? " +
+        "WHERE streaming = 1 AND role = 'assistant' AND instr(text, ?) = 0",
+    );
+    const clearFlag = this.db.prepare('UPDATE messages SET streaming = 0 WHERE streaming = 1');
+    this.db.transaction(() => {
+      appendMarker.run(INTERRUPT_MARKER, INTERRUPT_MARKER_KEY);
+      clearFlag.run();
+    })();
   }
 
   appendMessage(m: OrchestrationMessage): void {
