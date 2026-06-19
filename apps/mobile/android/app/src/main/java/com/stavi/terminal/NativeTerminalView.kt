@@ -49,12 +49,44 @@ class NativeTerminalView(
     private var session: TerminalSession? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // Set once in cleanup() (the Fabric onDropViewInstance teardown hook). Every
+    // posted runnable and every background session-thread callback checks this
+    // so nothing re-enters the view after it has been released. @Volatile so the
+    // session reader thread sees the UI-thread write.
+    @Volatile private var destroyed = false
+
+    /** Post to the UI thread but skip the body if the view was torn down. */
+    private inline fun postGuarded(crossinline body: () -> Unit) {
+        mainHandler.post { if (!destroyed) body() }
+    }
+
     companion object {
         private const val PREFS_NAME = "stavi_terminal_prefs"
         private const val PREF_FONT_SIZE = "font_size"
         private const val FONT_SIZE_DEFAULT = 14
         private const val FONT_SIZE_MIN = 6
         private const val FONT_SIZE_MAX = 36
+
+        // No-op client installed on the session during cleanup() so a late
+        // reader-thread callback cannot re-enter the dropped view.
+        private val NO_CLIENT = object : TerminalSessionClient {
+            override fun onTextChanged(changedSession: TerminalSession) {}
+            override fun onTitleChanged(changedSession: TerminalSession) {}
+            override fun onSessionFinished(finishedSession: TerminalSession) {}
+            override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {}
+            override fun onPasteTextFromClipboard(session: TerminalSession?) {}
+            override fun onBell(session: TerminalSession) {}
+            override fun onColorsChanged(session: TerminalSession) {}
+            override fun onTerminalCursorStateChange(state: Boolean) {}
+            override fun getTerminalCursorStyle(): Int = TerminalEmulator.TERMINAL_CURSOR_STYLE_BLOCK
+            override fun logError(tag: String?, message: String?) {}
+            override fun logWarn(tag: String?, message: String?) {}
+            override fun logInfo(tag: String?, message: String?) {}
+            override fun logDebug(tag: String?, message: String?) {}
+            override fun logVerbose(tag: String?, message: String?) {}
+            override fun logStackTraceWithMessage(tag: String?, message: String?, e: Exception?) {}
+            override fun logStackTrace(tag: String?, e: Exception?) {}
+        }
     }
 
     // ── Preferences ──────────────────────────────────────────
@@ -77,7 +109,12 @@ class NativeTerminalView(
     init {
         terminalView.setTerminalViewClient(this)
         terminalView.setTextSize(currentFontSize.toInt())
-        terminalView.setTypeface(Typeface.MONOSPACE)
+        // Fira Code for the terminal grid; fall back to system mono if the
+        // asset is ever missing (createFromAsset throws RuntimeException).
+        terminalView.setTypeface(
+            try { Typeface.createFromAsset(context.assets, "fonts/FiraCode-Regular.ttf") }
+            catch (e: Exception) { Typeface.MONOSPACE }
+        )
         // Stavi bg.base = #161616
         terminalView.setBackgroundColor(Color.parseColor("#161616"))
         terminalView.isFocusable = true
@@ -89,7 +126,7 @@ class NativeTerminalView(
         super.onAttachedToWindow()
         if (session == null) {
             // Post so the view has been laid out and has real width/height
-            terminalView.post { initSession() }
+            terminalView.post { if (!destroyed && session == null) initSession() }
         }
     }
 
@@ -97,9 +134,13 @@ class NativeTerminalView(
     private fun initSession() {
         // `sleep` keeps the process alive so the PTY stays functional.
         // We never actually use this process for I/O.
+        // NB: Termux passes args verbatim as argv — argv[0] MUST be the
+        // program name. With argv = ["999999999"], toybox dispatched on
+        // argv[0], printed "toybox: Unknown command 999999999" into the
+        // terminal, and exited 127 on every startup.
         session = TerminalSession(
-            "/bin/sleep", "/",
-            arrayOf("999999999"),
+            "/system/bin/sleep", "/",
+            arrayOf("sleep", "999999999"),
             arrayOf(),
             null, // use default transcript rows
             this,
@@ -109,6 +150,7 @@ class NativeTerminalView(
         applyColorScheme()
 
         terminalView.post {
+            if (destroyed) return@post
             // TerminalView.updateSize() uses its own font metrics to compute
             // the correct cols/rows for the current view size.
             terminalView.updateSize()
@@ -157,35 +199,49 @@ class NativeTerminalView(
     // ── Public API (called from ViewManager via native commands) ──
 
     /** Render output bytes received from the WebSocket into the emulator. */
-    fun writeOutput(data: String) {
-        mainHandler.post {
-            val emu = session?.emulator ?: return@post
-            val bytes = data.toByteArray(Charsets.UTF_8)
-            emu.append(bytes, bytes.size)
-            terminalView.onScreenUpdated()
-        }
+    fun writeOutput(data: String) = postGuarded {
+        val emu = session?.emulator ?: return@postGuarded
+        val bytes = data.toByteArray(Charsets.UTF_8)
+        emu.append(bytes, bytes.size)
+        terminalView.onScreenUpdated()
     }
 
     /** Resize the emulator — called when JS sends explicit cols/rows. */
-    fun resizeTerminal(cols: Int, rows: Int) {
-        mainHandler.post {
-            session?.updateSize(cols, rows)
-            terminalView.updateSize()
-        }
+    fun resizeTerminal(cols: Int, rows: Int) = postGuarded {
+        session?.updateSize(cols, rows)
+        terminalView.updateSize()
     }
 
     /** Hard-reset the emulator (clear scrollback, reapply colors). */
-    fun resetTerminal() {
-        mainHandler.post {
-            session?.emulator?.reset()
-            applyColorScheme()
-            terminalView.onScreenUpdated()
-        }
+    fun resetTerminal() = postGuarded {
+        session?.emulator?.reset()
+        applyColorScheme()
+        terminalView.onScreenUpdated()
     }
 
+    /**
+     * Fabric teardown (called from NativeTerminalViewManager.onDropViewInstance).
+     * Idempotent + main-thread. Drops queued runnables and severs the client
+     * back-references so neither a posted runnable nor a background reader-thread
+     * callback can re-enter this dropped view (use-after-teardown).
+     */
     fun cleanup() {
-        session?.finishIfRunning()
+        if (destroyed) return
+        destroyed = true
+        // Drop every runnable we queued on both handlers so nothing fires
+        // post-teardown.
+        mainHandler.removeCallbacksAndMessages(null)
+        terminalView.removeCallbacks(null)
+        // Sever session -> view back-ref before finishing, so a late
+        // reader-thread callback hits the no-op client, not the dropped view.
+        session?.let {
+            it.updateTerminalSessionClient(NO_CLIENT)
+            it.finishIfRunning()
+        }
         session = null
+        // Sever view -> view client back-ref (v0.118.1 does not annotate the
+        // param @NonNull, so null is accepted).
+        terminalView.setTerminalViewClient(null)
     }
 
     // ── Font size helper ──────────────────────────────────────
@@ -232,7 +288,11 @@ class NativeTerminalView(
 
     // ── TerminalSessionClient ─────────────────────────────────
 
+    // The next three callbacks arrive from the TerminalSession reader thread
+    // (background). The `destroyed` guard (@Volatile) makes a late event a
+    // no-op even before updateTerminalSessionClient(NO_CLIENT) takes effect.
     override fun onTextChanged(changedSession: TerminalSession) {
+        if (destroyed) return
         terminalView.onScreenUpdated()
     }
 
@@ -242,11 +302,11 @@ class NativeTerminalView(
     override fun onPasteTextFromClipboard(session: TerminalSession?) {}
 
     override fun onBell(session: TerminalSession) {
-        emitBell()
+        if (!destroyed) emitBell()
     }
 
     override fun onColorsChanged(session: TerminalSession) {
-        terminalView.postInvalidate()
+        if (!destroyed) terminalView.postInvalidate()
     }
 
     override fun onTerminalCursorStateChange(state: Boolean) {}
@@ -282,6 +342,15 @@ class NativeTerminalView(
     }
 
     override fun onSingleTapUp(e: MotionEvent?) {
+        terminalView.requestFocus()
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.showSoftInput(terminalView, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    /** Programmatic focus (new-tab / tab-switch): grab IME focus so typing
+     *  reaches THIS terminal — without it the previous (hidden) tab keeps
+     *  keyboard focus and keystrokes go to the wrong PTY. */
+    fun focusTerminal() = postGuarded {
         terminalView.requestFocus()
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.showSoftInput(terminalView, InputMethodManager.SHOW_IMPLICIT)
@@ -360,7 +429,7 @@ class NativeTerminalView(
     }
 
     override fun onEmulatorSet() {
-        terminalView.post { terminalView.updateSize() }
+        terminalView.post { if (!destroyed) terminalView.updateSize() }
     }
 }
 
