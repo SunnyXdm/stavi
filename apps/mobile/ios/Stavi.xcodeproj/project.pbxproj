@@ -19,6 +19,16 @@
 		FB1B2C3D4E5F6A7B8C9D0E23 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FA1B2C3D4E5F6A7B8C9D0E23 /* JetBrainsMono-Regular.ttf */; };
 		FB1B2C3D4E5F6A7B8C9D0E24 /* JetBrainsMono-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FA1B2C3D4E5F6A7B8C9D0E24 /* JetBrainsMono-Medium.ttf */; };
 		FB1B2C3D4E5F6A7B8C9D0E25 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FA1B2C3D4E5F6A7B8C9D0E25 /* JetBrainsMono-Bold.ttf */; };
+		EAB383F39555436DA42F3EB9 /* Inter-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 37C2988F7B7B40A887F6B8ED /* Inter-Medium.ttf */; };
+		CA944891D635434B9F030487 /* JetBrainsMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 35AC894C708149C491F7E662 /* JetBrainsMono-Bold.ttf */; };
+		262E31F43BD848369D39D5AB /* FiraCode-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C87E50E1616A4F15BA14E703 /* FiraCode-Medium.ttf */; };
+		A0FB7F9B05494064889D8954 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 78C60CE30C6E4FA5A8CA097A /* JetBrainsMono-Regular.ttf */; };
+		9C1157E2BFB64DBAB7F4EB8A /* FiraCode-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7C0B4B850C164827B30AD84A /* FiraCode-Regular.ttf */; };
+		5549487117354B898CAD223F /* Inter-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D78CE97BE95B490DBC653DB7 /* Inter-Bold.ttf */; };
+		91F876BF5A424A6295D18268 /* FiraCode-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 3F2CC86DEAAC494F95C0DF60 /* FiraCode-Bold.ttf */; };
+		00B0A7CE5394421A9710D94D /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = AB9E284632AB48DE994692D0 /* Inter-Regular.ttf */; };
+		FBACC5AFE8B24F9CB5DBB5E2 /* JetBrainsMono-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 543F89F94E374FD5B4187730 /* JetBrainsMono-Medium.ttf */; };
+		9CF831C8CB4D4BC0B8D03102 /* Inter-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7EB900D5947B499D9487BB3B /* Inter-SemiBold.ttf */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,6 +49,16 @@
 		FA1B2C3D4E5F6A7B8C9D0E23 /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "JetBrainsMono-Regular.ttf"; path = "Stavi/JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
 		FA1B2C3D4E5F6A7B8C9D0E24 /* JetBrainsMono-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "JetBrainsMono-Medium.ttf"; path = "Stavi/JetBrainsMono-Medium.ttf"; sourceTree = "<group>"; };
 		FA1B2C3D4E5F6A7B8C9D0E25 /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "JetBrainsMono-Bold.ttf"; path = "Stavi/JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; };
+		37C2988F7B7B40A887F6B8ED /* Inter-Medium.ttf */ = {isa = PBXFileReference; name = "Inter-Medium.ttf"; path = "../src/assets/fonts/Inter-Medium.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		35AC894C708149C491F7E662 /* JetBrainsMono-Bold.ttf */ = {isa = PBXFileReference; name = "JetBrainsMono-Bold.ttf"; path = "../src/assets/fonts/JetBrainsMono-Bold.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		C87E50E1616A4F15BA14E703 /* FiraCode-Medium.ttf */ = {isa = PBXFileReference; name = "FiraCode-Medium.ttf"; path = "../src/assets/fonts/FiraCode-Medium.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		78C60CE30C6E4FA5A8CA097A /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; name = "JetBrainsMono-Regular.ttf"; path = "../src/assets/fonts/JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		7C0B4B850C164827B30AD84A /* FiraCode-Regular.ttf */ = {isa = PBXFileReference; name = "FiraCode-Regular.ttf"; path = "../src/assets/fonts/FiraCode-Regular.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		D78CE97BE95B490DBC653DB7 /* Inter-Bold.ttf */ = {isa = PBXFileReference; name = "Inter-Bold.ttf"; path = "../src/assets/fonts/Inter-Bold.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		3F2CC86DEAAC494F95C0DF60 /* FiraCode-Bold.ttf */ = {isa = PBXFileReference; name = "FiraCode-Bold.ttf"; path = "../src/assets/fonts/FiraCode-Bold.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		AB9E284632AB48DE994692D0 /* Inter-Regular.ttf */ = {isa = PBXFileReference; name = "Inter-Regular.ttf"; path = "../src/assets/fonts/Inter-Regular.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		543F89F94E374FD5B4187730 /* JetBrainsMono-Medium.ttf */ = {isa = PBXFileReference; name = "JetBrainsMono-Medium.ttf"; path = "../src/assets/fonts/JetBrainsMono-Medium.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		7EB900D5947B499D9487BB3B /* Inter-SemiBold.ttf */ = {isa = PBXFileReference; name = "Inter-SemiBold.ttf"; path = "../src/assets/fonts/Inter-SemiBold.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -96,6 +116,7 @@
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
+				B1153AC6C5FE4031B1B4C13D /* Resources */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -118,6 +139,24 @@
 			);
 			path = Pods;
 			sourceTree = "<group>";
+		};
+		B1153AC6C5FE4031B1B4C13D /* Resources */ = {
+			isa = "PBXGroup";
+			children = (
+				37C2988F7B7B40A887F6B8ED /* Inter-Medium.ttf */,
+				35AC894C708149C491F7E662 /* JetBrainsMono-Bold.ttf */,
+				C87E50E1616A4F15BA14E703 /* FiraCode-Medium.ttf */,
+				78C60CE30C6E4FA5A8CA097A /* JetBrainsMono-Regular.ttf */,
+				7C0B4B850C164827B30AD84A /* FiraCode-Regular.ttf */,
+				D78CE97BE95B490DBC653DB7 /* Inter-Bold.ttf */,
+				3F2CC86DEAAC494F95C0DF60 /* FiraCode-Bold.ttf */,
+				AB9E284632AB48DE994692D0 /* Inter-Regular.ttf */,
+				543F89F94E374FD5B4187730 /* JetBrainsMono-Medium.ttf */,
+				7EB900D5947B499D9487BB3B /* Inter-SemiBold.ttf */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+			path = "";
 		};
 /* End PBXGroup section */
 
@@ -190,6 +229,16 @@
 				FB1B2C3D4E5F6A7B8C9D0E23 /* JetBrainsMono-Regular.ttf in Resources */,
 				FB1B2C3D4E5F6A7B8C9D0E24 /* JetBrainsMono-Medium.ttf in Resources */,
 				FB1B2C3D4E5F6A7B8C9D0E25 /* JetBrainsMono-Bold.ttf in Resources */,
+				EAB383F39555436DA42F3EB9 /* Inter-Medium.ttf in Resources */,
+				CA944891D635434B9F030487 /* JetBrainsMono-Bold.ttf in Resources */,
+				262E31F43BD848369D39D5AB /* FiraCode-Medium.ttf in Resources */,
+				A0FB7F9B05494064889D8954 /* JetBrainsMono-Regular.ttf in Resources */,
+				9C1157E2BFB64DBAB7F4EB8A /* FiraCode-Regular.ttf in Resources */,
+				5549487117354B898CAD223F /* Inter-Bold.ttf in Resources */,
+				91F876BF5A424A6295D18268 /* FiraCode-Bold.ttf in Resources */,
+				00B0A7CE5394421A9710D94D /* Inter-Regular.ttf in Resources */,
+				FBACC5AFE8B24F9CB5DBB5E2 /* JetBrainsMono-Medium.ttf in Resources */,
+				9CF831C8CB4D4BC0B8D03102 /* Inter-SemiBold.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -290,7 +339,7 @@
 			shellPath = /bin/sh;
 			shellScript = "# Copy CodeMirror editor assets into the iOS app bundle.\n# The WebView loads editor/index.html from the bundle via the bundlePath helper.\nSRC=\"$SRCROOT/../assets/editor\"\nDST=\"$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/editor\"\nmkdir -p \"$DST\"\ncp \"$SRC/index.html\" \"$DST/index.html\"\ncp \"$SRC/bundle.js\" \"$DST/bundle.js\"\n";
 		};
-		/* End PBXShellScriptBuildPhase section */
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		13B07F871A680F5B00A75B9A /* Sources */ = {

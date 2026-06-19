@@ -196,15 +196,33 @@ export async function searchEntries(cwd: string, query: string, limit: number) {
 // Network
 // ----------------------------------------------------------
 
-export function detectLocalIp(): string {
+/** Interfaces that are never the user's LAN (VPNs, virtualization, AWDL). */
+const NON_LAN_INTERFACE_RE = /^(utun|tun|tap|awdl|llw|bridge|docker|vmnet|vnic|ppp|zt|ham|wg)/i;
+
+/**
+ * All plausible LAN IPv4 addresses, best first. Wi-Fi/Ethernet interfaces
+ * (en/wlan/eth prefixes) are preferred; VPN/virtual interfaces are excluded —
+ * the old first-interface-wins pick routinely handed out a VPN address the
+ * phone could never reach.
+ */
+export function detectLanCandidates(): string[] {
   const nets = networkInterfaces();
+  const preferred: string[] = [];
+  const rest: string[] = [];
   for (const name of Object.keys(nets)) {
+    if (NON_LAN_INTERFACE_RE.test(name)) continue;
     for (const net of nets[name] ?? []) {
       if (net.internal || net.family !== 'IPv4') continue;
-      return net.address;
+      if (/^(en|wlan|eth|wl)/i.test(name)) preferred.push(net.address);
+      else rest.push(net.address);
     }
   }
-  return '127.0.0.1';
+  const all = [...preferred, ...rest];
+  return all.length ? [...new Set(all)] : ['127.0.0.1'];
+}
+
+export function detectLocalIp(): string {
+  return detectLanCandidates()[0];
 }
 
 // ----------------------------------------------------------

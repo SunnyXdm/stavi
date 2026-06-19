@@ -2,12 +2,14 @@
 // components/ProcessDetail.tsx — Detail view for a single managed process
 // ============================================================
 
-import React, { useCallback, useRef, useEffect } from 'react';
+import React, { useCallback, useRef, useEffect, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, Pressable, ScrollView, Alert,
+  View, Text, StyleSheet, Pressable, ScrollView,
 } from 'react-native';
 import { ArrowLeft, RefreshCw, Trash2, TerminalSquare } from 'lucide-react-native';
-import { colors, typography, spacing, radii } from '../../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../../theme';
+import { showConfirm } from '../../../../components/sheets/AppSheets';
+import type { Colors } from '../../../../theme';
 import type { ManagedProcess } from '../hooks/useProcesses';
 
 function formatUptime(startTime: number): string {
@@ -21,7 +23,7 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function DetailRow({ label, value, mono, styles }: { label: string; value: string; mono?: boolean; styles: Styles }) {
   return (
     <View style={styles.detailRow}>
       <Text style={styles.detailLabel}>{label}</Text>
@@ -40,6 +42,8 @@ interface ProcessDetailProps {
 }
 
 export function ProcessDetail({ process: proc, onBack, onKill, onClearOutput }: ProcessDetailProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const scrollRef = useRef<ScrollView>(null);
   const isRunning = proc.status === 'running';
 
@@ -47,15 +51,14 @@ export function ProcessDetail({ process: proc, onBack, onKill, onClearOutput }: 
     scrollRef.current?.scrollToEnd({ animated: false });
   }, [proc.output]);
 
-  const handleKill = useCallback(() => {
-    Alert.alert(
-      'Kill Process',
-      `Are you sure you want to kill "${proc.command}" (PID ${proc.pid})?`,
-      [
-        { text: 'CANCEL', style: 'cancel' },
-        { text: 'KILL', style: 'destructive', onPress: () => onKill(proc.id) },
-      ],
-    );
+  const handleKill = useCallback(async () => {
+    const confirmed = await showConfirm({
+      title: 'Kill Process',
+      message: `Are you sure you want to kill "${proc.command}" (PID ${proc.pid})?`,
+      confirmLabel: 'Kill',
+      destructive: true,
+    });
+    if (confirmed) onKill(proc.id);
   }, [proc, onKill]);
 
   return (
@@ -82,9 +85,9 @@ export function ProcessDetail({ process: proc, onBack, onKill, onClearOutput }: 
           <Text style={styles.metaText}>PID {proc.pid}</Text>
         </View>
 
-        <DetailRow label="COMMAND" value={proc.command} mono />
-        <DetailRow label="STARTED" value={`${formatTime(proc.startTime)} · ${formatUptime(proc.startTime)} ago`} />
-        <DetailRow label="WORKING DIR" value={proc.cwd} mono />
+        <DetailRow label="COMMAND" value={proc.command} mono styles={styles} />
+        <DetailRow label="STARTED" value={`${formatTime(proc.startTime)} · ${formatUptime(proc.startTime)} ago`} styles={styles} />
+        <DetailRow label="WORKING DIR" value={proc.cwd} mono styles={styles} />
 
         <View style={styles.outputCard}>
           <View style={styles.outputHeader}>
@@ -109,7 +112,9 @@ export function ProcessDetail({ process: proc, onBack, onKill, onClearOutput }: 
   );
 }
 
-const styles = StyleSheet.create({
+type Styles = ReturnType<typeof createStyles>;
+
+const createStyles = (colors: Colors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg.base },
   detailHeader: {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing[3],

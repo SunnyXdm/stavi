@@ -13,17 +13,21 @@ import React, { useRef, useEffect, useCallback, useId, useMemo } from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   Platform,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import WebView from 'react-native-webview';
 import type { WebViewMessageEvent } from 'react-native-webview';
 import { FileText, AlertCircle } from 'lucide-react-native';
+import { SvgXml } from 'react-native-svg';
 import { useTheme, typography, spacing } from '../../../../theme';
+import { showAlert, showConfirm } from '../../../../components/sheets/AppSheets';
 import { useEditorStore } from '../store';
-import { isBinary, detectLanguage } from '../language-map';
+import { useConnectionStore } from '../../../../stores/connection';
+import { usePluginSetting } from '../../../../stores/plugin-settings-store';
+import { isBinary, isImage, isSvg, detectLanguage } from '../language-map';
 import type { EditorAction } from './EditorToolbar';
 import type { OpenFile } from '../store';
 
@@ -40,12 +44,12 @@ const LARGE_FILE_REFUSE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 type JsToWeb =
   | { type: 'loadFile'; path: string; content: string; language: string | null }
-  | { type: 'setTheme'; theme: 'dark' | 'light' }
+  | { type: 'setTheme'; theme: string }
   | { type: 'requestContent'; requestId: string }
   | { type: 'find' }
   | { type: 'undo' }
   | { type: 'redo' }
-  | { type: 'format' };
+  | { type: 'insertText'; text: string };
 
 type WebToJs =
   | { type: 'ready' }
@@ -63,10 +67,23 @@ function getEditorUri(): string {
   if (Platform.OS === 'android') {
     return 'file:///android_asset/editor/index.html';
   }
-  // iOS: bundle resources are in the main bundle at assets/editor/
-  const { bundlePath } = require('react-native/Libraries/Core/Devtools/getDevServer');
-  // Production build — the file is in the bundle directory
-  return `${bundlePath || ''}editor/index.html`;
+  // iOS: the editor assets are copied into the app bundle's editor/ dir by an
+  // Xcode build phase. RN does NOT expose the main-bundle path to JS, so we read
+  // it from the StaviBundle native module (ios/Stavi/StaviBundle.{swift,m}).
+  // NOTE: do NOT revert this to getDevServer/bundlePath — RN has no bundlePath
+  // constant, so that path silently returns an unresolvable relative URI and
+  // breaks the iOS editor. The native constant is required.
+  const { StaviBundle } = require('react-native').NativeModules as {
+    StaviBundle?: { mainBundlePath?: string; getConstants?: () => { mainBundlePath?: string } };
+  };
+  const dir = StaviBundle?.getConstants?.().mainBundlePath ?? StaviBundle?.mainBundlePath;
+  if (!dir) {
+    // Native module not registered yet (e.g. before the iOS rebuild that adds
+    // StaviBundle). Degrade to a relative path rather than throwing — the editor
+    // will be blank on iOS until the native module ships, but the app won't crash.
+    return 'editor/index.html';
+  }
+  return `file://${dir}/editor/index.html`;
 }
 
 // ----------------------------------------------------------
@@ -148,6 +165,8 @@ export interface EditorBridgeHandle {
   undo(): void;
   redo(): void;
   find(): void;
+  /** Insert text at the cursor (symbols quick-insert bar). */
+  insertText(text: string): void;
 }
 
 // ----------------------------------------------------------
@@ -161,7 +180,9 @@ export function EditorSurface({
   onCursorMoved,
   bridgeRef,
 }: EditorSurfaceProps) {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
+  // Platform-constant editor asset URI (Android asset path / iOS bundle path).
+  const editorUri = useMemo(() => getEditorUri(), []);
   const styles = useMemo(() => StyleSheet.create({
     container: { flex: 1 },
     webview: { flex: 1, backgroundColor: colors.bg.base },
@@ -175,10 +196,12 @@ export function EditorSurface({
   const lastLoadedPath = useRef<string | null>(null);
   const { setFileDirty, setFileContent } = useEditorStore.getState();
 
-  // Inject theme on mount and whenever isDark changes
+  // Editor theme is user-selectable (Settings → Editor → Appearance).
+  // Inject on mount and whenever the chosen theme changes.
+  const editorTheme = usePluginSetting<string>('editor', 'theme');
   useEffect(() => {
-    bridgeInstance.current.send({ type: 'setTheme', theme: isDark ? 'dark' : 'light' });
-  }, [isDark]);
+    bridgeInstance.current.send({ type: 'setTheme', theme: editorTheme ?? 'stavi-dark' });
+  }, [editorTheme]);
 
   // Expose bridge handle to parent (for toolbar actions)
   useEffect(() => {
@@ -197,12 +220,13 @@ export function EditorSurface({
           await client.request('fs.write', { path: activeFile.path, content });
           setFileContent(sessionId, activeFile.path, content);
         } catch (err) {
-          Alert.alert('Save failed', err instanceof Error ? err.message : 'Unknown error');
+          void showAlert({ title: 'Save failed', message: err instanceof Error ? err.message : 'Unknown error' });
         }
       },
       undo: () => bridge.send({ type: 'undo' }),
       redo: () => bridge.send({ type: 'redo' }),
       find: () => bridge.send({ type: 'find' }),
+      insertText: (text: string) => bridge.send({ type: 'insertText', text }),
     };
   }, [activeFile, sessionId, serverId, bridgeRef, setFileContent]);
 
@@ -214,7 +238,7 @@ export function EditorSurface({
 
     const byteSize = activeFile.content.length; // UTF-16 length; good-enough proxy for byte size
     if (byteSize > LARGE_FILE_REFUSE_BYTES) {
-      Alert.alert('File too large', 'Files over 10 MB cannot be opened in the editor.');
+      void showAlert({ title: 'File too large', message: 'Files over 10 MB cannot be opened in the editor.' });
       return;
     }
 
@@ -229,14 +253,11 @@ export function EditorSurface({
     };
 
     if (byteSize > LARGE_FILE_WARN_BYTES) {
-      Alert.alert(
-        'Large file',
-        `This file is ${(byteSize / 1024 / 1024).toFixed(1)} MB. Opening may be slow.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Open anyway', onPress: doLoad },
-        ],
-      );
+      void showConfirm({
+        title: 'Large file',
+        message: `This file is ${(byteSize / 1024 / 1024).toFixed(1)} MB. Opening may be slow.`,
+        confirmLabel: 'Open anyway',
+      }).then((ok) => { if (ok) doLoad(); });
     } else {
       doLoad();
     }
@@ -303,8 +324,20 @@ export function EditorSurface({
   const showEmpty = !activeFile;
   const showLoading = !showEmpty && activeFile.loading;
   const showError = !showEmpty && !showLoading && Boolean(activeFile.error);
-  const showBinary = !showEmpty && !showLoading && !showError && isBinary(activeFile.path);
-  const showOverlay = showEmpty || showLoading || showError || showBinary;
+  // Image previews take precedence over the generic binary card.
+  const showImage = !showEmpty && !showLoading && !showError && isImage(activeFile.path);
+  const showSvg = !showEmpty && !showLoading && !showError && isSvg(activeFile.path) && !!activeFile.content;
+  const showBinary = !showEmpty && !showLoading && !showError && !showImage && !showSvg && isBinary(activeFile.path);
+  const showOverlay = showEmpty || showLoading || showError || showImage || showSvg || showBinary;
+
+  // Authenticated file URL for raster previews (same pattern as the browser's
+  // /proxy usage — query token because <Image> URIs are header-less).
+  const savedConnection = useConnectionStore((s) =>
+    s.savedConnections.find((c) => c.id === serverId),
+  );
+  const imageUri = showImage && savedConnection
+    ? `${savedConnection.tls ? 'https' : 'http'}://${savedConnection.host}:${savedConnection.port}/file?path=${encodeURIComponent(activeFile!.path)}&token=${encodeURIComponent(savedConnection.bearerToken)}`
+    : null;
 
   return (
     <View style={styles.container}>
@@ -312,7 +345,7 @@ export function EditorSurface({
       <WebView
         ref={webviewRef}
         style={styles.webview}
-        source={{ uri: 'file:///android_asset/editor/index.html' }}
+        source={{ uri: editorUri }}
         originWhitelist={['*']}
         onMessage={handleMessage}
         onLoadStart={() => {
@@ -350,6 +383,24 @@ export function EditorSurface({
               </Text>
             </>
           )}
+          {showImage && (
+            imageUri ? (
+              <Image
+                source={{ uri: imageUri }}
+                style={imagePreviewStyle}
+                resizeMode="contain"
+              />
+            ) : (
+              <Text style={styles.emptyText}>Connect to the server to preview images</Text>
+            )
+          )}
+          {showSvg && (
+            <View style={imagePreviewStyle}>
+              <SvgErrorBoundary fallback={<Text style={styles.emptyText}>Could not render SVG</Text>}>
+                <SvgXml xml={activeFile!.content} width="100%" height="100%" />
+              </SvgErrorBoundary>
+            </View>
+          )}
           {showBinary && (
             <>
               <FileText size={32} color={colors.fg.muted} />
@@ -361,6 +412,23 @@ export function EditorSurface({
       )}
     </View>
   );
+}
+
+// Fills the overlay; images letterbox via resizeMode="contain".
+const imagePreviewStyle = { width: '100%', height: '100%', flex: 1 } as const;
+
+/** SvgXml throws synchronously on malformed XML — contain it. */
+class SvgErrorBoundary extends React.Component<
+  { fallback: React.ReactNode; children: React.ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
 }
 
 // Styles computed dynamically via useMemo — see component body.

@@ -1,0 +1,17 @@
+diff --git a/node_modules/react-native-vision-camera/android/build.gradle b/node_modules/react-native-vision-camera/android/build.gradle
+index b1d9973..f639703 100644
+--- a/node_modules/react-native-vision-camera/android/build.gradle
++++ b/node_modules/react-native-vision-camera/android/build.gradle
+@@ -143,6 +143,12 @@ android {
+   sourceSets {
+     main {
+       manifest.srcFile androidManifestPath
++      // PATCH (stavi): vision-camera has no codegenConfig, so the React plugin's
++      // codegen falls back to RN CORE specs and compiles 70 core delegate/spec
++      // classes into this library — duplicating react-android classes at
++      // release dex-merge (debug's native multidex tolerates it). Exclude them.
++      java.exclude("com/facebook/react/viewmanagers/**")
++      java.exclude("com/facebook/fbreact/specs/**")
+     }
+   }
+ 

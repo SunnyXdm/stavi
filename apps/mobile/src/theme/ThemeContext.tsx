@@ -47,7 +47,7 @@ export interface ThemeContextValue {
   mode: ThemeMode;
 }
 
-const ThemeContext = createContext<ThemeContextValue | null>(null);
+export const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 // ----------------------------------------------------------
 // Provider

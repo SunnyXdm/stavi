@@ -41,9 +41,12 @@ export function createSystemHandlers(ctx: ServerContext): Record<string, RpcHand
       try {
         let stdout = '';
         try {
-          // macOS / BSD
+          // macOS / BSD. -iTCP (not bare -i): bare -i emits every UDP socket
+          // too — -sTCP:LISTEN only filters TCP STATES, so dozens of UDP and
+          // connected sockets leaked through as fake "listening ports" with
+          // duplicate (port,pid) tuples that crashed the list keys.
           ({ stdout } = await execFileAsync(
-            'lsof', ['-i', '-n', '-P', '-sTCP:LISTEN'],
+            'lsof', ['-nP', '-iTCP', '-sTCP:LISTEN'],
             { timeout: 5000 },
           ));
         } catch {
@@ -56,14 +59,20 @@ export function createSystemHandlers(ctx: ServerContext): Record<string, RpcHand
         }
         const lines = stdout.trim().split('\n').filter(Boolean).slice(1);
         const ports: Array<{ port: string; pid: string; process: string; address: string }> = [];
+        const seen = new Set<string>();
         for (const line of lines) {
           const parts = line.trim().split(/\s+/);
           if (parts.length < 9) continue;
           const name = parts[0] ?? '';
           const pid = parts[1] ?? '';
           const addr = parts[8] ?? '';
+          // Listening sockets only — no connected pairs.
+          if (addr.includes('->')) continue;
           const portMatch = addr.match(/:(\d+)$/);
           if (!portMatch) continue;
+          const key = `${portMatch[1]}:${pid}:${addr}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
           ports.push({ port: portMatch[1], pid, process: name, address: addr });
         }
         sendJson(ws, makeSuccess(id, { ports }));

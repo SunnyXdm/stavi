@@ -9,9 +9,11 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 
 export type RootStackParamList = {
+  Welcome: undefined;
   SessionsHome: undefined;
   Workspace: { sessionId: string };
   Settings: undefined;
+  PluginSettings: { pluginId: string };
   PairServer: undefined;
 };
 

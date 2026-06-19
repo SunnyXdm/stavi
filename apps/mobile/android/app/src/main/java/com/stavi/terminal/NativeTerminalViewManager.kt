@@ -50,12 +50,17 @@ class NativeTerminalViewManager :
                 view.resizeTerminal(cols, rows)
             }
             "reset" -> view.resetTerminal()
+            "focus" -> view.focusTerminal()
         }
     }
 
     // ── Cleanup ──────────────────────────────────────────────
 
     override fun onDropViewInstance(view: NativeTerminalView) {
+        // cleanup() drops pending handler callbacks AND detaches the session/
+        // view client back-references. It MUST run before super (while the view
+        // is still valid) — onDropViewInstance is the only Fabric-guaranteed
+        // view-release hook, so all teardown hangs off it.
         view.cleanup()
         super.onDropViewInstance(view)
     }

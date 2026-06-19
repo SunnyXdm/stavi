@@ -47,6 +47,9 @@ export interface SavedConnection {
   serverPublicKey?: string;
   /** Relay room ID — required when relayUrl is set. */
   roomId?: string;
+  /** Alternate LAN addresses from pairing — probed when `host` is unreachable
+   *  (the server's primary interface pick can be stale or VPN-bound). */
+  lanHosts?: string[];
 }
 
 /** @deprecated Use SavedConnection. Kept for reference during Phase 6 relay work. */
@@ -119,17 +122,21 @@ export interface PairingPayload {
   /** Relay server URL (or empty for LAN-direct) */
   relay?: string;
 
-  /** Room ID for relay routing */
-  roomId: string;
+  /** Room ID for relay routing (relay mode only; '' in local QRs) */
+  roomId?: string;
 
-  /** Server's static X25519 public key (base64) */
-  serverPublicKey: string;
+  /** Server's static X25519 public key, base64 (relay mode only) */
+  serverPublicKey?: string;
 
   /** One-time auth token */
   token: string;
 
-  /** Server's LAN address (for direct connection) */
+  /** Server's primary LAN address (back-compat single host) */
   lanHost?: string;
+
+  /** ALL candidate LAN addresses, best first — the app probe-races /health
+   *  across these so a stale/VPN primary doesn't strand the connection. */
+  lanHosts?: string[];
 
   /** Server's port */
   port: number;

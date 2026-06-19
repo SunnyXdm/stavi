@@ -4,8 +4,10 @@
 // All RPC handler logic lives in handlers/. All shared state
 // lives in context.ts. This file wires them together.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { guardPath } from './handlers/fs';
 import { createServer } from 'node:http';
+import { hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -171,10 +173,29 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
   if (claudeAdapter && 'onApprovalRequired' in claudeAdapter) {
     (claudeAdapter as any).onApprovalRequired(
       (threadId: string, requestId: string, toolName: string, toolInput: unknown, turnId: string) => {
+        // Track in ctx so snapshots can rehydrate pending cards after an app
+        // reload — otherwise the turn deadlocks with no visible approval.
+        const list = ctx.pendingApprovals.get(threadId) ?? [];
+        list.push({ requestId, threadId, turnId, toolName, toolInput, provider: 'claude', requestedAt: nowIso() });
+        ctx.pendingApprovals.set(threadId, list);
         ctx.broadcastOrchestrationEvent({
           type: 'thread.approval-response-requested',
           occurredAt: nowIso(),
           payload: { threadId, turnId, requestId, toolName, toolInput },
+        });
+      },
+    );
+  }
+
+  // Wire Claude adapter's plan-proposed emitter (ExitPlanMode interception) —
+  // renders as a dedicated plan card on mobile instead of a raw JSON approval.
+  if (claudeAdapter && 'onPlanProposed' in claudeAdapter) {
+    (claudeAdapter as any).onPlanProposed(
+      (threadId: string, plan: string, turnId: string) => {
+        ctx.broadcastOrchestrationEvent({
+          type: 'thread.plan-proposed',
+          occurredAt: nowIso(),
+          payload: { threadId, turnId, plan },
         });
       },
     );
@@ -251,8 +272,16 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
     const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
 
     if (req.method === 'GET' && url.pathname === '/health') {
+      // Identifiable (no secrets): lets the app's connect probe positively
+      // recognize a stavi server when racing candidate LAN addresses.
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok' }));
+      res.end(JSON.stringify({
+        status: 'ok',
+        app: 'stavi',
+        serverId,
+        name: hostname(),
+        port: options.port,
+      }));
       return;
     }
 
@@ -369,6 +398,49 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
       }
     }
 
+    // GET /file?path=<abs>&token=<bearer> — serve a workspace file (image
+    // previews in the editor). Same auth shape as /proxy (header OR query —
+    // RN <Image> URIs can't always send headers). Path is traversal-guarded
+    // to workspaceRoot + session folders, mirroring the fs.* RPC handlers.
+    if (req.method === 'GET' && url.pathname === '/file') {
+      const authHeader2 = req.headers.authorization ?? '';
+      const headerToken2 = authHeader2.startsWith('Bearer ') ? authHeader2.slice(7) : '';
+      const queryToken2 = url.searchParams.get('token') ?? '';
+      if ((headerToken2 || queryToken2) !== bearerToken) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid bearer token' }));
+        return;
+      }
+      const rawPath = url.searchParams.get('path') ?? '';
+      const sessionFolders = ctx.sessionRepo
+        .listSessions({ includeArchived: false })
+        .map((s) => s.folder)
+        .filter((f): f is string => typeof f === 'string' && f.length > 0);
+      const safePath = rawPath ? guardPath(workspaceRoot, rawPath, sessionFolders) : null;
+      if (!safePath || !existsSync(safePath) || !statSync(safePath).isFile()) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('File not found or outside allowed roots');
+        return;
+      }
+      const EXT_TYPES: Record<string, string> = {
+        png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+        webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml', ico: 'image/x-icon',
+      };
+      const ext = safePath.split('.').pop()?.toLowerCase() ?? '';
+      res.writeHead(200, {
+        'Content-Type': EXT_TYPES[ext] ?? 'application/octet-stream',
+        'Cache-Control': 'no-cache',
+      });
+      // Unhandled 'error' on a piped ReadStream throws asynchronously and can
+      // take the whole server down (e.g. file deleted between stat and read).
+      const stream = createReadStream(safePath);
+      stream.on('error', () => {
+        try { res.destroy(); } catch { /* already closed */ }
+      });
+      stream.pipe(res);
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/auth/ws-token') {
       const auth = req.headers.authorization ?? '';
       const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
@@ -395,15 +467,23 @@ export async function startStaviServer(options: StartServerOptions): Promise<Sta
   const wss = new WebSocketServer({ noServer: true, maxPayload: 5 * 1024 * 1024 } as ConstructorParameters<typeof WebSocketServer>[0]);
 
   server.on('upgrade', (req, socket, head) => {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    if (url.pathname !== '/ws') { socket.destroy(); return; }
+    // A malformed upgrade must never kill the server: under Bun, ws's
+    // abortHandshake throws (missing http.STATUS_CODES) instead of
+    // rejecting the socket — observed crashing the whole process.
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      if (url.pathname !== '/ws') { socket.destroy(); return; }
 
-    const wsToken = url.searchParams.get('wsToken') ?? '';
-    const session = wsTokens.get(wsToken);
-    if (!session || session.expiresAt < Date.now()) { socket.destroy(); return; }
-    wsTokens.delete(wsToken);
+      const wsToken = url.searchParams.get('wsToken') ?? '';
+      const session = wsTokens.get(wsToken);
+      if (!session || session.expiresAt < Date.now()) { socket.destroy(); return; }
+      wsTokens.delete(wsToken);
 
-    wss.handleUpgrade(req, socket, head, (ws: WebSocket) => wss.emit('connection', ws, req));
+      wss.handleUpgrade(req, socket, head, (ws: WebSocket) => wss.emit('connection', ws, req));
+    } catch (err) {
+      console.error('[ws] upgrade rejected:', err instanceof Error ? err.message : err);
+      try { socket.destroy(); } catch { /* already gone */ }
+    }
   });
 
   // -- Message dispatch --

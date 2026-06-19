@@ -19,14 +19,17 @@
     "dev:relay": "turbo dev --filter=@stavi/relay",
     "build": "turbo build",
     "typecheck": "turbo typecheck",
+    "test": "turbo test",
     "lint": "turbo lint",
-    "clean": "turbo clean"
+    "clean": "turbo clean",
+    "postinstall": "patch-package"
   },
   "resolutions": {
     "react": "19.2.3",
     "react-native": "0.85.0"
   },
   "devDependencies": {
+    "patch-package": "^8.0.1",
     "turbo": "^2.5",
     "typescript": "^5.7",
     "zx": "^8.8.5"

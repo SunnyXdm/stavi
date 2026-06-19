@@ -101,10 +101,13 @@ function useStyles() {
     selectWrapper: { paddingTop: spacing[3] },
     selectHeader: { paddingHorizontal: spacing[4], paddingBottom: spacing[2] },
     selectOption: {
-      flexDirection: 'row',
-      alignItems: 'center',
+      flexDirection: 'column',
       paddingHorizontal: spacing[4],
       paddingVertical: spacing[3],
+    },
+    selectOptionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
       gap: spacing[3],
     },
     dot: {
@@ -331,16 +334,88 @@ function SelectField({ pluginId, field, last, styles, colors }: {
             onPress={() => setSetting(pluginId, field.key, option.value)}
             android_ripple={{ color: colors.bg.active }}
           >
-            <View style={styles.dot}>
-              {isSelected && <View style={styles.dotFill} />}
+            <View style={styles.selectOptionRow}>
+              <View style={styles.dot}>
+                {isSelected && <View style={styles.dotFill} />}
+              </View>
+              <View style={styles.labelWrap}>
+                <Text style={[styles.label, isSelected && styles.labelSelected]}>{option.label}</Text>
+                {option.description && <Text style={styles.description}>{option.description}</Text>}
+              </View>
             </View>
-            <View style={styles.labelWrap}>
-              <Text style={[styles.label, isSelected && styles.labelSelected]}>{option.label}</Text>
-              {option.description && <Text style={styles.description}>{option.description}</Text>}
-            </View>
+            {option.preview && (
+              <ThemeSnippetPreview palette={option.preview} selected={isSelected} colors={colors} />
+            )}
           </Pressable>
         );
       })}
     </View>
   );
 }
+
+// ----------------------------------------------------------
+// Theme snippet preview — a tiny syntax-highlighted code sample rendered with
+// a select option's `preview` palette. Used by the editor theme picker so
+// switching themes shows a live preview, not just a label.
+// ----------------------------------------------------------
+
+const ThemeSnippetPreview = React.memo(function ThemeSnippetPreview({
+  palette,
+  selected,
+  colors,
+}: {
+  palette: NonNullable<Extract<PluginSettingField, { type: 'select' }>['options'][number]['preview']>;
+  selected: boolean;
+  colors: ReturnType<typeof useTheme>['colors'];
+}) {
+  const fg = palette.fg;
+  const kw = palette.keyword ?? fg;
+  const str = palette.string ?? fg;
+  const com = palette.comment ?? fg;
+  const fn = palette.func ?? fg;
+  const num = palette.number ?? fg;
+  return (
+    <View
+      style={[
+        previewStyles.box,
+        { backgroundColor: palette.bg, borderColor: selected ? colors.accent.primary : 'transparent' },
+      ]}
+    >
+      <Text style={previewStyles.line} numberOfLines={1}>
+        <Text style={{ color: com }}>{'// theme preview'}</Text>
+      </Text>
+      <Text style={previewStyles.line} numberOfLines={1}>
+        <Text style={{ color: kw }}>const </Text>
+        <Text style={{ color: fn }}>greet</Text>
+        <Text style={{ color: fg }}> = (</Text>
+        <Text style={{ color: fg }}>name</Text>
+        <Text style={{ color: fg }}>) {'=>'} {'{'}</Text>
+      </Text>
+      <Text style={previewStyles.line} numberOfLines={1}>
+        <Text style={{ color: fg }}>{'  '}</Text>
+        <Text style={{ color: kw }}>return </Text>
+        <Text style={{ color: str }}>{'`Hi ${name}`'}</Text>
+        <Text style={{ color: num }}> /* 42 */</Text>
+      </Text>
+      <Text style={previewStyles.line} numberOfLines={1}>
+        <Text style={{ color: fg }}>{'}'}</Text>
+      </Text>
+    </View>
+  );
+});
+
+const previewStyles = StyleSheet.create({
+  box: {
+    marginTop: spacing[2],
+    marginLeft: 32,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    paddingVertical: spacing[2],
+    paddingHorizontal: spacing[3],
+  },
+  line: {
+    fontFamily: typography.fontFamily.mono,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+});

@@ -1,4 +1,10 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<!-- usesCleartextTraffic=true in ALL build types: the app's core purpose is
+     talking to a local dev server over plain http/ws on the user's LAN.
+     Release builds otherwise BLOCK cleartext (Android 9+), which made every
+     connection from a sideloaded APK fail before a packet left the phone.
+     Future hardening: server-side TLS with a pinned self-signed cert. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -10,8 +16,9 @@
       android:roundIcon="@mipmap/ic_launcher_round"
       android:allowBackup="false"
       android:theme="@style/AppTheme"
-      android:usesCleartextTraffic="${usesCleartextTraffic}"
-      android:supportsRtl="true">
+      android:usesCleartextTraffic="true"
+      android:supportsRtl="true"
+      tools:replace="android:usesCleartextTraffic">
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"

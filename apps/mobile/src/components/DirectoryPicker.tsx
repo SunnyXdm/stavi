@@ -40,6 +40,16 @@ interface DirEntry {
   size?: number;
 }
 
+interface ListDirsResult {
+  /** Absolute path that was listed */
+  path: string;
+  /** The server user's home directory (browse root) */
+  home: string;
+  /** Absolute parent path, or null at the home root */
+  parent: string | null;
+  entries: DirEntry[];
+}
+
 export interface DirectoryPickerProps {
   visible: boolean;
   onClose: () => void;
@@ -52,15 +62,25 @@ export interface DirectoryPickerProps {
 // Helpers
 // ----------------------------------------------------------
 
-function pathSegments(path: string): string[] {
-  const normalized = path.replace(/^\.?\/?/, '').replace(/\/$/, '');
-  if (!normalized) return [];
-  return normalized.split('/');
+/** "/Users/sunny/projects/x" with home "/Users/sunny" → ["projects","x"] */
+function homeRelativeSegments(absPath: string, home: string): string[] {
+  if (!home || absPath === home) return [];
+  const rel = absPath.startsWith(home) ? absPath.slice(home.length) : absPath;
+  return rel.split(/[\\/]/).filter(Boolean);
 }
 
-function buildPath(segments: string[]): string {
-  if (segments.length === 0) return '.';
-  return segments.join('/');
+/** Re-join home + segments[0..i] into an absolute path (server-side separators). */
+function buildAbsPath(home: string, segments: string[]): string {
+  if (segments.length === 0) return home;
+  const sep = home.includes('\\') ? '\\' : '/';
+  return home + sep + segments.join(sep);
+}
+
+/** Display helper: substitute the server home with "~". */
+function tildify(absPath: string, home: string): string {
+  if (!home) return absPath;
+  if (absPath === home) return '~';
+  return absPath.startsWith(home) ? `~${absPath.slice(home.length)}` : absPath;
 }
 
 function formatSize(bytes?: number): string {
@@ -76,28 +96,34 @@ function formatSize(bytes?: number): string {
 
 const BreadcrumbBar = memo(function BreadcrumbBar({
   currentPath,
+  home,
   onNavigate,
 }: {
   currentPath: string;
+  home: string;
   onNavigate: (path: string) => void;
 }) {
   const { colors } = useTheme();
-  const segments = pathSegments(currentPath);
+  const segments = homeRelativeSegments(currentPath, home);
 
   return (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      // ScrollView defaults to flexGrow:1 — without this the breadcrumb bar
+      // stretches to fill the sheet, pushing the folder list to the bottom.
+      style={breadStyles.bar}
       contentContainerStyle={breadStyles.container}
     >
-      <Pressable style={breadStyles.segment} onPress={() => onNavigate('.')} hitSlop={6}>
+      <Pressable style={breadStyles.segment} onPress={() => onNavigate('~')} hitSlop={6}>
         <FolderOpen size={14} color={colors.accent.primary} />
+        <Text style={[breadStyles.seg, { color: segments.length === 0 ? colors.fg.primary : colors.fg.secondary }]}>~</Text>
       </Pressable>
 
       {segments.map((seg, i) => (
         <View key={i} style={breadStyles.segment}>
           <Text style={[breadStyles.sep, { color: colors.fg.muted }]}>/</Text>
-          <Pressable onPress={() => onNavigate(buildPath(segments.slice(0, i + 1)))} hitSlop={6}>
+          <Pressable onPress={() => onNavigate(buildAbsPath(home, segments.slice(0, i + 1)))} hitSlop={6}>
             <Text
               style={[
                 breadStyles.seg,
@@ -115,6 +141,7 @@ const BreadcrumbBar = memo(function BreadcrumbBar({
 });
 
 const breadStyles = StyleSheet.create({
+  bar: { flexGrow: 0 },
   container: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -126,60 +153,6 @@ const breadStyles = StyleSheet.create({
   sep: { fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.mono },
   seg: { fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.mono },
   segActive: { fontFamily: typography.fontFamily.monoMedium },
-});
-
-const QuickChips = memo(function QuickChips({
-  dirs,
-  onNavigate,
-}: {
-  dirs: DirEntry[];
-  onNavigate: (name: string) => void;
-}) {
-  const { colors } = useTheme();
-  if (dirs.length === 0) return null;
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={[chipStyles.container, { borderBottomColor: colors.divider }]}
-    >
-      {dirs.slice(0, 10).map((d) => (
-        <Pressable
-          key={d.name}
-          style={({ pressed }) => [
-            chipStyles.chip,
-            { backgroundColor: pressed ? colors.accent.subtle : colors.bg.raised, borderColor: colors.divider },
-          ]}
-          onPress={() => onNavigate(d.name)}
-        >
-          <Text style={[chipStyles.label, { color: colors.fg.primary }]} numberOfLines={1}>
-            {d.name}
-          </Text>
-        </Pressable>
-      ))}
-    </ScrollView>
-  );
-});
-
-const chipStyles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing[4],
-    paddingVertical: spacing[2],
-    gap: spacing[2],
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  chip: {
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[1] + 2,
-    borderRadius: radii.full,
-    borderWidth: 1,
-    maxWidth: 140,
-  },
-  label: {
-    fontSize: typography.fontSize.xs,
-    fontFamily: typography.fontFamily.mono,
-  },
 });
 
 const EntryRow = memo(function EntryRow({
@@ -247,29 +220,35 @@ export const DirectoryPicker = memo(function DirectoryPicker({
   visible,
   onClose,
   onSelect,
-  initialPath = '.',
+  initialPath = '~',
   serverId,
 }: DirectoryPickerProps) {
   const { colors } = useTheme();
   const getClientForServer = useConnectionStore((state) => state.getClientForServer);
   const insets = useSafeAreaInsets();
   const [currentPath, setCurrentPath] = useState(initialPath);
+  const [homePath, setHomePath] = useState('');
+  const [parentPath, setParentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<DirEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const dirs = useMemo(() => entries.filter((e) => e.type === 'directory'), [entries]);
-  const canGoBack = currentPath !== '.' && pathSegments(currentPath).length > 0;
+  const canGoBack = parentPath !== null;
 
+  // Browses the server user's HOME (fs.listDirs), not the workspace root —
+  // pick any project on the machine, cross-platform.
   const fetchEntries = useCallback(async (path: string) => {
     setLoading(true);
     setError(null);
     try {
       const client = getClientForServer(serverId);
       if (!client) throw new Error('Server is not connected');
-      const result = await client.request<{ path: string; entries: DirEntry[] }>('fs.list', { path });
+      const result = await client.request<ListDirsResult>('fs.listDirs', { path });
       setEntries(result.entries);
-      setCurrentPath(path);
+      setCurrentPath(result.path);
+      setHomePath(result.home);
+      setParentPath(result.parent);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to list directory');
       setEntries([]);
@@ -288,21 +267,14 @@ export const DirectoryPicker = memo(function DirectoryPicker({
 
   const handleEntryPress = useCallback((entry: DirEntry) => {
     if (entry.type === 'directory') {
-      const newPath = currentPath === '.' ? entry.name : `${currentPath}/${entry.name}`;
-      fetchEntries(newPath);
+      const sep = currentPath.includes('\\') ? '\\' : '/';
+      fetchEntries(`${currentPath}${sep}${entry.name}`);
     }
   }, [currentPath, fetchEntries]);
 
-  const handleChipPress = useCallback((name: string) => {
-    const newPath = currentPath === '.' ? name : `${currentPath}/${name}`;
-    fetchEntries(newPath);
-  }, [currentPath, fetchEntries]);
-
   const handleGoBack = useCallback(() => {
-    const segments = pathSegments(currentPath);
-    segments.pop();
-    fetchEntries(buildPath(segments));
-  }, [currentPath, fetchEntries]);
+    if (parentPath) fetchEntries(parentPath);
+  }, [parentPath, fetchEntries]);
 
   const handleSelect = useCallback(() => {
     onSelect(currentPath);
@@ -358,6 +330,7 @@ export const DirectoryPicker = memo(function DirectoryPicker({
       paddingHorizontal: spacing[4],
     },
     emptyText: { fontSize: typography.fontSize.sm, color: colors.fg.muted },
+    emptySubtext: { fontSize: typography.fontSize.xs, color: colors.fg.muted, opacity: 0.7 },
     list: { flex: 1 },
     separator: { height: StyleSheet.hairlineWidth, backgroundColor: colors.divider, marginHorizontal: spacing[4] },
     footer: {
@@ -408,15 +381,10 @@ export const DirectoryPicker = memo(function DirectoryPicker({
           </View>
 
           {/* Breadcrumb */}
-          <BreadcrumbBar currentPath={currentPath} onNavigate={handleNavigate} />
+          <BreadcrumbBar currentPath={currentPath} home={homePath} onNavigate={handleNavigate} />
           <View style={styles.divider} />
 
-          {/* Quick-pick chips */}
-          {!loading && dirs.length > 0 && (
-            <QuickChips dirs={dirs} onNavigate={handleChipPress} />
-          )}
-
-          {/* Directory list */}
+          {/* Directory list (folders only — this is a folder picker) */}
           {loading ? (
             <View style={styles.centered}>
               <ActivityIndicator size="small" color={colors.accent.primary} />
@@ -425,13 +393,20 @@ export const DirectoryPicker = memo(function DirectoryPicker({
             <View style={styles.centered}>
               <Text style={styles.errorText}>{error}</Text>
             </View>
-          ) : entries.length === 0 ? (
+          ) : dirs.length === 0 ? (
             <View style={styles.centered}>
-              <Text style={styles.emptyText}>Empty directory</Text>
+              <Text style={styles.emptyText}>
+                {entries.length > 0 ? 'No subfolders' : 'Empty folder'}
+              </Text>
+              {entries.length > 0 ? (
+                <Text style={styles.emptySubtext}>
+                  {entries.length} file{entries.length === 1 ? '' : 's'} in this folder
+                </Text>
+              ) : null}
             </View>
           ) : (
             <FlatList
-              data={entries}
+              data={dirs}
               renderItem={renderEntry}
               keyExtractor={keyExtractor}
               style={styles.list}
@@ -442,9 +417,9 @@ export const DirectoryPicker = memo(function DirectoryPicker({
 
           {/* Footer */}
           <View style={styles.footer}>
-            {currentPath !== '.' && (
-              <Text style={styles.pathPreview} numberOfLines={1}>{currentPath}</Text>
-            )}
+            <Text style={styles.pathPreview} numberOfLines={1}>
+              {tildify(currentPath, homePath)}
+            </Text>
             <AnimatedPressable style={styles.selectButton} onPress={handleSelect} haptic="medium">
               <Check size={16} color={colors.fg.onAccent} strokeWidth={2.5} />
               <Text style={styles.selectButtonText}>Use this folder</Text>

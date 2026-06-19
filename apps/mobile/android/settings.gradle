@@ -8,6 +8,10 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven { url = uri("https://jitpack.io") }
+        // @notifee/react-native ships its app.notifee:core AAR as a local
+        // maven repo inside the package (PREFER_SETTINGS ignores repos
+        // declared at the project level, so it must live here).
+        maven { url = uri("$rootDir/../node_modules/@notifee/react-native/android/libs") }
     }
 }
 

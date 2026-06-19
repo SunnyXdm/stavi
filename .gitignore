@@ -45,4 +45,14 @@ docs/INTERNALS.md
 docs/COMPETITORS.md
 docs/GAP-ANALYSIS.md
 docs/PRODUCT-PLAN.md
-graphify-out
+apps/mobile/src/generated/dev-config.ts
+
+# Vendored sibling repo (recon reference only, not part of the build)
+pierre/
+
+# Build artifact (copy lives in /tmp); never commit the 59MB APK
+/stavi-release-arm64.apk
+*.apk
+
+# Local chat transcript dump (large, contains conversation data)
+/history/

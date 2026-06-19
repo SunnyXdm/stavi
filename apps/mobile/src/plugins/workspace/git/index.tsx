@@ -22,7 +22,6 @@ import type {
 import type { GitPluginAPI } from '@stavi/shared';
 import { useTheme, typography, spacing, radii } from '../../../theme';
 import type { Colors } from '../../../theme';
-import { textStyles } from '../../../theme/styles';
 import { EmptyView } from '../../../components/StateViews';
 import { SkeletonRows } from '../../../components/Skeleton';
 import { useConnectionStore } from '../../../stores/connection';
@@ -450,18 +449,26 @@ function gitApi(): GitPluginAPI {
     return useConnectionStore.getState().getClientForServer(firstServerId);
   };
 
+  // Without a client these previously dereferenced `result.branch` on
+  // undefined (optional-chained request → undefined result) and threw.
+  const requireClient = () => {
+    const client = getFallbackClient();
+    if (!client) throw new Error('No server connected');
+    return client;
+  };
+
   return {
     getStatus: async () => {
-      const result = await getFallbackClient()?.request<any>('git.status', {});
+      const result = await requireClient().request<any>('git.status', {});
       return { branch: result.branch, staged: result.staged, unstaged: result.unstaged, untracked: result.untracked };
     },
-    stage: async (paths) => { await getFallbackClient()?.request('git.stage', { paths }); },
+    stage: async (paths) => { await requireClient().request('git.stage', { paths }); },
     commit: async (message) => {
-      const result = await getFallbackClient()?.request<any>('git.commit', { message });
+      const result = await requireClient().request<any>('git.commit', { message });
       return { hash: result.output ?? '' };
     },
     diff: async (path) => {
-      const result = await getFallbackClient()?.request<any>('git.diffFile', { path });
+      const result = await requireClient().request<any>('git.diffFile', { path });
       return result.diff ?? '';
     },
   };

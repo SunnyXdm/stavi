@@ -12,20 +12,68 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, normalize, resolve } from 'node:path';
+import { dirname, join, normalize, relative, resolve, sep } from 'node:path';
+import { homedir } from 'node:os';
 import type { ServerContext, RpcHandler } from '../context';
 import { execFileAsync, searchEntries } from '../utils';
 import { createFsBatchHandlers } from './fs-batch';
+import ignoreModule from 'ignore';
+
+// `ignore` ships as CJS with a callable default plus a `.default` alias; the
+// shape Bun/tsc hands back differs, so normalize to the factory either way.
+const createIgnore = ((ignoreModule as unknown as { default?: typeof ignoreModule }).default
+  ?? ignoreModule) as typeof ignoreModule;
 
 const HIDDEN_DIRS = new Set([
   '.git', 'node_modules', '.turbo', 'dist', 'build',
   '.next', '.cache', 'Pods', '.gradle',
 ]);
+
+/**
+ * Build a gitignore matcher for `dir`, mirroring how a developer's editor hides
+ * ignored files (lunel does the same in its file walks). Finds the project root
+ * — the nearest ancestor of `dir`, at or below `boundary`, that contains a
+ * `.git` — then layers every `.gitignore` from that root down to `dir`. Paths
+ * passed to `.ignores()` must be relative to the returned `root`.
+ */
+function buildGitignore(dir: string, boundary: string): { ig: ReturnType<typeof createIgnore>; root: string } {
+  // Ancestor chain from `boundary` (inclusive) down to `dir` (inclusive).
+  const chain: string[] = [];
+  let cur = dir;
+  for (;;) {
+    chain.push(cur);
+    if (cur === boundary) break;
+    const parent = dirname(cur);
+    if (parent === cur) break; // hit filesystem root before boundary
+    cur = parent;
+  }
+  chain.reverse(); // boundary first … dir last
+
+  // Project root = highest ancestor in range that is a git repo; else boundary.
+  let root = boundary;
+  for (const c of chain) {
+    if (existsSync(join(c, '.git'))) { root = c; break; }
+  }
+
+  const ig = createIgnore();
+  ig.add('.git'); // never surface the git dir itself
+  let started = false;
+  for (const c of chain) {
+    if (c === root) started = true;
+    if (!started) continue;
+    const gi = join(c, '.gitignore');
+    if (existsSync(gi)) {
+      try { ig.add(readFileSync(gi, 'utf-8')); } catch { /* unreadable .gitignore */ }
+    }
+  }
+  return { ig, root };
+}
 
 function ensureDirFor(filePath: string) {
   mkdirSync(dirname(filePath), { recursive: true });
@@ -35,27 +83,61 @@ function ensureDirFor(filePath: string) {
  * Guard a path against traversal attacks. Accepts the path only if it
  * falls within workspaceRoot or one of the known session folders.
  *
- * Returns the normalized absolute path on success, or null on rejection.
- * Exported so fs-batch.ts can receive it as a parameter.
+ * Returns the (symlink-resolved) absolute path on success, or null on
+ * rejection. Exported so fs-batch.ts can receive it as a parameter.
+ *
+ * Two layers of defense:
+ *  1. Lexical prefix check — node:path resolve/normalize collapse `../`
+ *     before the check, so traversal payloads and string-prefix siblings
+ *     (e.g. /a/bc under /a/b) are rejected here.
+ *  2. realpath check — a symlink living textually inside the workspace but
+ *     pointing outside passes layer 1; realpath() follows it so we can
+ *     re-check the canonical target. The leaf often doesn't exist yet
+ *     (create/write/rename destinations), so we realpath the nearest
+ *     EXISTING ancestor and re-append the not-yet-created remainder — this
+ *     still catches an escaping symlink anywhere along the existing portion.
  */
 export function guardPath(
   workspaceRoot: string,
   rawPath: string,
   sessionFolders: string[],
 ): string | null {
-  // Resolve to absolute
+  // 1) Resolve to an absolute, lexically-normalized path.
   const abs = rawPath.startsWith('/')
     ? normalize(rawPath)
     : resolve(workspaceRoot, rawPath);
 
-  // Must be under workspaceRoot OR a known session folder
   const allowed = [workspaceRoot, ...sessionFolders];
-  for (const root of allowed) {
-    if (abs === root || abs.startsWith(root + '/')) {
-      return abs;
+  // '/' literal (not sep): repo is Unix-only, and this exactly preserves the
+  // prior cross-sibling rejection — root='/a/b' must reject target='/a/bc'.
+  const isUnder = (p: string) =>
+    allowed.some((root) => p === root || p.startsWith(root + '/'));
+
+  // 2) Lexical prefix check (rejects ../ traversal and prefix siblings).
+  if (!isUnder(abs)) return null;
+
+  // 3) Symlink-escape check — realpath the nearest existing ancestor.
+  let cur = abs;
+  const remainder: string[] = []; // collected leaf-first
+  for (;;) {
+    try {
+      const realCur = realpathSync(cur);
+      const realAbs =
+        remainder.length > 0
+          ? resolve(realCur, remainder.slice().reverse().join('/'))
+          : realCur;
+      return isUnder(realAbs) ? realAbs : null;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // ENOENT/ENOTDIR = this component doesn't exist yet → walk up. Any
+      // other error (EACCES, ELOOP, …) fails closed: we cannot prove safety.
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') return null;
+      const parent = dirname(cur);
+      if (parent === cur) return null; // reached filesystem root, gave up
+      remainder.push(cur.slice(parent.length + 1));
+      cur = parent;
     }
   }
-  return null;
 }
 
 export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler> {
@@ -203,6 +285,58 @@ export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler>
     },
 
     // -------------------------------------------------------
+    // fs.listDirs — browse DIRECTORIES under the user's home folder.
+    // Used by the workspace-folder picker: unlike fs.list (scoped to
+    // workspaceRoot + session folders), this is rooted at os.homedir() so
+    // users can pick any project on the machine, cross-platform
+    // (/Users/x on macOS, /home/x on Linux, C:\Users\x on Windows).
+    // Directories only — never file contents — and never above home.
+    // -------------------------------------------------------
+    'fs.listDirs': async (ws, id, payload) => {
+      const home = normalize(homedir());
+      const raw = String(payload.path ?? '~');
+
+      // Expand "~" / "~/sub" and resolve relative input against home.
+      const expanded =
+        raw === '~' || raw === ''
+          ? home
+          : raw.startsWith('~/') || raw.startsWith('~\\')
+            ? join(home, raw.slice(2))
+            : raw;
+      const abs = normalize(resolve(home, expanded));
+
+      if (abs !== home && !abs.startsWith(home + sep)) {
+        sendJson(ws, makeFailure(id, 'Path is outside your home folder'));
+        return;
+      }
+      if (!existsSync(abs) || !statSync(abs).isDirectory()) {
+        sendJson(ws, makeFailure(id, `Directory not found: ${raw}`));
+        return;
+      }
+
+      try {
+        const dirents = readdirSync(abs, { withFileTypes: true });
+        const entries: Array<{ name: string; type: 'directory' }> = [];
+        for (const dirent of dirents) {
+          if (!dirent.isDirectory()) continue;
+          if (dirent.name.startsWith('.')) continue;
+          if (HIDDEN_DIRS.has(dirent.name)) continue;
+          entries.push({ name: dirent.name, type: 'directory' });
+        }
+        entries.sort((a, b) => a.name.localeCompare(b.name));
+
+        sendJson(ws, makeSuccess(id, {
+          path: abs,
+          home,
+          parent: abs === home ? null : dirname(abs),
+          entries,
+        }));
+      } catch (err) {
+        sendJson(ws, makeFailure(id, err instanceof Error ? err.message : 'Failed to list directory'));
+      }
+    },
+
+    // -------------------------------------------------------
     // fs.list — list a directory
     // showHidden: boolean — when true, do NOT filter HIDDEN_DIRS or dot-files
     // -------------------------------------------------------
@@ -221,6 +355,17 @@ export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler>
         const dirents = readdirSync(targetPath, { withFileTypes: true });
         const entries: Array<{ name: string; type: 'file' | 'directory'; size?: number }> = [];
 
+        // Respect .gitignore so the explorer mirrors what's tracked, like a
+        // desktop editor (and lunel) — unless the caller explicitly wants hidden.
+        // Bound the .gitignore walk to whichever allowed root contains the
+        // target (workspaceRoot or a session folder), never above it.
+        const allowedRoots = [workspaceRoot, ...getSessionFolders()];
+        const boundary =
+          allowedRoots.find((r) => targetPath === r || targetPath.startsWith(r + sep)) ?? workspaceRoot;
+        const { ig, root } = showHidden
+          ? { ig: null as ReturnType<typeof createIgnore> | null, root: targetPath }
+          : buildGitignore(targetPath, boundary);
+
         for (const dirent of dirents) {
           if (!showHidden) {
             if (HIDDEN_DIRS.has(dirent.name)) continue;
@@ -229,6 +374,10 @@ export function createFsHandlers(ctx: ServerContext): Record<string, RpcHandler>
               dirent.name !== '.env' &&
               dirent.name !== '.env.local'
             ) continue;
+            if (ig) {
+              const rel = relative(root, join(targetPath, dirent.name));
+              if (rel && ig.ignores(dirent.isDirectory() ? `${rel}/` : rel)) continue;
+            }
           }
 
           const entryType = dirent.isDirectory() ? 'directory' : 'file';

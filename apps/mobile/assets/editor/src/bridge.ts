@@ -14,12 +14,13 @@ import type { EditorView } from '@codemirror/view';
 
 export type JsToWeb =
   | { type: 'loadFile'; path: string; content: string; language: string | null }
-  | { type: 'setTheme'; theme: 'dark' | 'light' }
+  | { type: 'setTheme'; theme: string }
   | { type: 'requestContent'; requestId: string }
   | { type: 'find' }
   | { type: 'undo' }
   | { type: 'redo' }
-  | { type: 'format' };
+  | { type: 'format' }
+  | { type: 'insertText'; text: string };
 
 export type WebToJs =
   | { type: 'ready' }
@@ -86,7 +87,8 @@ function handleJsToWebMessage(
     }
 
     case 'setTheme': {
-      // Theme is baked into the bundle; ignore in Phase 4b (single dark theme)
+      // Forward the theme id to index.ts, which owns the theme compartment.
+      window.dispatchEvent(new CustomEvent('stavi:setTheme', { detail: msg.theme }));
       break;
     }
 
@@ -120,6 +122,18 @@ function handleJsToWebMessage(
 
     case 'format': {
       // Phase 4b: no formatter. Could add Prettier integration later.
+      break;
+    }
+
+    case 'insertText': {
+      // Quick-insert from the RN symbols bar: replace the selection (or
+      // insert at the cursor) and keep the editor focused.
+      const { from, to } = view.state.selection.main;
+      view.dispatch({
+        changes: { from, to, insert: msg.text },
+        selection: { anchor: from + msg.text.length },
+      });
+      view.focus();
       break;
     }
   }

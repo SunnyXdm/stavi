@@ -19,10 +19,18 @@ export type AIPart =
   | FileChangePart
   | FilePart
   | StepStartPart
-  | StepFinishPart;
+  | StepFinishPart
+  | InfoPart;
 
 export interface TextPart {
   type: 'text';
+  id?: string;
+  text: string;
+}
+
+/** Inline informational marker (e.g. "Context compacted"). */
+export interface InfoPart {
+  type: 'info';
   id?: string;
   text: string;
 }

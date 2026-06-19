@@ -4,8 +4,9 @@
 // HOW:  Uses getClientForServer(serverId) for session.create and DirectoryPicker for folder selection.
 // SEE:  apps/mobile/src/stores/connection.ts, apps/mobile/src/stores/sessions-store.ts
 
-import React, { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import ActionSheet, { type ActionSheetRef } from 'react-native-actions-sheet';
 import type { Session } from '@stavi/shared';
 import { useTheme } from '../theme';
 import { radii, spacing, typography } from '../theme';
@@ -35,13 +36,9 @@ function StepPill({ step, current, styles }: { step: Step; current: Step; styles
 
 function createStyles(colors: ReturnType<typeof useTheme>['colors']) {
   return StyleSheet.create({
-    backdrop: { flex: 1, backgroundColor: colors.bg.scrim, justifyContent: 'flex-end' },
-    backdropPress: { flex: 1 },
     sheet: {
-      backgroundColor: colors.bg.overlay,
-      borderTopLeftRadius: radii.xl,
-      borderTopRightRadius: radii.xl,
       padding: spacing[4],
+      paddingTop: spacing[2],
       gap: spacing[3],
     },
     title: {
@@ -74,8 +71,11 @@ function createStyles(colors: ReturnType<typeof useTheme>['colors']) {
       backgroundColor: colors.bg.input,
     },
     chipActive: { backgroundColor: colors.accent.primary },
+    chipInner: { flexDirection: 'row', alignItems: 'center', gap: spacing[2] },
+    chipDot: { width: 6, height: 6, borderRadius: 3 },
     chipText: { color: colors.fg.secondary, fontSize: typography.fontSize.sm },
     chipTextActive: { color: colors.fg.onAccent },
+    chipMeta: { color: colors.fg.muted, fontSize: typography.fontSize.xs },
     inputLike: {
       backgroundColor: colors.bg.input,
       borderRadius: radii.md,
@@ -122,11 +122,13 @@ function createStyles(colors: ReturnType<typeof useTheme>['colors']) {
 
 export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowProps) {
   const savedConnections = useConnectionStore((state) => state.savedConnections);
+  const connectionsById = useConnectionStore((state) => state.connectionsById);
   const getClientForServer = useConnectionStore((state) => state.getClientForServer);
   const refreshForServer = useSessionsStore((state) => state.refreshForServer);
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
+  const sheetRef = useRef<ActionSheetRef>(null);
   const [step, setStep] = useState<Step>(1);
   const [serverId, setServerId] = useState('');
   const [folder, setFolder] = useState('');
@@ -139,6 +141,11 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
     () => savedConnections.find((connection) => connection.id === serverId) ?? null,
     [savedConnections, serverId],
   );
+
+  const selectedServerStatus = serverId
+    ? connectionsById[serverId]?.clientState ?? 'idle'
+    : 'idle';
+  const selectedServerOnline = selectedServerStatus === 'connected';
 
   const reset = useCallback(() => {
     setStep(1);
@@ -158,13 +165,17 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
       setError('Choose a server.');
       return;
     }
+    if (step === 1 && !selectedServerOnline) {
+      setError('Server is offline. Reconnect before creating a workspace.');
+      return;
+    }
     if (step === 2 && !folder) {
       setError('Choose a folder.');
       return;
     }
     setError(null);
     setStep((prev) => (prev === 1 ? 2 : 3));
-  }, [folder, serverId, step]);
+  }, [folder, selectedServerOnline, serverId, step]);
 
   const moveBack = useCallback(() => {
     setError(null);
@@ -180,6 +191,10 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
     const client = getClientForServer(serverId);
     if (!client) {
       setError('Server client is unavailable.');
+      return;
+    }
+    if (!selectedServerOnline) {
+      setError('Server is offline. Reconnect before creating a workspace.');
       return;
     }
 
@@ -198,16 +213,29 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
     } finally {
       setCreating(false);
     }
-  }, [folder, getClientForServer, onCreated, refreshForServer, reset, serverId, title]);
+  }, [folder, getClientForServer, onCreated, refreshForServer, reset, selectedServerOnline, serverId, title]);
+
+  // Keep the ActionSheet in sync with the `visible` prop. The sheet owns
+  // backdrop, drag-to-dismiss, and keyboard avoidance — all previously
+  // hand-rolled with Modal + KeyboardAvoidingView.
+  useEffect(() => {
+    if (visible) sheetRef.current?.show();
+    else sheetRef.current?.hide();
+  }, [visible]);
 
   return (
     <>
-      <Modal visible={visible} animationType="slide" transparent onRequestClose={closeFlow}>
-        <KeyboardAvoidingView
-          style={styles.backdrop}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-          <Pressable style={styles.backdropPress} onPress={closeFlow} />
+      <ActionSheet
+        ref={sheetRef}
+        gestureEnabled
+        onClose={closeFlow}
+        containerStyle={{
+          backgroundColor: colors.bg.overlay,
+          borderTopLeftRadius: radii.xl,
+          borderTopRightRadius: radii.xl,
+        }}
+        indicatorStyle={{ backgroundColor: colors.fg.muted, opacity: 0.4, width: 36 }}
+      >
           <View style={styles.sheet}>
             <Text style={styles.title}>New Workspace</Text>
 
@@ -221,20 +249,44 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
               <>
                 <Text style={styles.label}>Pick server</Text>
                 <View style={styles.chips}>
-                  {savedConnections.map((connection) => (
-                    <Pressable
-                      key={connection.id}
-                      style={[styles.chip, serverId === connection.id && styles.chipActive]}
-                      onPress={() => {
-                        setServerId(connection.id);
-                        setError(null);
-                      }}
-                    >
-                      <Text style={[styles.chipText, serverId === connection.id && styles.chipTextActive]}>
-                        {connection.name}
-                      </Text>
-                    </Pressable>
-                  ))}
+                  {savedConnections.map((connection) => {
+                    const status = connectionsById[connection.id]?.clientState ?? 'idle';
+                    const online = status === 'connected';
+                    const selected = serverId === connection.id;
+                    return (
+                      <Pressable
+                        key={connection.id}
+                        style={[styles.chip, selected && styles.chipActive]}
+                        onPress={() => {
+                          setServerId(connection.id);
+                          setError(null);
+                        }}
+                      >
+                        <View style={styles.chipInner}>
+                          <View
+                            style={[
+                              styles.chipDot,
+                              { backgroundColor: online ? colors.semantic.success : colors.fg.muted },
+                            ]}
+                          />
+                          <Text style={[styles.chipText, selected && styles.chipTextActive]}>
+                            {(connection.hostname ?? connection.name).replace(/\.local$/, '')}
+                            {/* Same machine can run several servers — the port disambiguates. */}
+                            <Text style={[styles.chipMeta, selected && styles.chipTextActive]}>
+                              {' '}:{connection.port}
+                            </Text>
+                          </Text>
+                          {!online ? (
+                            <Text style={[styles.chipMeta, selected && styles.chipTextActive]}>
+                              {status === 'reconnecting' || status === 'connecting' || status === 'authenticating'
+                                ? '· connecting'
+                                : '· offline'}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </Pressable>
+                    );
+                  })}
                 </View>
               </>
             ) : null}
@@ -243,7 +295,14 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
               <>
                 <Text style={styles.label}>Pick folder</Text>
                 <Pressable style={styles.inputLike} onPress={() => setShowDirectoryPicker(true)}>
-                  <Text style={styles.inputLikeText}>{folder || 'Choose folder'}</Text>
+                  <Text style={styles.inputLikeText}>
+                    {!folder
+                      ? 'Choose folder'
+                      : folder === '.'
+                        ? 'Workspace root'
+                        // Display-only tilde substitution for absolute paths.
+                        : folder.replace(/^\/(?:Users|home)\/[^/]+/, '~').replace(/^[A-Z]:\\Users\\[^\\]+/, '~')}
+                  </Text>
                 </Pressable>
                 {selectedServer ? (
                   <Text style={styles.meta}>Server: {selectedServer.host}:{selectedServer.port}</Text>
@@ -299,14 +358,19 @@ export function NewSessionFlow({ visible, onClose, onCreated }: NewSessionFlowPr
               )}
             </View>
           </View>
-        </KeyboardAvoidingView>
-      </Modal>
+      </ActionSheet>
 
       <DirectoryPicker
         visible={showDirectoryPicker}
         onClose={() => setShowDirectoryPicker(false)}
         onSelect={(path) => {
           setFolder(path);
+          // Prefill the title with the folder name so the workspace is never
+          // left blank/odd — the user can still override it on step 3.
+          const folderName = path.split('/').filter(Boolean).pop();
+          if (folderName && folderName !== '.' && !title.trim()) {
+            setTitle(folderName);
+          }
           setError(null);
           setShowDirectoryPicker(false);
         }}

@@ -2,8 +2,8 @@
 // WHY:  Phase 2 adds per-plugin session lists (AI chats, terminal tabs) without consuming
 //       permanent screen width. Follows the lunel drawer pattern: gesture-driven overlay.
 // HOW:  Animated.Value 0→1 drives translateX (drawer) + scrim opacity, useNativeDriver: true.
-//       Two PanResponders: 30px edge zone (swipe-to-open when closed), drawer panel
-//       (swipe-left to close when open). Content is context-sensitive via SessionRegistry.
+//       Drawer panel swipe-left-to-close (when open). Opened via the header
+//       hamburger. Content is context-sensitive via SessionRegistry.
 // SEE:  apps/mobile/src/stores/session-registry.ts, plans/09-navigation-overhaul.md §2
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
@@ -14,9 +14,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { AppNavigation } from '../navigation/types';
-import { PenLine, House, Settings as SettingsIcon } from 'lucide-react-native';
+import { PenLine, House, Settings as SettingsIcon, X } from 'lucide-react-native';
 import { usePluginRegistry } from '../stores/plugin-registry';
 import { useSessionRegistry } from '../stores/session-registry';
+import { useSessionsStore } from '../stores/sessions-store';
 import { useTheme } from '../theme';
 import { typography, spacing, radii } from '../theme';
 import type { SessionEntry } from '@stavi/shared';
@@ -28,7 +29,6 @@ export interface SessionDrawerProps {
   onOpen?: () => void;
 }
 
-const EDGE_WIDTH = 30;
 const OPEN_MS = 250;
 const CLOSE_MS = 200;
 
@@ -43,7 +43,6 @@ export function SessionDrawer({ visible, sessionId, onClose, onOpen }: SessionDr
   const { colors } = useTheme();
 
   const s = useMemo(() => StyleSheet.create({
-    edgeZone: { position: 'absolute', left: 0, top: 0, bottom: 0, width: EDGE_WIDTH, zIndex: 10 },
     scrim: { ...StyleSheet.absoluteFill, backgroundColor: colors.bg.scrim, zIndex: 20 },
     drawer: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: colors.bg.raised, zIndex: 30, flexDirection: 'column' },
     header: { paddingHorizontal: spacing[5], paddingBottom: spacing[3], borderBottomWidth: 1, borderBottomColor: colors.divider },
@@ -61,9 +60,9 @@ export function SessionDrawer({ visible, sessionId, onClose, onOpen }: SessionDr
     rowText: { flex: 1 },
     rowTitle: { fontSize: typography.fontSize.sm, color: colors.fg.primary },
     rowSub: { fontSize: typography.fontSize.xs, color: colors.fg.muted, marginTop: 2 },
-    placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing[2] },
-    placeholderApp: { fontSize: typography.fontSize['2xl'], fontWeight: typography.fontWeight.bold, color: colors.fg.muted },
-    placeholderSub: { fontSize: typography.fontSize.sm, color: colors.fg.muted },
+    rowClose: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center', borderRadius: radii.sm },
+    minimalBody: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing[6] },
+    minimalHint: { fontSize: typography.fontSize.sm, color: colors.fg.muted, textAlign: 'center' },
     emptyText: { textAlign: 'center', fontSize: typography.fontSize.sm, color: colors.fg.muted },
     emptyCont: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: spacing[8] },
     bottomNav: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: colors.divider, backgroundColor: colors.bg.base },
@@ -87,16 +86,13 @@ export function SessionDrawer({ visible, sessionId, onClose, onOpen }: SessionDr
     }).start(() => setAnimState(visible ? 'open' : 'closed'));
   }, [visible, anim]);
 
-  const edgePan = useRef(PanResponder.create({
-    onMoveShouldSetPanResponder: (_, g) => g.dx > 10,
-    onPanResponderMove: (_, g) => {
-      anim.setValue(Math.min(1, Math.max(0, g.dx / dwRef.current)));
-    },
-    onPanResponderRelease: (_, g) => {
-      if (g.dx > dwRef.current * 0.3) { onOpenRef.current?.(); }
-      else { Animated.timing(anim, { toValue: 0, duration: CLOSE_MS, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(); }
-    },
-  })).current;
+  // NOTE: edge-swipe-to-OPEN was removed. The closed-state edge catcher was a
+  // full-height 30dp strip at zIndex 10 that occluded any left-edge control —
+  // most visibly the editor's file-tree toggle, whose taps it silently ate
+  // (a PanResponder that doesn't claim a tap still blocks it from the view
+  // behind). The hamburger is the open affordance; if edge-swipe-to-open is
+  // wanted back, do it at the navigator level via react-native-gesture-handler
+  // (which lets taps fall through), not a PanResponder overlay.
 
   const drawerPan = useRef(PanResponder.create({
     onMoveShouldSetPanResponder: (_, g) => g.dx < -10,
@@ -117,8 +113,18 @@ export function SessionDrawer({ visible, sessionId, onClose, onOpen }: SessionDr
   const definitions = usePluginRegistry((s) => s.definitions);
   const activeTab = useMemo(() => openTabs.find((t) => t.id === activeTabId), [openTabs, activeTabId]);
   const activePluginId = activeTab?.pluginId ?? null;
-  const pluginName = activePluginId ? (definitions[activePluginId]?.name ?? activePluginId) : 'Sessions';
-  const registration = useSessionRegistry((s) => activePluginId ? s.registrations[activePluginId] : undefined);
+  const activeDef = activePluginId ? definitions[activePluginId] : undefined;
+  const pluginName = activeDef?.name ?? activePluginId ?? 'Sessions';
+  // Only plugins that declare supportsSessions get the search + list + "New".
+  // Others (Editor/Git/Browser/Explorer) show a minimal plugin-name drawer —
+  // no useless "No sessions for this tool" placeholder.
+  const showsSessions = activeDef?.supportsSessions === true;
+  const registration = useSessionRegistry((s) =>
+    activePluginId && showsSessions ? s.registrations[activePluginId] : undefined,
+  );
+  // Custom drawer body (e.g. the editor's file tree) — needs the full Session.
+  const DrawerContent = activeDef?.drawerContent;
+  const workspaceSession = useSessionsStore((s) => s.getSession(sessionId));
 
   const filteredSessions = useMemo(() => {
     if (!registration) return [];
@@ -135,6 +141,7 @@ export function SessionDrawer({ visible, sessionId, onClose, onOpen }: SessionDr
   const renderItem = useCallback(({ item, index }: { item: SessionEntry; index: number }) => {
     const isActive = item.id === registration?.activeSessionId || !!item.isActive;
     const isLast = index === filteredSessions.length - 1;
+    const onCloseSession = registration?.onCloseSession;
     return (
       <Pressable style={[s.row, isActive && s.rowActive, !isLast && s.rowBorder]} onPress={() => handleSelect(item.id)}>
         <View style={[s.dot, isActive && s.dotActive]} />
@@ -142,28 +149,33 @@ export function SessionDrawer({ visible, sessionId, onClose, onOpen }: SessionDr
           <Text style={s.rowTitle} numberOfLines={1}>{item.title}</Text>
           {item.subtitle ? <Text style={s.rowSub} numberOfLines={1}>{item.subtitle}</Text> : null}
         </View>
+        {onCloseSession && (
+          <Pressable style={s.rowClose} onPress={() => onCloseSession(item.id)} hitSlop={8}>
+            <X size={14} color={colors.fg.muted} />
+          </Pressable>
+        )}
       </Pressable>
     );
-  }, [registration, filteredSessions.length, handleSelect]);
+  }, [registration, filteredSessions.length, handleSelect, colors, s]);
 
   const keyExtractor = useCallback((item: SessionEntry) => item.id, []);
 
+  // Nothing is rendered while closed — no edge catcher (see note above).
+  if (animState === 'closed') return null;
+
   return (
     <>
-      {animState === 'closed' && (
-        <View style={s.edgeZone} {...edgePan.panHandlers} />
-      )}
-      {animState !== 'closed' && (
-        <>
-          <Animated.View style={[s.scrim, { opacity: scrimOpacity }]} pointerEvents="auto">
-            <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessible={false} />
-          </Animated.View>
-          <Animated.View style={[s.drawer, { width: drawerWidth, transform: [{ translateX }] }]} {...drawerPan.panHandlers}>
+      <Animated.View style={[s.scrim, { opacity: scrimOpacity }]} pointerEvents="auto">
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessible={false} />
+      </Animated.View>
+      <Animated.View style={[s.drawer, { width: drawerWidth, transform: [{ translateX }] }]} {...drawerPan.panHandlers}>
             <View style={[s.header, { paddingTop: (insets.top || 0) + spacing[4] }]}>
               <Text style={s.headerTitle}>{pluginName}</Text>
             </View>
             <View style={s.body}>
-              {registration ? (
+              {DrawerContent && workspaceSession ? (
+                <DrawerContent session={workspaceSession} close={onClose} />
+              ) : registration ? (
                 <>
                   <View style={s.searchRow}>
                     <TextInput
@@ -186,9 +198,11 @@ export function SessionDrawer({ visible, sessionId, onClose, onOpen }: SessionDr
                   />
                 </>
               ) : (
-                <View style={s.placeholder}>
-                  <Text style={s.placeholderApp}>stavi</Text>
-                  <Text style={s.placeholderSub}>No sessions for this tool</Text>
+                // Plugin without sessions (Editor/Git/Browser/Explorer): the
+                // header already shows its name — keep the body empty so the
+                // drawer is just a tidy nav surface, not a fake list.
+                <View style={s.minimalBody}>
+                  <Text style={s.minimalHint}>{pluginName}</Text>
                 </View>
               )}
             </View>
@@ -202,9 +216,7 @@ export function SessionDrawer({ visible, sessionId, onClose, onOpen }: SessionDr
                 <Text style={s.navLabel}>Settings</Text>
               </Pressable>
             </View>
-          </Animated.View>
-        </>
-      )}
+      </Animated.View>
     </>
   );
 }

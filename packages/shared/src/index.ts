@@ -17,6 +17,7 @@ export type {
   SessionEntry,
   PluginSettingFieldType,
   PluginSettingField,
+  SettingOptionPreview,
   PluginSettingsSection,
   PluginSettingsSchema,
 } from './plugin-types';

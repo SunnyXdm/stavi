@@ -173,6 +173,18 @@ export function useOrchestrationActions({
     [serverId, setState],
   );
 
+  // Dismiss the ExitPlanMode plan card. The actual "approve" is a normal
+  // follow-up turn the caller sends (with interactionMode switched to default).
+  const dismissPlanProposal = useCallback((threadId: string) => {
+    setState((prev) => {
+      const proposal = prev.planProposals.get(threadId);
+      if (!proposal) return prev;
+      const updated = new Map(prev.planProposals);
+      updated.set(threadId, { ...proposal, pending: false });
+      return { ...prev, planProposals: updated };
+    });
+  }, [setState]);
+
   const setActiveThread = useCallback((threadId: string) => {
     if (instanceId) {
       useAiBindingsStore.getState().bind(
@@ -180,6 +192,8 @@ export function useOrchestrationActions({
         threadId,
       );
     }
+    // Persist as the workspace's last-active thread so reopening the tab restores it.
+    useAiBindingsStore.getState().setLastActive(serverId, sessionId, threadId);
     activeThreadIdRef.current = threadId;
     setState((prev) => ({ ...prev, activeThreadId: threadId }));
   }, [instanceId, serverId, sessionId, activeThreadIdRef, setState]);
@@ -200,5 +214,5 @@ export function useOrchestrationActions({
     } catch { /* ignore */ }
   }, [serverId, setState]);
 
-  return { sendMessage, interruptTurn, respondToApproval, respondToUserInput, setActiveThread, updateSettings, refreshProviders };
+  return { sendMessage, interruptTurn, respondToApproval, respondToUserInput, dismissPlanProposal, setActiveThread, updateSettings, refreshProviders };
 }

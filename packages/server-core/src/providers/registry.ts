@@ -10,11 +10,18 @@ import type {
   ProviderAdapter,
   ProviderInfo,
   ProviderKind,
+  ProviderSlashCommand,
   StaviSettings,
 } from './types';
 import { settingsPath } from './types';
 import { ClaudeAdapter } from './claude';
 import { CodexAdapter } from './codex';
+
+/** Disk cache for the Claude capability probe — the rich slash-command list
+ *  survives restarts so the composer has it before the next probe lands. */
+function capabilitiesCachePath(baseDir: string): string {
+  return `${baseDir}/userdata/claude-capabilities.json`;
+}
 
 // ----------------------------------------------------------
 // Registry
@@ -43,6 +50,27 @@ export class ProviderRegistry {
     // Create adapters
     const claude = new ClaudeAdapter(() => this.getApiKey());
     const codex = new CodexAdapter(() => this.settings.codexBinaryPath);
+
+    // Seed Claude's slash commands from the last probe (instant after a
+    // restart) and persist fresh probe results as they land.
+    try {
+      const cachePath = capabilitiesCachePath(this.baseDir);
+      if (existsSync(cachePath)) {
+        const cached = JSON.parse(readFileSync(cachePath, 'utf-8')) as { slashCommands?: ProviderSlashCommand[] };
+        if (Array.isArray(cached.slashCommands)) claude.seedSlashCommands(cached.slashCommands);
+      }
+    } catch { /* corrupt cache — probe will rebuild it */ }
+    claude.onCapabilitiesUpdated((slashCommands) => {
+      try {
+        const cachePath = capabilitiesCachePath(this.baseDir);
+        mkdirSync(dirname(cachePath), { recursive: true });
+        const tempPath = `${cachePath}.${process.pid}.tmp`;
+        writeFileSync(tempPath, JSON.stringify({ slashCommands }, null, 2) + '\n', 'utf-8');
+        renameSync(tempPath, cachePath);
+      } catch (err) {
+        console.warn('[Registry] Failed to persist capability cache:', err);
+      }
+    });
 
     // Initialize both — each adapter probes its own availability
     await Promise.allSettled([
@@ -90,12 +118,14 @@ export class ProviderRegistry {
     for (const [kind, adapter] of this.adapters) {
       // For Claude: always "installed" (SDK bundled). For Codex: installed only if binary found.
       const installed = kind === 'claude' ? true : adapter.isReady();
+      const slashCommands = adapter.getSlashCommands?.() ?? [];
       infos.push({
         provider: kind,
         name: kind === 'claude' ? 'Claude (Anthropic)' : 'Codex (OpenAI)',
         installed,
         authenticated: adapter.isReady(),
         models: adapter.getModels(),
+        ...(slashCommands.length ? { slashCommands } : {}),
       });
     }
 

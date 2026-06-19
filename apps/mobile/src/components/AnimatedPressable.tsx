@@ -20,6 +20,11 @@ import {
 } from 'react-native';
 import { useHaptics } from '../hooks/useHaptics';
 
+// Style and children must live on the SAME node: if `style` sat on an outer
+// wrapper, row/align/padding layout would apply to the wrapper while children
+// laid out inside an unstyled Pressable (collapsed cards, dead tap areas).
+const PressableWithScale = Animated.createAnimatedComponent(Pressable);
+
 export interface AnimatedPressableProps extends Omit<PressableProps, 'style'> {
   style?: StyleProp<ViewStyle>;
   /** Fire a haptic on press-in. */
@@ -72,10 +77,13 @@ export function AnimatedPressable({
   );
 
   return (
-    <Animated.View style={[{ transform: [{ scale }] }, style]}>
-      <Pressable onPressIn={handlePressIn} onPressOut={handlePressOut} {...rest}>
-        {children as React.ReactNode}
-      </Pressable>
-    </Animated.View>
+    <PressableWithScale
+      style={[style, { transform: [{ scale }] }]}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      {...rest}
+    >
+      {children as React.ReactNode}
+    </PressableWithScale>
   );
 }

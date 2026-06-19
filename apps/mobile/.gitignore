@@ -33,6 +33,10 @@ local.properties
 .cxx/
 *.keystore
 !debug.keystore
+# Release signing — never commit credentials or the upload keystore
+keystore.properties
+*.jks
+!keystore.properties.template
 .kotlin/
 
 # node.js

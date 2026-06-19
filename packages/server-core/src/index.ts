@@ -5,6 +5,7 @@ export {
   issueOrReadBearerToken,
   startStaviServer,
 } from './server';
+export { detectLanCandidates, detectLocalIp } from './utils';
 
 // Provider types (for mobile app to import if needed)
 export type {

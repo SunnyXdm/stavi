@@ -50,6 +50,9 @@ export function activityPayloadToAIPart(payload: any): AIPart | null {
       output: payload.result,
     };
   }
+  if (kind === 'info') {
+    return { type: 'info', text: payload.text ?? '' };
+  }
   return null;
 }
 

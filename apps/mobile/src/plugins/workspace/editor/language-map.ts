@@ -48,3 +48,18 @@ export function isBinary(path: string): boolean {
   const ext = (path.split('.').pop() ?? '').toLowerCase();
   return BINARY_EXTENSIONS.has(ext);
 }
+
+/** Raster images — previewed via the server's /file endpoint (never fs.read:
+ *  the utf-8 round-trip corrupts bytes). Kept in BINARY_EXTENSIONS so the
+ *  CodeMirror load stays skipped; the surface branches on these FIRST. */
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']);
+
+export function isImage(path: string): boolean {
+  const ext = (path.split('.').pop() ?? '').toLowerCase();
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
+/** SVG previews render from the file's XML text via react-native-svg. */
+export function isSvg(path: string): boolean {
+  return (path.split('.').pop() ?? '').toLowerCase() === 'svg';
+}

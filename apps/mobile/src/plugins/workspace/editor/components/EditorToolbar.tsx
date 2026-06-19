@@ -1,10 +1,9 @@
-// WHAT: Top toolbar for the Editor plugin panel.
-// WHY:  Provides Save, Undo, Redo, Find, and file-tree toggle actions.
-//       In Phase 4a these are structural stubs (Save/Undo/Redo are no-ops;
-//       only the tree toggle is functional). Phase 4b wires Save through the
-//       WebView bridge and Undo/Redo/Find through postMessage.
+// WHAT: THE editor header (the plugin sets hideHeader, so this is the only
+//       top bar): drawer hamburger + filename + Find/Undo/Redo/Save + cursor.
+// WHY:  PluginHeader + EditorToolbar stacked two bars and wasted 44px; the
+//       file tree lives in the workspace drawer now (drawerContent).
 // HOW:  Accepts an onAction callback so EditorSurface can register the bridge
-//       handler. onToggleTree shows/hides the FileTree on phone-size screens.
+//       handler; onOpenDrawer opens the SessionDrawer (file tree).
 // SEE:  apps/mobile/src/plugins/workspace/editor/components/EditorSurface.tsx,
 //       apps/mobile/src/plugins/workspace/editor/index.tsx
 
@@ -15,7 +14,7 @@ import {
   Undo2,
   Redo2,
   Search,
-  PanelLeft,
+  Menu,
 } from 'lucide-react-native';
 import { useTheme, typography, spacing } from '../../../../theme';
 import type { Colors } from '../../../../theme';
@@ -24,12 +23,11 @@ import type { Colors } from '../../../../theme';
 // Types
 // ----------------------------------------------------------
 
-export type EditorAction = 'save' | 'undo' | 'redo' | 'find' | 'format';
+export type EditorAction = 'save' | 'undo' | 'redo' | 'find';
 
 interface EditorToolbarProps {
-  /** Whether the tree pane is currently pinned (tablet) or toggle-visible (phone) */
-  treeVisible: boolean;
-  onToggleTree: () => void;
+  /** Opens the workspace drawer (which hosts the file tree). */
+  onOpenDrawer?: () => void;
 
   /** Called when a toolbar action is pressed. EditorSurface wires these in 4b. */
   onAction: (action: EditorAction) => void;
@@ -50,7 +48,7 @@ interface EditorToolbarProps {
 
 function createToolbarStyles(colors: Colors) {
   return StyleSheet.create({
-    toolbar: { height: 36, backgroundColor: colors.bg.overlay, flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing[2], gap: spacing[1], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+    toolbar: { height: 44, backgroundColor: colors.bg.overlay, flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing[2], gap: spacing[1], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
     left: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing[2], overflow: 'hidden' },
     right: { flexDirection: 'row', alignItems: 'center', gap: spacing[1] },
     btn: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 6 },
@@ -69,8 +67,7 @@ type ToolbarStyles = ReturnType<typeof createToolbarStyles>;
 // ----------------------------------------------------------
 
 export const EditorToolbar = React.memo(function EditorToolbar({
-  treeVisible,
-  onToggleTree,
+  onOpenDrawer,
   onAction,
   isDirty,
   cursor,
@@ -81,17 +78,15 @@ export const EditorToolbar = React.memo(function EditorToolbar({
 
   return (
     <View style={styles.toolbar}>
-      {/* Left: tree toggle + file name */}
+      {/* Left: drawer hamburger + file name */}
       <View style={styles.left}>
         <Pressable
-          onPress={onToggleTree}
+          onPress={onOpenDrawer}
           hitSlop={8}
-          style={[styles.btn, treeVisible && styles.btnActive]}
+          style={styles.btn}
+          accessibilityLabel="Open drawer"
         >
-          <PanelLeft
-            size={16}
-            color={treeVisible ? colors.accent.primary : colors.fg.muted}
-          />
+          <Menu size={18} color={colors.fg.secondary} />
         </Pressable>
         {fileName ? (
           <Text style={styles.fileName} numberOfLines={1}>

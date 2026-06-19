@@ -56,7 +56,7 @@ function PortsPanel({ session }: WorkspacePluginPanelProps) {
       <Text style={styles.heading}>Listening Ports</Text>
       <FlatList
         data={ports}
-        keyExtractor={(item) => `${item.port}:${item.pid}`}
+        keyExtractor={(item, index) => `${item.port}:${item.pid}:${item.address ?? index}`}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => (
           <View style={styles.row}>

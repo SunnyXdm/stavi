@@ -101,6 +101,11 @@ export class StaviClient {
   }
 
   async connect(config: StaviConnectionConfig): Promise<void> {
+    // wsTokens are per-server-instance: a cached token from a previous address
+    // is garbage at a new one (the server rejects the WS upgrade). Explicit
+    // connect() means "start fresh" — always re-auth.
+    this.wsToken = null;
+    this.wsTokenExpiresAt = null;
     this.config = config;
     this._transport = null;
     this.isIntentionalClose = false;
@@ -256,13 +261,29 @@ export class StaviClient {
   private async _fetchWsToken(config: StaviConnectionConfig): Promise<void> {
     const protocol = config.tls ? 'https' : 'http';
     const url = `${protocol}://${config.host}:${config.port}/api/auth/ws-token`;
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.bearerToken}`,
-        'Content-Type': 'application/json',
-      },
-    });
+    // 8s abort: RN's fetch has NO default timeout — against a blackholed host
+    // (firewall DROP, wrong subnet) it hung for minutes with the UI stuck on
+    // "Connecting…".
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 8000);
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.bearerToken}`,
+          'Content-Type': 'application/json',
+        },
+        signal: abort.signal,
+      });
+    } catch (err) {
+      if (abort.signal.aborted) {
+        throw new Error(`Timed out reaching ${config.host}:${config.port}`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!resp.ok) {
       const body = await resp.text().catch(() => '');
       throw new Error(`Auth failed (${resp.status}): ${body}`);
@@ -292,8 +313,27 @@ export class StaviClient {
       (ws as WebSocket & { binaryType?: string }).binaryType = 'arraybuffer';
       let opened = false;
 
-      // Create a new RPC engine for this connection, sending via the WebSocket
-      const eng = new RpcEngine((msg) => ws.send(msg as string));
+      // Create a new RPC engine for this connection, sending via the WebSocket.
+      // Guard against INVALID_STATE_ERR: if the socket isn't OPEN (closing/closed
+      // race after server flap), drop the send and drain pendings so callers
+      // get a clean rejection instead of an uncaught throw.
+      const eng: RpcEngine = new RpcEngine((msg) => {
+        if (ws.readyState !== WebSocket.OPEN) {
+          console.warn(
+            '[StaviClient] send dropped — socket not OPEN (readyState:',
+            ws.readyState,
+            ')',
+          );
+          try { eng.drainPending('Socket not open'); } catch {}
+          return;
+        }
+        try {
+          ws.send(msg as string);
+        } catch (err) {
+          console.error('[StaviClient] ws.send failed:', err);
+          try { eng.drainPending('Socket send failed'); } catch {}
+        }
+      });
       this.engine = eng;
 
       ws.onopen = () => {

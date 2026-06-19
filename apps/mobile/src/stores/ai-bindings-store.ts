@@ -10,6 +10,8 @@
 // SEE:  apps/mobile/src/plugins/workspace/ai/hooks/useOrchestrationActions.ts
 
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export interface AiBindingKey {
   serverId: string;
@@ -21,12 +23,26 @@ function bindingKey(key: AiBindingKey): string {
   return `${key.serverId}::${key.sessionId}::${key.instanceId}`;
 }
 
+function workspaceKey(serverId: string, sessionId: string): string {
+  return `${serverId}::${sessionId}`;
+}
+
 export interface AiBindingsState {
   /** key = `${serverId}::${sessionId}::${instanceId}` → threadId */
   bindings: Record<string, string>;
 
+  /** key = `${serverId}::${sessionId}` → last-active threadId. Persisted +
+   *  NOT cleared on disconnect, so reopening the AI tab restores your last chat. */
+  lastActive: Record<string, string>;
+
   /** Store a new binding. Overwrites any prior binding for the same key. */
   bind(key: AiBindingKey, threadId: string): void;
+
+  /** Record the last-active thread for a workspace (survives reconnect). */
+  setLastActive(serverId: string, sessionId: string, threadId: string): void;
+
+  /** Get the last-active thread for a workspace, if any. */
+  getLastActive(serverId: string, sessionId: string): string | undefined;
 
   /** Remove a single binding (e.g. on tab close). */
   unbind(key: AiBindingKey): void;
@@ -47,13 +63,21 @@ export interface AiBindingsState {
   getBoundThreadId(key: AiBindingKey): string | undefined;
 }
 
-export const useAiBindingsStore = create<AiBindingsState>((set, get) => ({
+export const useAiBindingsStore = create<AiBindingsState>()(persist((set, get) => ({
   bindings: {},
+  lastActive: {},
 
   bind: (key, threadId) => {
     const k = bindingKey(key);
     set((s) => ({ bindings: { ...s.bindings, [k]: threadId } }));
   },
+
+  setLastActive: (serverId, sessionId, threadId) => {
+    const k = workspaceKey(serverId, sessionId);
+    set((s) => ({ lastActive: { ...s.lastActive, [k]: threadId } }));
+  },
+
+  getLastActive: (serverId, sessionId) => get().lastActive[workspaceKey(serverId, sessionId)],
 
   unbind: (key) => {
     const k = bindingKey(key);
@@ -95,4 +119,10 @@ export const useAiBindingsStore = create<AiBindingsState>((set, get) => ({
   getBoundThreadId: (key) => {
     return get().bindings[bindingKey(key)];
   },
+}), {
+  name: 'stavi-ai-bindings',
+  storage: createJSONStorage(() => AsyncStorage),
+  // Persist only lastActive — live bindings are reconstructed from the server
+  // snapshot each session and must NOT survive a restart (stale threadIds).
+  partialize: (s) => ({ lastActive: s.lastActive }),
 }));

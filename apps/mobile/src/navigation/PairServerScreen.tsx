@@ -10,7 +10,7 @@
 //       apps/cli/src/index.ts (--relay flag that generates the QR)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Camera,
@@ -23,6 +23,8 @@ import type { AppNavigation } from './types';
 import { X, QrCode } from 'lucide-react-native';
 import type { PairingPayload } from '@stavi/shared';
 import { useConnectionStore } from '../stores/connection';
+import { showAlert } from '../components/sheets/AppSheets';
+import { classifyConnectError } from '../utils/connect-errors';
 import { useTheme } from '../theme';
 import { spacing, typography, radii } from '../theme';
 
@@ -216,56 +218,64 @@ export function PairServerScreen() {
       setScanning(false);
       setProcessing(true);
 
+      const retry = () => {
+        processedRef.current = false;
+        setScanning(true);
+        setProcessing(false);
+      };
+
       let payload: PairingPayload;
       try {
         payload = _decodePairingPayload(raw);
       } catch {
-        Alert.alert(
-          'Invalid QR Code',
-          'This QR code is not a valid Stavi pairing code.',
-          [
-            {
-              text: 'Try Again',
-              onPress: () => {
-                processedRef.current = false;
-                setScanning(true);
-                setProcessing(false);
-              },
-            },
-          ],
-        );
+        await showAlert({
+          title: 'Invalid QR Code',
+          message: 'This QR code is not a valid Stavi pairing code.',
+          buttonLabel: 'Try Again',
+        });
+        retry();
         return;
       }
 
       try {
+        // Local-mode QR codes carry empty relay/key/room fields — normalize to
+        // undefined so connectServer takes the direct LAN path.
+        const isRelay = Boolean(payload.relay);
         const conn = await addServer({
-          name: `Remote: ${payload.lanHost ?? payload.relay ?? 'server'}`,
+          name: isRelay
+            ? `Remote: ${payload.lanHost ?? payload.relay}`
+            : payload.lanHost ?? 'server',
           host: payload.lanHost ?? 'relay',
           port: payload.port,
           bearerToken: payload.token,
-          relayUrl: payload.relay,
-          serverPublicKey: payload.serverPublicKey,
-          roomId: payload.roomId,
+          relayUrl: payload.relay || undefined,
+          serverPublicKey: payload.serverPublicKey || undefined,
+          roomId: payload.roomId || undefined,
+          lanHosts: payload.lanHosts?.length ? payload.lanHosts : undefined,
         });
 
-        // Auto-connect after pairing.
-        void connectServer(conn.id).catch(() => {});
-        navigation.goBack();
+        // Connect BEFORE leaving the screen — the old fire-and-forget
+        // `.catch(() => {})` + immediate goBack meant a scan "succeeded"
+        // against a dead server with zero feedback.
+        try {
+          await connectServer(conn.id);
+          navigation.goBack();
+        } catch (connectErr) {
+          const friendly = classifyConnectError(connectErr, { host: conn.host, port: conn.port });
+          await showAlert({
+            title: friendly.title,
+            message: `${friendly.message}\n\nThe server was saved — you can retry from the home screen.`,
+            buttonLabel: 'OK',
+          });
+          navigation.goBack();
+        }
       } catch (err) {
-        Alert.alert(
-          'Pairing Failed',
-          err instanceof Error ? err.message : 'Could not add server.',
-          [
-            {
-              text: 'Try Again',
-              onPress: () => {
-                processedRef.current = false;
-                setScanning(true);
-                setProcessing(false);
-              },
-            },
-          ],
-        );
+        await showAlert({
+          title: 'Pairing Failed',
+          message: err instanceof Error ? err.message : 'Could not add server.',
+          buttonLabel: 'Try Again',
+        });
+        retry();
       }
     },
     [addServer, connectServer, navigation, processing],
@@ -291,11 +301,15 @@ export function PairServerScreen() {
           <QrCode size={48} color={colors.fg.muted} />
           <Text style={styles.permissionTitle}>Camera Access Required</Text>
           <Text style={styles.permissionBody}>
-            Stavi needs camera access to scan the QR code shown by{' '}
-            <Text style={styles.code}>stavi serve --relay</Text>.
+            Stavi needs camera access to scan the QR code printed in the
+            terminal where <Text style={styles.code}>stavi serve</Text> is
+            running.
           </Text>
           <Pressable style={styles.grantButton} onPress={handleGrantPermission}>
             <Text style={styles.grantButtonText}>Grant Camera Access</Text>
+          </Pressable>
+          <Pressable style={styles.cancelLink} onPress={() => Linking.openSettings()}>
+            <Text style={styles.cancelLinkText}>Open app settings</Text>
           </Pressable>
           <Pressable style={styles.cancelLink} onPress={handleClose}>
             <Text style={styles.cancelLinkText}>Cancel</Text>
@@ -308,7 +322,12 @@ export function PairServerScreen() {
   if (!device) {
     return (
       <SafeAreaView style={styles.container}>
-        <Text style={styles.errorText}>No camera found on this device.</Text>
+        <View style={styles.permissionContainer}>
+          <Text style={styles.errorText}>No camera found on this device.</Text>
+          <Pressable style={styles.cancelLink} onPress={handleClose}>
+            <Text style={styles.cancelLinkText}>Go back</Text>
+          </Pressable>
+        </View>
       </SafeAreaView>
     );
   }
@@ -348,7 +367,7 @@ export function PairServerScreen() {
             <Text style={styles.hintText}>Pairing…</Text>
           ) : (
             <Text style={styles.hintText}>
-              Point at the QR shown by <Text style={styles.code}>stavi serve --relay</Text>
+              Point at the QR printed by <Text style={styles.code}>stavi serve</Text>
             </Text>
           )}
         </View>
@@ -373,7 +392,16 @@ function _decodePairingPayload(raw: string): PairingPayload {
     jsonStr = raw;
   }
   const obj = JSON.parse(jsonStr) as Partial<PairingPayload>;
-  if (!obj.serverPublicKey || !obj.roomId || !obj.token) {
+  // Two valid shapes:
+  //  • LOCAL (LAN-direct): token + lanHost + port. relay/roomId/serverPublicKey
+  //    are empty — there's no relay and no Noise handshake to key.
+  //  • PROXIED (relay tunnel): token + relay + roomId + serverPublicKey.
+  // The old check required roomId+serverPublicKey, so it rejected every local
+  // QR ("not a valid Stavi pairing code").
+  const hasToken = !!obj.token;
+  const isLocal = hasToken && !!obj.lanHost && !!obj.port;
+  const isRelay = hasToken && !!obj.relay && !!obj.roomId && !!obj.serverPublicKey;
+  if (!isLocal && !isRelay) {
     throw new Error('Incomplete pairing payload');
   }
   return obj as PairingPayload;

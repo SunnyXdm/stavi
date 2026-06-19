@@ -74,7 +74,19 @@ export class RelayTransport implements Transport {
     const { relayUrl, roomId, bearerToken } = this.config;
     const wsUrl = `${relayUrl}/room/${roomId}?role=mobile&token=${bearerToken}`;
 
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolveRaw, rejectRaw) => {
+      // 15s overall timeout: without it, a room whose server never joins left
+      // the UI stuck at "authenticating…" forever.
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { ws.close(); } catch { /* noop */ }
+        rejectRaw(new Error('RelayTransport: timed out waiting for the server to join the room. Is `stavi serve --relay` running?'));
+      }, 15_000);
+      const resolve = () => { if (!settled) { settled = true; clearTimeout(timer); resolveRaw(); } };
+      const reject = (err: unknown) => { if (!settled) { settled = true; clearTimeout(timer); rejectRaw(err); } };
+
       const ws = new WebSocket(wsUrl);
       (ws as WebSocket & { binaryType?: string }).binaryType = 'arraybuffer';
 
@@ -150,6 +162,10 @@ export class RelayTransport implements Transport {
           try {
             this.noiseSession = completeHandshake(rnPrimitives, handshakeState, frame.payload);
             this.ws = ws;
+            // First encrypted frame MUST be RelayAuth: Noise NK authenticates
+            // the server to us, not us to the server — the CLI verifies this
+            // token before bridging any RPC to the local server.
+            this.send(new TextEncoder().encode(JSON.stringify({ _tag: 'RelayAuth', token: bearerToken })));
             this._emitState('open');
             resolve();
           } catch (err) {
