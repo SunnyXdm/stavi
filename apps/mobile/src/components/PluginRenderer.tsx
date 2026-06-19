@@ -16,9 +16,11 @@ interface PluginRendererProps {
   bottomBarHeight: number;
   sessionId?: string;
   session?: Session;
+  /** Forwarded to panels so hideHeader plugins can open the drawer. */
+  onOpenDrawer?: () => void;
 }
 
-export function PluginRenderer({ bottomBarHeight, sessionId, session }: PluginRendererProps) {
+export function PluginRenderer({ bottomBarHeight, sessionId, session, onOpenDrawer }: PluginRendererProps) {
   const openTabs = usePluginRegistry((s) => s.getOpenTabs(sessionId));
   const activeTabId = usePluginRegistry((s) => s.getActiveTabId(sessionId));
   const definitions = usePluginRegistry((s) => s.definitions);
@@ -51,6 +53,7 @@ export function PluginRenderer({ bottomBarHeight, sessionId, session }: PluginRe
               isActive={isActive}
               bottomBarHeight={bottomBarHeight}
               session={session}
+              onOpenDrawer={onOpenDrawer}
             />
           </ErrorBoundary>
         );
@@ -69,6 +72,7 @@ interface PanelProps {
   isActive: boolean;
   bottomBarHeight: number;
   session?: Session;
+  onOpenDrawer?: () => void;
 }
 
 // Static panel styles — do not reference colors, so they don't need useMemo.
@@ -78,7 +82,7 @@ const panelStyles = StyleSheet.create({
 });
 
 const MemoizedPanel = memo(
-  function Panel({ tab, scope, isActive, bottomBarHeight, session }: PanelProps) {
+  function Panel({ tab, scope, isActive, bottomBarHeight, session, onOpenDrawer }: PanelProps) {
     const Component = getPluginComponent(tab.pluginId);
 
     if (!Component) {
@@ -101,6 +105,7 @@ const MemoizedPanel = memo(
           session={session!}
           bottomBarHeight={bottomBarHeight}
           initialState={tab.initialState}
+          onOpenDrawer={onOpenDrawer}
         />
       </View>
     );

@@ -12,11 +12,8 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  Alert,
   FlatList,
   Modal,
-  Platform,
-  ActionSheetIOS,
   ActivityIndicator,
   Pressable,
   StyleSheet,
@@ -34,6 +31,8 @@ import {
 import { useTheme } from '../theme';
 import { radii, spacing, typography, zIndex } from '../theme';
 import { AnimatedPressable } from './AnimatedPressable';
+import { showActionMenu, showAlert, showConfirm } from './sheets/AppSheets';
+import { classifyConnectError } from '../utils/connect-errors';
 
 // ----------------------------------------------------------
 // Status helpers
@@ -147,26 +146,19 @@ function ServerRow({ conn, status, onConnect, onDisconnect, onForget }: ServerRo
   const isBusy =
     status === 'connecting' || status === 'authenticating' || status === 'reconnecting';
 
-  const openMenu = useCallback(() => {
-    const options = ['Forget Server', 'Cancel'];
-    const handle = (label: string) => {
-      if (label === 'Forget Server') {
-        Alert.alert('Forget server?', `Remove "${conn.name}"?`, [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Forget', style: 'destructive', onPress: onForget },
-        ]);
-      }
-    };
-    if (Platform.OS === 'ios') {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options, destructiveButtonIndex: 0, cancelButtonIndex: 1, title: conn.name },
-        (i) => handle(options[i] ?? ''),
-      );
-    } else {
-      Alert.alert(conn.name, undefined, [
-        { text: 'Forget Server', style: 'destructive', onPress: () => handle('Forget Server') },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
+  const openMenu = useCallback(async () => {
+    const choice = await showActionMenu({
+      title: conn.name,
+      options: [{ key: 'forget', label: 'Forget Server', destructive: true }],
+    });
+    if (choice === 'forget') {
+      const confirmed = await showConfirm({
+        title: 'Forget server?',
+        message: `Remove "${conn.name}"?`,
+        confirmLabel: 'Forget',
+        destructive: true,
+      });
+      if (confirmed) onForget();
     }
   }, [conn.name, onForget]);
 
@@ -342,7 +334,11 @@ export function ServersSheet({ visible, onClose }: ServersSheetProps) {
 
   const handleConnect = useCallback(
     (id: string) => {
-      void connectServer(id).catch(() => {});
+      const conn = useConnectionStore.getState().savedConnections.find((c) => c.id === id);
+      void connectServer(id).catch((err) => {
+        const friendly = classifyConnectError(err, { host: conn?.host, port: conn?.port });
+        void showAlert({ title: friendly.title, message: friendly.message });
+      });
     },
     [connectServer],
   );

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive launcher icon background (deep night, matches the moon mark). -->
+    <color name="ic_launcher_background">#07080E</color>
+    <!-- Cold-start window background — matches JS theme bg.base (light). -->
+    <color name="window_bg">#f2f1ed</color>
+</resources>

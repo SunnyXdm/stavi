@@ -18,15 +18,16 @@ import {
   View,
   Text,
   StyleSheet,
-  Alert,
   ActivityIndicator,
   Pressable,
 } from 'react-native';
 import { FolderTree, SortAsc, Eye, FolderOpen } from 'lucide-react-native';
 import type { WorkspacePluginDefinition, WorkspacePluginPanelProps } from '@stavi/shared';
 import { useConnectionStore } from '../../../stores/connection';
+import { showConfirm } from '../../../components/sheets/AppSheets';
 import { useExplorerStore } from './store';
 import { eventBus } from '../../../services/event-bus';
+import { openFileInEditor } from '../../workspace/editor/open-in-editor';
 import { BreadcrumbBar } from './components/BreadcrumbBar';
 import { ExplorerList } from './components/ExplorerList';
 import { ExplorerToolbar } from './components/ExplorerToolbar';
@@ -108,7 +109,9 @@ function ExplorerPanel({ session, instanceId }: WorkspacePluginPanelProps) {
   const [destPicker, setDestPicker] = useState<{ action: 'move' | 'copy' } | null>(null);
   const [progressText, setProgressText] = useState<string | null>(null);
 
-  const client = useConnectionStore.getState().getClientForServer(serverId);
+  // Reactive selector (was non-reactive .getState() call): batch ops must not
+  // hold a client captured before a reconnect.
+  const client = useConnectionStore((s) => s.connectionsById[serverId]?.client);
 
   // Initialise on mount
   useEffect(() => {
@@ -141,37 +144,31 @@ function ExplorerPanel({ session, instanceId }: WorkspacePluginPanelProps) {
   }, [sessionId, toggleSelection, exitSelectionMode, selection]);
 
   // Batch delete
-  const handleDelete = useCallback(() => {
+  const handleDelete = useCallback(async () => {
     const paths = Array.from(selection);
-    Alert.alert(
-      'Delete items',
-      `Permanently delete ${paths.length} item${paths.length === 1 ? '' : 's'}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            if (!client) return;
-            exitSelectionMode(sessionId);
-            logEvent('explorer.batchOperation', { op: 'delete', count: paths.length, sessionId });
-            setProgressText('Deleting 0 / ' + paths.length);
-            let done = 0;
-            try {
-              await client.subscribeAsync('fs.batchDelete', { paths }, (chunk: unknown) => {
-                const c = chunk as { type: string; index?: number; total?: number };
-                if (c.type === 'progress') {
-                  done = c.index ?? done + 1;
-                  setProgressText(`Deleting ${done} / ${paths.length}`);
-                }
-              });
-            } catch { /* errors already displayed via chunk */ }
-            setProgressText(null);
-            refresh(sessionId, serverId);
-          },
-        },
-      ],
-    );
+    const confirmed = await showConfirm({
+      title: 'Delete items',
+      message: `Permanently delete ${paths.length} item${paths.length === 1 ? '' : 's'}?`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!confirmed) return;
+    if (!client) return;
+    exitSelectionMode(sessionId);
+    logEvent('explorer.batchOperation', { op: 'delete', count: paths.length, sessionId });
+    setProgressText('Deleting 0 / ' + paths.length);
+    let done = 0;
+    try {
+      await client.subscribeAsync('fs.batchDelete', { paths }, (chunk: unknown) => {
+        const c = chunk as { type: string; index?: number; total?: number };
+        if (c.type === 'progress') {
+          done = c.index ?? done + 1;
+          setProgressText(`Deleting ${done} / ${paths.length}`);
+        }
+      });
+    } catch { /* errors already displayed via chunk */ }
+    setProgressText(null);
+    refresh(sessionId, serverId);
   }, [selection, client, sessionId, exitSelectionMode, refresh, serverId]);
 
   // Batch move
@@ -244,11 +241,14 @@ function ExplorerPanel({ session, instanceId }: WorkspacePluginPanelProps) {
     for (const path of selection) {
       const entry = entries.find((e) => e.path === path);
       if (entry?.type === 'file') {
+        // Loads into the editor store + activates the editor tab — the bare
+        // eventBus emit was dropped whenever the editor tab wasn't mounted.
+        openFileInEditor(sessionId, serverId, path);
         eventBus.emit('editor.openFile', { sessionId, path });
       }
     }
     exitSelectionMode(sessionId);
-  }, [selection, entries, sessionId, exitSelectionMode]);
+  }, [selection, entries, sessionId, serverId, exitSelectionMode]);
 
   // Open-in-Terminal: emit event for selected directory (or cwd if multiple)
   const handleOpenInTerminal = useCallback(() => {
@@ -334,6 +334,7 @@ function ExplorerPanel({ session, instanceId }: WorkspacePluginPanelProps) {
       ) : (
         <ExplorerList
           sessionId={sessionId}
+          serverId={serverId}
           entries={entries}
           selection={selection}
           isSelecting={isSelecting}

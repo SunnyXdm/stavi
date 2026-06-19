@@ -6,9 +6,6 @@
 
 import React, { useCallback, useMemo } from 'react';
 import {
-  ActionSheetIOS,
-  Alert,
-  Platform,
   StyleSheet,
   Text,
   View,
@@ -21,6 +18,7 @@ import { useTheme } from '../theme';
 import { radii, spacing, typography } from '../theme';
 import { useHaptics } from '../hooks/useHaptics';
 import { AnimatedPressable } from './AnimatedPressable';
+import { showActionMenu, showConfirm } from './sheets/AppSheets';
 import {
   Code2,
   Braces,
@@ -63,15 +61,19 @@ function displayPath(folder: string): string {
 }
 
 function sessionTitle(session: Session): string {
-  if (session.title && session.title.trim()) return session.title.trim();
+  // '.' means "workspace root" — a dot is meaningless as a title, whether it
+  // was stored at creation time or derived from the folder name here.
+  const stored = session.title?.trim();
+  if (stored && stored !== '.') return stored;
   const folderName = session.folder.split('/').filter(Boolean).pop();
-  return folderName || 'Workspace';
+  if (!folderName || folderName === '.') return 'Workspace';
+  return folderName;
 }
 
 function WorkspaceIcon({ folder, size = 20 }: { folder: string; size?: number }) {
   const { colors } = useTheme();
   const lower = folder.toLowerCase();
-  const color = colors.fg.secondary;
+  const color = colors.accent.primary;
 
   if (/postgres|mysql|mongo|sqlite|db|database|redis/.test(lower))
     return <Database size={size} color={color} strokeWidth={1.8} />;
@@ -107,6 +109,7 @@ export interface WorkspaceCardProps {
 
 export function WorkspaceCard({
   session,
+  serverName,
   serverStatus,
   onArchive,
   onDelete,
@@ -123,9 +126,11 @@ export function WorkspaceCard({
       height: WORKSPACE_CARD_HEIGHT,
       backgroundColor: colors.bg.raised,
       borderRadius: radii.card,
+      borderWidth: 1,
+      borderColor: colors.divider,
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: spacing[4],
+      paddingHorizontal: spacing[3],
       paddingVertical: spacing[3],
       gap: spacing[3],
       overflow: 'hidden',
@@ -137,41 +142,52 @@ export function WorkspaceCard({
       top: 0,
       bottom: 0,
       width: 3,
-      borderTopLeftRadius: radii.card,
-      borderBottomLeftRadius: radii.card,
     },
     iconBox: {
-      width: 48,
-      height: 48,
+      width: 44,
+      height: 44,
       borderRadius: radii.md,
-      backgroundColor: colors.bg.active,
-      borderWidth: 1,
-      borderColor: colors.divider,
+      backgroundColor: colors.accent.subtle,
       alignItems: 'center',
       justifyContent: 'center',
       flexShrink: 0,
     },
-    content: { flex: 1, gap: 3 },
+    content: { flex: 1, gap: 2 },
     titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[2] },
     title: {
-      flex: 1,
+      flexShrink: 1,
       fontSize: typography.fontSize.md,
       fontWeight: typography.fontWeight.semibold,
       color: colors.fg.primary,
       letterSpacing: typography.letterSpacing.tight,
     },
     titleOffline: { color: colors.fg.secondary },
-    activeDot: {
-      width: 7,
-      height: 7,
+    runningPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: colors.semantic.successSubtle,
       borderRadius: radii.full,
-      flexShrink: 0,
+      paddingHorizontal: spacing[2],
+      paddingVertical: 2,
+    },
+    runningDot: {
+      width: 6,
+      height: 6,
+      borderRadius: radii.full,
+      backgroundColor: colors.semantic.success,
+    },
+    runningText: {
+      fontSize: typography.fontSize.xs,
+      fontWeight: typography.fontWeight.medium,
+      color: colors.semantic.success,
     },
     path: {
       fontSize: typography.fontSize.sm,
-      color: colors.fg.secondary,
+      color: colors.fg.tertiary,
       fontFamily: typography.fontFamily.mono,
     },
+    metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[1] },
     meta: {
       fontSize: typography.fontSize.xs,
       color: colors.fg.muted,
@@ -183,35 +199,27 @@ export function WorkspaceCard({
     navigation.navigate('Workspace', { sessionId: session.id });
   }, [navigation, session.id, haptics]);
 
-  const handleLongPress = useCallback(() => {
-    const options = ['Archive', 'Delete', 'Cancel'];
-    const handle = (label: string) => {
-      if (label === 'Archive') onArchive?.(session.id);
-      if (label === 'Delete') {
-        Alert.alert(
-          'Delete workspace?',
-          `"${session.title}" will be permanently deleted.`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Delete', style: 'destructive', onPress: () => onDelete?.(session.id) },
-          ],
-        );
-      }
-    };
-
-    if (Platform.OS === 'ios') {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options, destructiveButtonIndex: 1, cancelButtonIndex: 2, title: session.title },
-        (i) => handle(options[i] ?? ''),
-      );
-    } else {
-      Alert.alert(session.title, undefined, [
-        { text: 'Archive', onPress: () => handle('Archive') },
-        { text: 'Delete', style: 'destructive', onPress: () => handle('Delete') },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
+  const handleLongPress = useCallback(async () => {
+    const title = sessionTitle(session);
+    const choice = await showActionMenu({
+      title,
+      options: [
+        { key: 'archive', label: 'Archive' },
+        { key: 'delete', label: 'Delete', destructive: true },
+      ],
+    });
+    if (choice === 'archive') {
+      onArchive?.(session.id);
+    } else if (choice === 'delete') {
+      const confirmed = await showConfirm({
+        title: 'Delete workspace?',
+        message: `"${title}" will be permanently deleted.`,
+        confirmLabel: 'Delete',
+        destructive: true,
+      });
+      if (confirmed) onDelete?.(session.id);
     }
-  }, [session.id, session.title, onArchive, onDelete]);
+  }, [session, onArchive, onDelete]);
 
   return (
     <AnimatedPressable
@@ -223,7 +231,7 @@ export function WorkspaceCard({
     >
       {/* Left accent border for running sessions */}
       {isRunning && !isOffline && (
-        <View style={[styles.leftBorder, { backgroundColor: colors.semantic.warning }]} />
+        <View style={[styles.leftBorder, { backgroundColor: colors.semantic.success }]} />
       )}
 
       {/* Icon box */}
@@ -238,11 +246,18 @@ export function WorkspaceCard({
             {sessionTitle(session)}
           </Text>
           {isRunning && !isOffline && (
-            <View style={[styles.activeDot, { backgroundColor: colors.semantic.warning }]} />
+            <View style={styles.runningPill}>
+              <View style={styles.runningDot} />
+              <Text style={styles.runningText}>active</Text>
+            </View>
           )}
         </View>
         <Text style={styles.path} numberOfLines={1}>{displayPath(session.folder)}</Text>
-        <Text style={styles.meta} numberOfLines={1}>{relativeTime(session.lastActiveAt)}</Text>
+        <View style={styles.metaRow}>
+          <Text style={styles.meta} numberOfLines={1}>
+            {serverName.replace(/\.local$/, '')} · {isOffline ? 'offline' : relativeTime(session.lastActiveAt)}
+          </Text>
+        </View>
       </View>
     </AnimatedPressable>
   );

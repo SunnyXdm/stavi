@@ -13,7 +13,7 @@ import { defaultKeymap, historyKeymap, history, indentWithTab } from '@codemirro
 import { bracketMatching, foldGutter, indentOnInput, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { closeBrackets, autocompletion } from '@codemirror/autocomplete';
 import { search, searchKeymap } from '@codemirror/search';
-import { staviTheme } from './theme';
+import { themeById } from './theme';
 import { getLanguage } from './languages';
 import {
   setupBridge,
@@ -30,6 +30,8 @@ import {
 let currentPath = '';
 let originalContent = '';
 const languageCompartment = new Compartment();
+// Theme lives in its own compartment so setTheme can swap it at runtime.
+const themeCompartment = new Compartment();
 
 // ----------------------------------------------------------
 // Extensions (static — do not change after creation)
@@ -64,7 +66,7 @@ function buildExtensions(initialPath: string) {
       },
     ]),
     languageCompartment.of(lang ?? []),
-    ...staviTheme,
+    themeCompartment.of(themeById(undefined).extension),
     EditorView.updateListener.of((update) => {
       // Content changes
       if (update.docChanged) {
@@ -131,6 +133,19 @@ window.addEventListener('stavi:loadFile', (event) => {
     selection: { anchor: 0 },
     scrollIntoView: true,
   });
+});
+
+// ----------------------------------------------------------
+// Theme switching (dispatched by bridge.ts on setTheme)
+// ----------------------------------------------------------
+
+window.addEventListener('stavi:setTheme', (event) => {
+  const id = (event as CustomEvent).detail as string;
+  const entry = themeById(id);
+  view.dispatch({ effects: themeCompartment.reconfigure(entry.extension) });
+  // Match the page background to the theme so there's no flash band around
+  // the editor before CodeMirror paints.
+  document.body.style.backgroundColor = entry.light ? '#ffffff' : '#161616';
 });
 
 // ----------------------------------------------------------

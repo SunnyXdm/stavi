@@ -2,9 +2,10 @@
 // components/SpawnForm.tsx — Form to spawn a new managed process
 // ============================================================
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable, TextInput } from 'react-native';
-import { colors, typography, spacing, radii } from '../../../../theme';
+import { useTheme, typography, spacing, radii } from '../../../../theme';
+import type { Colors } from '../../../../theme';
 
 interface SpawnFormProps {
   onSpawn: (command: string, path: string, args: string) => void;
@@ -12,6 +13,8 @@ interface SpawnFormProps {
 }
 
 export function SpawnForm({ onSpawn, onCancel }: SpawnFormProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [command, setCommand] = useState('');
   const [path, setPath] = useState('');
   const [args, setArgs] = useState('');
@@ -81,7 +84,7 @@ export function SpawnForm({ onSpawn, onCancel }: SpawnFormProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Colors) => StyleSheet.create({
   spawnForm: {
     backgroundColor: colors.bg.raised,
     borderBottomWidth: StyleSheet.hairlineWidth,

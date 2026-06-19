@@ -64,7 +64,9 @@ const NAV_ITEMS: NavItem[] = [
   { pluginId: '_tabs',    label: 'Tabs',     icon: LayoutGrid },
 ];
 
-const BAR_HEIGHT = 56;
+// Exported so WorkspaceScreen derives bottomBarHeight from the same constant
+// — the keyboard-padding math (pad = K − bottomBarHeight) breaks if they drift.
+export const BAR_HEIGHT = 60;
 
 // ----------------------------------------------------------
 // Component
@@ -89,11 +91,11 @@ export function PluginBottomBar({ sessionId }: PluginBottomBarProps) {
       alignItems: 'center',
       justifyContent: 'center',
       paddingTop: spacing[2],
-      minHeight: 44,
+      minHeight: 48,
       gap: spacing[1],
     },
     label: {
-      fontSize: typography.fontSize.xs,
+      fontSize: 12, // Material bottom-nav label spec (tokens has 11/13 only)
       fontWeight: typography.fontWeight.medium,
     },
     labelActive: {
@@ -169,7 +171,7 @@ export function PluginBottomBar({ sessionId }: PluginBottomBarProps) {
               accessibilityState={{ selected: isActive }}
             >
               <Icon
-                size={22}
+                size={24}
                 color={isActive ? colors.accent.primary : colors.fg.muted}
               />
               <Text style={[styles.label, isActive ? styles.labelActive : styles.labelInactive]}>

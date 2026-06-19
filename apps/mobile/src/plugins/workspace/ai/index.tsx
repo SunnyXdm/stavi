@@ -13,11 +13,10 @@ import {
   View,
   Text,
   Pressable,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
+import Reanimated from 'react-native-reanimated';
 import { FlashList } from '@shopify/flash-list';
-import { Sparkles, PenLine, X } from 'lucide-react-native';
+import { Sparkles, X } from 'lucide-react-native';
 import type { WorkspacePluginDefinition, WorkspacePluginPanelProps } from '@stavi/shared';
 import { useTheme } from '../../../theme';
 import { EmptyView } from '../../../components/StateViews';
@@ -30,15 +29,18 @@ import {
   useOrchestration,
   type ApprovalRequest,
   type UserInputRequest,
+  type PlanProposal,
 } from './useOrchestration';
 import { MessageBubble } from './MessageBubble';
 import { ApprovalCard } from './ApprovalCard';
+import { PlanCard } from './PlanCard';
 import { UserInputPrompt } from './components/UserInputPrompt';
 import { Composer } from './Composer';
 import { ModelPopover } from './ModelPopover';
 import type { AIMessage } from './types';
 import { ThinkingIndicator } from './components/ThinkingIndicator';
 import { useModelSelection } from './hooks/useModelSelection';
+import { useKeyboardPanelStyle } from '../../../hooks/useKeyboardPanelStyle';
 import { createAiPanelStyles } from './aiPanelStyles';
 
 // ----------------------------------------------------------
@@ -49,6 +51,7 @@ type RenderItem =
   | { type: 'message'; data: AIMessage; key: string }
   | { type: 'approval'; data: ApprovalRequest; key: string }
   | { type: 'user-input'; data: UserInputRequest; key: string }
+  | { type: 'plan'; data: PlanProposal; key: string }
   | { type: 'thinking'; key: string };
 
 // ----------------------------------------------------------
@@ -58,6 +61,8 @@ type RenderItem =
 function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session }: WorkspacePluginPanelProps) {
   const { colors } = useTheme();
   const styles = useMemo(() => createAiPanelStyles(colors), [colors]);
+  // Keeps the composer riding exactly on the keyboard top (see hook docs).
+  const keyboardPad = useKeyboardPanelStyle(bottomBarHeight ?? 0);
   const connectionState = useConnectionStore((s) => s.getStatusForServer(session.serverId));
   const listRef = useRef<any>(null);
   const worktreePath = session.folder;
@@ -67,6 +72,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
     aiMessages,
     approvals,
     userInputs,
+    planProposals,
     activeThreadId,
     loading,
     providers,
@@ -74,12 +80,17 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
     interruptTurn,
     respondToApproval,
     respondToUserInput,
+    dismissPlanProposal,
     setActiveThread,
     createNewChat,
   } = useOrchestration({ instanceId, worktreePath, serverId: session.serverId, sessionId: session.id });
 
-  // Register AI threads with SessionRegistry so WorkspaceSidebarChats can show them
+  // Register AI threads with SessionRegistry so the drawer can show them.
+  // Unregister on unmount — otherwise the drawer shows the PREVIOUS
+  // workspace's chats with stale callbacks after switching sessions.
   const registerSessions = useSessionRegistry((s) => s.register);
+  const unregisterSessions = useSessionRegistry((s) => s.unregister);
+  useEffect(() => () => unregisterSessions('ai'), [unregisterSessions]);
   useEffect(() => {
     registerSessions('ai', {
       sessions: threads.map((t) => ({
@@ -135,6 +146,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
   const activeAIMessages = activeThreadId ? aiMessages.get(activeThreadId) || [] : [];
   const activeApprovals = activeThreadId ? approvals.get(activeThreadId) || [] : [];
   const activeUserInputs = activeThreadId ? userInputs.get(activeThreadId) || [] : [];
+  const activePlanProposal = activeThreadId ? planProposals.get(activeThreadId) ?? null : null;
 
   const isWorking = useMemo(() => {
     const lastMsg = activeAIMessages[activeAIMessages.length - 1];
@@ -156,6 +168,9 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
         items.push({ type: 'user-input', data: req, key: `userinput-${req.requestId}` });
       }
     }
+    if (activePlanProposal?.pending) {
+      items.push({ type: 'plan', data: activePlanProposal, key: `plan-${activePlanProposal.threadId}` });
+    }
     if (isWorking) {
       const lastMsg = activeAIMessages[activeAIMessages.length - 1];
       const hasContent = lastMsg?.parts?.some(
@@ -164,10 +179,19 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
       if (!hasContent) items.push({ type: 'thinking', key: 'thinking' });
     }
     return items;
-  }, [activeAIMessages, activeApprovals, activeUserInputs, isWorking]);
+  }, [activeAIMessages, activeApprovals, activeUserInputs, activePlanProposal, isWorking]);
+
+  // Autoscroll only when the user is already near the bottom (lunel pattern) —
+  // unconditional scrollToEnd fought the user's finger during long streams.
+  const nearBottomRef = useRef(true);
+  const handleListScroll = useCallback((e: any) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    nearBottomRef.current =
+      contentOffset.y + layoutMeasurement.height >= contentSize.height - 120;
+  }, []);
 
   useEffect(() => {
-    if (renderItems.length > 0 && isActive) {
+    if (renderItems.length > 0 && isActive && nearBottomRef.current) {
       setTimeout(() => { listRef.current?.scrollToEnd({ animated: true }); }, 100);
     }
   }, [renderItems.length, isActive]);
@@ -216,6 +240,37 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
     [respondToApproval],
   );
 
+  // Approve the proposed plan: dismiss the card, flip to build mode, and send
+  // the approval as a normal turn (explicit interactionMode override — state
+  // updates are async so handleSend would still carry 'plan').
+  const handlePlanApprove = useCallback((threadId: string) => {
+    dismissPlanProposal(threadId);
+    setInteractionMode('default');
+    const selection = configSelection;
+    if (!selection.provider || !selection.modelId) return;
+    void sendMessage('The plan is approved — proceed with the implementation.', threadId, {
+      modelSelection: {
+        provider: selection.provider,
+        modelId: selection.modelId,
+        thinking: selection.thinking,
+        effort: selection.effort,
+        fastMode: selection.fastMode,
+        contextWindow: selection.contextWindow,
+      },
+      interactionMode: 'default',
+      accessLevel,
+      agentRuntime: selection.provider === 'claude' || selection.provider === 'codex' ? selection.provider : undefined,
+    }).catch((err) => console.error('[AI] Plan approve send error:', err));
+  }, [dismissPlanProposal, setInteractionMode, configSelection, accessLevel, sendMessage]);
+
+  const handlePlanKeepPlanning = useCallback((threadId: string) => {
+    dismissPlanProposal(threadId);
+  }, [dismissPlanProposal]);
+
+  const handleCancelTurn = useCallback((threadId: string) => {
+    void interruptTurn(threadId).catch((err) => console.error('[AI] Cancel turn error:', err));
+  }, [interruptTurn]);
+
   const handleUserInputSubmit = useCallback(
     async (
       threadId: string,
@@ -227,15 +282,31 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
     [respondToUserInput],
   );
 
+  const pendingApprovalIds = useMemo(
+    () => activeApprovals.filter((a) => a.pending).map((a) => a.requestId),
+    [activeApprovals],
+  );
+
   const renderItem = useCallback(({ item }: { item: RenderItem }) => {
     switch (item.type) {
       case 'message': return <MessageBubble message={item.data} />;
-      case 'approval': return <ApprovalCard approval={item.data} onRespond={handleApprovalRespond} />;
+      case 'approval': return (
+        <ApprovalCard
+          approval={item.data}
+          queueIndex={pendingApprovalIds.indexOf(item.data.requestId) + 1}
+          queueTotal={pendingApprovalIds.length}
+          onRespond={handleApprovalRespond}
+          onCancelTurn={handleCancelTurn}
+        />
+      );
       case 'user-input': return <UserInputPrompt request={item.data} onSubmit={handleUserInputSubmit} />;
+      case 'plan': return (
+        <PlanCard proposal={item.data} onApprove={handlePlanApprove} onKeepPlanning={handlePlanKeepPlanning} />
+      );
       case 'thinking': return <ThinkingIndicator />;
       default: return null;
     }
-  }, [handleApprovalRespond, handleUserInputSubmit]);
+  }, [handleApprovalRespond, handleUserInputSubmit, handleCancelTurn, handlePlanApprove, handlePlanKeepPlanning, pendingApprovalIds]);
 
   const keyExtractor = useCallback((item: RenderItem) => item.key, []);
 
@@ -251,28 +322,10 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={bottomBarHeight + 44}
-    >
-      {/* Chat header bar: shows active chat title + New Chat button */}
-      <View style={styles.chatHeader}>
-        <Text style={styles.chatHeaderTitle} numberOfLines={1}>
-          {threads.find((t) => t.threadId === activeThreadId)?.title ?? 'AI Chat'}
-        </Text>
-        <Pressable
-          style={styles.newChatBtn}
-          onPress={() => createNewChat().catch((err) => console.error('[AI] createNewChat error:', err))}
-          accessibilityLabel="New Chat"
-          accessibilityRole="button"
-          hitSlop={8}
-        >
-          <PenLine size={16} color={colors.fg.secondary} />
-          <Text style={styles.newChatBtnLabel}>New Chat</Text>
-        </Pressable>
-      </View>
-
+    <Reanimated.View style={[styles.container, keyboardPad]}>
+      {/* No secondary header (lunel pattern): chats live in the drawer,
+          which already has search + "New Chat". A second bar here duplicated
+          the drawer and cost 44px of conversation space. */}
       {activeAIMessages.length === 0 ? (
         <View style={styles.emptyChat}>
           <Sparkles size={40} color={colors.accent.primary} style={{ opacity: 0.3 }} />
@@ -293,7 +346,11 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
           keyExtractor={keyExtractor}
           contentContainerStyle={styles.messageList}
           showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => { listRef.current?.scrollToEnd({ animated: false }); }}
+          onScroll={handleListScroll}
+          scrollEventThrottle={32}
+          onContentSizeChange={() => {
+            if (nearBottomRef.current) listRef.current?.scrollToEnd({ animated: false });
+          }}
         />
       )}
 
@@ -333,6 +390,10 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
               ?? null
             : null
         }
+        slashCommands={
+          providers.find((p: any) => p.provider === (selectedModel?.provider ?? configSelection.provider))?.slashCommands
+        }
+        onSetMode={setInteractionMode}
       />
 
       <ModelPopover
@@ -352,7 +413,7 @@ function AIPanel({ instanceId, isActive, bottomBarHeight, initialState, session 
         accessLevel={accessLevel}
         onAccessChange={setAccessLevel}
       />
-    </KeyboardAvoidingView>
+    </Reanimated.View>
   );
 }
 
@@ -370,6 +431,7 @@ export const aiPlugin: WorkspacePluginDefinition = {
   component: AIPanel,
   navOrder: 0,
   allowMultipleInstances: true,
+  supportsSessions: true,
   api: aiApi,
   settings: {
     sections: [

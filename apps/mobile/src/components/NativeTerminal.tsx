@@ -41,6 +41,8 @@ export interface NativeTerminalRef {
   resize: (cols: number, rows: number) => void;
   /** Hard-reset the terminal (clear scrollback, reapply colors) */
   reset: () => void;
+  /** Grab IME focus (new-tab / tab-switch) so typing reaches this terminal */
+  focus: () => void;
 }
 
 interface NativeTerminalProps {
@@ -79,6 +81,11 @@ const AndroidTerminal = forwardRef<NativeTerminalRef, NativeTerminalProps>(
         reset: () => {
           if (nativeRef.current) {
             Commands.reset(nativeRef.current);
+          }
+        },
+        focus: () => {
+          if (nativeRef.current) {
+            Commands.focus(nativeRef.current);
           }
         },
       }),
@@ -190,6 +197,7 @@ function handleMessage(event) {
     if (msg.type === 'write') term.write(msg.data);
     else if (msg.type === 'reset') term.reset();
     else if (msg.type === 'fit') fitAddon.fit();
+    else if (msg.type === 'focus') term.focus();
   } catch(e) {}
 }
 </script>
@@ -223,6 +231,9 @@ const IOSXtermTerminal = forwardRef<NativeTerminalRef, NativeTerminalProps>(
         },
         reset: () => {
           webviewRef.current?.postMessage(JSON.stringify({ type: 'reset' }));
+        },
+        focus: () => {
+          webviewRef.current?.postMessage(JSON.stringify({ type: 'focus' }));
         },
       }),
       [],

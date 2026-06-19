@@ -12,7 +12,6 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import {
   File,
@@ -25,6 +24,7 @@ import {
   EyeOff,
 } from 'lucide-react-native';
 import { useTheme, typography, spacing } from '../../../../theme';
+import { showAlert, showConfirm } from '../../../../components/sheets/AppSheets';
 import { useEditorStore } from '../store';
 import { useConnectionStore } from '../../../../stores/connection';
 import { eventBus } from '../../../../services/event-bus';
@@ -122,8 +122,14 @@ export const FileTree = React.memo(function FileTree({ session }: FileTreeProps)
     [getClient, showHidden],
   );
 
-  // Load root folder on mount
-  useEffect(() => { void loadDir(folder); }, [folder, loadDir]);
+  // Load root folder on mount AND whenever the connection comes up:
+  // mounted-while-disconnected previously left a permanently empty tree
+  // (loadDir bails silently with no client and nothing ever retried).
+  const connectionState = useConnectionStore((s) => s.getStatusForServer(serverId));
+  useEffect(() => {
+    if (connectionState !== 'connected') return;
+    void loadDir(folder, true);
+  }, [folder, loadDir, connectionState]);
 
   // Reload all cached dirs when showHidden changes
   useEffect(() => {
@@ -184,33 +190,27 @@ export const FileTree = React.memo(function FileTree({ session }: FileTreeProps)
   );
 
   const handleDeleteEntry = useCallback(
-    (entry: TreeEntry) => {
-      Alert.alert(
-        'Delete',
-        `Delete "${entry.name}"?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                const client = getClient();
-                if (!client) return;
-                await client.request('fs.delete', {
-                  path: entry.path,
-                  recursive: entry.type === 'directory',
-                });
-                const parentDir = entry.path.split('/').slice(0, -1).join('/');
-                entriesCache.current.delete(parentDir);
-                void loadDir(parentDir, true);
-              } catch (err) {
-                Alert.alert('Delete failed', err instanceof Error ? err.message : 'Unknown error');
-              }
-            },
-          },
-        ],
-      );
+    async (entry: TreeEntry) => {
+      const confirmed = await showConfirm({
+        title: 'Delete',
+        message: `Delete "${entry.name}"?`,
+        confirmLabel: 'Delete',
+        destructive: true,
+      });
+      if (!confirmed) return;
+      try {
+        const client = getClient();
+        if (!client) return;
+        await client.request('fs.delete', {
+          path: entry.path,
+          recursive: entry.type === 'directory',
+        });
+        const parentDir = entry.path.split('/').slice(0, -1).join('/');
+        entriesCache.current.delete(parentDir);
+        void loadDir(parentDir, true);
+      } catch (err) {
+        void showAlert({ title: 'Delete failed', message: err instanceof Error ? err.message : 'Unknown error' });
+      }
     },
     [getClient, loadDir],
   );
@@ -230,7 +230,7 @@ export const FileTree = React.memo(function FileTree({ session }: FileTreeProps)
         entriesCache.current.delete(parentDir);
         void loadDir(parentDir, true);
       } catch (err) {
-        Alert.alert('Rename failed', err instanceof Error ? err.message : 'Unknown error');
+        void showAlert({ title: 'Rename failed', message: err instanceof Error ? err.message : 'Unknown error' });
       }
     },
     [renameDialog.entry, getClient, loadDir],
@@ -250,7 +250,7 @@ export const FileTree = React.memo(function FileTree({ session }: FileTreeProps)
         entriesCache.current.delete(parentPath);
         void loadDir(parentPath, true);
       } catch (err) {
-        Alert.alert('Create failed', err instanceof Error ? err.message : 'Unknown error');
+        void showAlert({ title: 'Create failed', message: err instanceof Error ? err.message : 'Unknown error' });
       }
     },
     [newDialog, getClient, loadDir],

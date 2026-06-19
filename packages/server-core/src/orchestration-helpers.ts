@@ -20,6 +20,7 @@ export function createOrchestrationHelpers(
   workspaceRoot: string,
   defaultThreadTemplate: OrchestrationThread,
   getGitStatus: (cwd: string) => Promise<import('./types').GitStatusPayload>,
+  pendingApprovals?: Map<string, Array<Record<string, unknown>>>,
 ): {
   buildThreadFromCommand: (
     threadId: string,
@@ -95,7 +96,9 @@ export function createOrchestrationHelpers(
         branch: git.branch,
         messages: threadMessages,
         conversation: { messages: threadMessages },
-        session: { pendingApprovals: [] },
+        // Open approval requests for this thread — lets a reconnecting
+        // client re-render pending cards instead of deadlocking the turn.
+        session: { pendingApprovals: pendingApprovals?.get(thread.threadId) ?? [] },
       };
     });
     return {

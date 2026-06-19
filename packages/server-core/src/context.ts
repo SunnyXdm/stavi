@@ -75,6 +75,18 @@ export interface ServerContext {
 
   // Provider/AI
   activeTurnAdapters: Map<string, string>; // threadId → providerKind
+  /** Open tool-approval requests by threadId — included in snapshots so a
+   *  reconnecting/reloaded client re-renders pending cards instead of
+   *  deadlocking the turn. Cleared on resolution/interrupt/turn end. */
+  pendingApprovals: Map<string, Array<{
+    requestId: string;
+    threadId: string;
+    turnId?: string;
+    toolName: string;
+    toolInput: unknown;
+    provider: string;
+    requestedAt: string;
+  }>>;
   providerRegistry: ProviderRegistry;
 
   // Orchestration defaults
@@ -146,6 +158,15 @@ export function createServerContext(
   const managedProcesses = new Map<string, ManagedProcess>();
   const terminalSessions = new Map<string, TerminalSession>();
   const activeTurnAdapters = new Map<string, string>();
+  const pendingApprovals = new Map<string, Array<{
+    requestId: string;
+    threadId: string;
+    turnId?: string;
+    toolName: string;
+    toolInput: unknown;
+    provider: string;
+    requestedAt: string;
+  }>>();
 
   const state = {
     sequence: 0,
@@ -200,6 +221,7 @@ export function createServerContext(
     workspaceRoot,
     defaultThreadTemplate,
     getGitStatus,
+    pendingApprovals,
   );
 
   // -- Terminal creation --
@@ -220,6 +242,7 @@ export function createServerContext(
     terminalSessions,
     ...subs.maps,
     activeTurnAdapters,
+    pendingApprovals,
     providerRegistry,
     defaultThreadTemplate,
     broadcastGitStatus: subs.broadcastGitStatus,

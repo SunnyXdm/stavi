@@ -146,14 +146,18 @@ export const lightColors = {
 
 export const typography = {
   fontFamily: {
-    sans:         'Inter',
+    // Android resolves custom fonts strictly by ASSET FILENAME — bare 'Inter'
+    // and 'JetBrainsMono' never matched a file, silently rendering Roboto for
+    // every "Inter"/"JetBrainsMono" surface. Always use the Name-Weight form
+    // (matches the filename on Android, the PostScript name on iOS).
+    sans:         'Inter-Regular',
     sansMedium:   'Inter-Medium',
     sansSemiBold: 'Inter-SemiBold',
     sansBold:     'Inter-Bold',
-    // Berkeley Mono unavailable as TTF; JetBrains Mono is the monospace.
-    mono:         'JetBrainsMono',
-    monoMedium:   'JetBrainsMono-Medium',
-    monoBold:     'JetBrainsMono-Bold',
+    // Fira Code — ligatures (=>, !==, ->) shape automatically on Android.
+    mono:         'FiraCode-Regular',
+    monoMedium:   'FiraCode-Medium',
+    monoBold:     'FiraCode-Bold',
     monoFallback: 'monospace',
   },
   // DESIGN.md §3 — Typography hierarchy

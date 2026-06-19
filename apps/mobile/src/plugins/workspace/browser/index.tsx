@@ -1,44 +1,35 @@
 // ============================================================
 // Core Plugin: Browser
 // ============================================================
-// WebView-based in-app browser. Useful for previewing local
-// dev servers, documentation, and web apps served by the
-// connected Stavi server.
+// WebView-based in-app browser with multiple tabs. Useful for
+// previewing local dev servers, documentation, and web apps
+// served by the connected Stavi server.
 //
 // Features:
+//   - Multiple tabs (tab strip with new/close, per-tab history)
 //   - URL bar with search/navigation
 //   - Back / Forward / Refresh controls
 //   - Progress indicator
-//   - Local dev server detection (server IP prefix)
+//   - Local dev server detection (server IP prefix) + /proxy rewrite
 
-import React, { useRef, useState, useCallback, useMemo } from 'react';
+import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   TextInput,
   StyleSheet,
   Pressable,
   Text,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { Globe, ArrowLeft, ArrowRight, RotateCw, X, AlertTriangle } from 'lucide-react-native';
 import { WebView, type WebViewNavigation } from 'react-native-webview';
 import type {
   WorkspacePluginDefinition,
   WorkspacePluginPanelProps,
-  PluginAPI,
 } from '@stavi/shared';
 import { useTheme, typography, spacing, radii } from '../../../theme';
 import { ErrorView } from '../../../components/StateViews';
 import { useConnectionStore } from '../../../stores/connection';
-
-// ----------------------------------------------------------
-// Types
-// ----------------------------------------------------------
-
-interface BrowserPluginAPI extends PluginAPI {
-  navigate: (url: string) => void;
-}
+import { useSessionRegistry } from '../../../stores/session-registry';
 
 // ----------------------------------------------------------
 // Helpers
@@ -47,7 +38,6 @@ interface BrowserPluginAPI extends PluginAPI {
 const DEFAULT_URL = 'https://google.com';
 
 // Matches localhost / 127.0.0.1 URLs with or without scheme.
-// Used to decide whether to rewrite through the server's /proxy endpoint.
 const LOCALHOST_RE = /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i;
 
 function isLocalhostUrl(input: string): boolean {
@@ -57,13 +47,10 @@ function isLocalhostUrl(input: string): boolean {
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return DEFAULT_URL;
-  // Already has a protocol
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  // Looks like a hostname or IP (contains a dot or colon for port)
   if (/^[\w.-]+(:\d+)?(\/.*)?$/.test(trimmed) && !trimmed.includes(' ')) {
     return `http://${trimmed}`;
   }
-  // Treat as a search query
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
 }
 
@@ -71,16 +58,49 @@ function displayUrl(url: string): string {
   return url.replace(/^https?:\/\//, '');
 }
 
+/** Short label for a tab: page title, else hostname, else "New Tab". */
+function tabTitle(tab: BrowserTab): string {
+  if (tab.title) return tab.title;
+  try {
+    const host = new URL(tab.url).hostname;
+    if (host) return host.replace(/^www\./, '');
+  } catch { /* not a parseable URL yet */ }
+  return 'New Tab';
+}
+
+let tabSeq = 0;
+function nextTabId(): string {
+  tabSeq += 1;
+  return `tab-${tabSeq}`;
+}
+
+// ----------------------------------------------------------
+// Types
+// ----------------------------------------------------------
+
+interface BrowserTab {
+  id: string;
+  /** The URL actually loaded in the WebView (may be a /proxy-wrapped URL). */
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  loading: boolean;
+  progress: number;
+  error: string | null;
+}
+
+function makeTab(url: string = DEFAULT_URL): BrowserTab {
+  return { id: nextTabId(), url, title: '', canGoBack: false, canGoForward: false, loading: false, progress: 0, error: null };
+}
+
 // ----------------------------------------------------------
 // Panel Component
 // ----------------------------------------------------------
 
-function BrowserPanel({ instanceId, isActive, bottomBarHeight, session }: WorkspacePluginPanelProps) {
+function BrowserPanel({ session }: WorkspacePluginPanelProps) {
   const { colors } = useTheme();
 
-  // Resolve the connection for this workspace's server. Used to build the
-  // /proxy URL for localhost rewrites and to detect relay-mode connections
-  // (where direct HTTP to the server isn't reachable).
   const savedConnection = useConnectionStore((s) =>
     s.savedConnections.find((c) => c.id === session.serverId),
   );
@@ -102,6 +122,7 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight, session }: Worksp
     },
     [serverBaseUrl, savedConnection],
   );
+
   const styles = useMemo(() => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg.base },
     toolbar: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.bg.raised, paddingHorizontal: spacing[2], paddingVertical: spacing[2], gap: spacing[1], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
@@ -111,60 +132,81 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight, session }: Worksp
     urlInput: { flex: 1, fontSize: typography.fontSize.sm, color: colors.fg.primary, fontFamily: typography.fontFamily.sans, height: 32, paddingVertical: 0 },
     progressTrack: { height: 2, backgroundColor: colors.bg.overlay },
     progressBar: { height: 2, backgroundColor: colors.accent.primary },
+    webArea: { flex: 1, position: 'relative' },
+    webViewWrap: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
     webView: { flex: 1, backgroundColor: colors.bg.base },
     relayBanner: { backgroundColor: colors.bg.overlay, paddingHorizontal: spacing[3], paddingVertical: spacing[2], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
     relayBannerText: { color: colors.fg.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.sans },
   }), [colors]);
 
-  const webViewRef = useRef<WebView>(null);
-  const [currentUrl, setCurrentUrl] = useState(DEFAULT_URL);
+  const webViewRefs = useRef<Map<string, WebView | null>>(new Map());
+  const [tabs, setTabs] = useState<BrowserTab[]>(() => [makeTab()]);
+  const [activeTabId, setActiveTabId] = useState<string>(() => tabs[0].id);
   const [urlInput, setUrlInput] = useState('');
   const [isEditingUrl, setIsEditingUrl] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [canGoBack, setCanGoBack] = useState(false);
-  const [canGoForward, setCanGoForward] = useState(false);
-  const [webViewError, setWebViewError] = useState<string | null>(null);
   const urlInputRef = useRef<TextInput>(null);
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+
+  const updateTab = useCallback((id: string, partial: Partial<BrowserTab>) => {
+    setTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...partial } : t)));
+  }, []);
+
+  const handleNewTab = useCallback(() => {
+    const tab = makeTab();
+    setTabs((prev) => [...prev, tab]);
+    setActiveTabId(tab.id);
+    setIsEditingUrl(false);
+  }, []);
+
+  const handleCloseTab = useCallback((id: string) => {
+    setTabs((prev) => {
+      if (prev.length === 1) {
+        // Never drop to zero tabs — reset the last one to a fresh tab.
+        const fresh = makeTab();
+        webViewRefs.current.delete(id);
+        setActiveTabId(fresh.id);
+        return [fresh];
+      }
+      const idx = prev.findIndex((t) => t.id === id);
+      const next = prev.filter((t) => t.id !== id);
+      webViewRefs.current.delete(id);
+      // If we closed the active tab, activate the neighbor.
+      setActiveTabId((cur) => (cur === id ? (next[idx] ?? next[idx - 1] ?? next[0]).id : cur));
+      return next;
+    });
+  }, []);
 
   const handleNavigate = useCallback((input: string) => {
     const trimmed = input.trim();
-    // Block localhost navigation in relay mode — the proxy isn't reachable
-    // over the WS tunnel in v1.
     if (isRelay && isLocalhostUrl(trimmed)) {
-      setWebViewError('Localhost proxy is not yet supported over relay connections.');
+      updateTab(activeTabId, { error: 'Localhost proxy is not yet supported over relay connections.' });
       setIsEditingUrl(false);
       return;
     }
     const normalized = normalizeUrl(trimmed);
-    // Rewrite localhost URLs through the server's /proxy endpoint so they
-    // resolve against the server machine's loopback rather than the phone's.
     const final = isLocalhostUrl(trimmed) ? rewriteForProxy(normalized) : normalized;
-    setCurrentUrl(final);
+    updateTab(activeTabId, { url: final, error: null });
     setIsEditingUrl(false);
-    setWebViewError(null);
-  }, [isRelay, rewriteForProxy]);
+  }, [isRelay, rewriteForProxy, activeTabId, updateTab]);
 
-  const handleUrlSubmit = useCallback(() => {
-    handleNavigate(urlInput);
-  }, [urlInput, handleNavigate]);
+  const handleUrlSubmit = useCallback(() => handleNavigate(urlInput), [urlInput, handleNavigate]);
+
+  // Strip a /proxy wrapper back to the original target for display.
+  const unwrap = useCallback((url: string): string => {
+    if (serverBaseUrl && url.startsWith(`${serverBaseUrl}/proxy?`)) {
+      try {
+        const orig = new URL(url).searchParams.get('url');
+        if (orig) return orig;
+      } catch { /* noop */ }
+    }
+    return url;
+  }, [serverBaseUrl]);
 
   const handleUrlFocus = useCallback(() => {
     setIsEditingUrl(true);
-    // Prefer the unwrapped target if we're on a proxied URL.
-    let toShow = currentUrl;
-    if (serverBaseUrl && currentUrl.startsWith(`${serverBaseUrl}/proxy?`)) {
-      try {
-        const orig = new URL(currentUrl).searchParams.get('url');
-        if (orig) toShow = orig;
-      } catch { /* noop */ }
-    }
-    setUrlInput(displayUrl(toShow));
-  }, [currentUrl, serverBaseUrl]);
-
-  const handleUrlBlur = useCallback(() => {
-    setIsEditingUrl(false);
-  }, []);
+    setUrlInput(displayUrl(unwrap(activeTab.url)));
+  }, [activeTab.url, unwrap]);
 
   const handleCancelEdit = useCallback(() => {
     setIsEditingUrl(false);
@@ -172,47 +214,46 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight, session }: Worksp
     urlInputRef.current?.blur();
   }, []);
 
-  const handleNavStateChange = useCallback((navState: WebViewNavigation) => {
-    setCanGoBack(navState.canGoBack);
-    setCanGoForward(navState.canGoForward);
-    if (!isEditingUrl) {
-      setCurrentUrl(navState.url);
-    }
-  }, [isEditingUrl]);
-
-  const handleBack = useCallback(() => {
-    webViewRef.current?.goBack();
+  const makeNavHandler = useCallback((id: string) => (navState: WebViewNavigation) => {
+    setTabs((prev) => prev.map((t) =>
+      t.id === id
+        ? { ...t, canGoBack: navState.canGoBack, canGoForward: navState.canGoForward, title: navState.title || t.title, url: navState.url }
+        : t,
+    ));
   }, []);
 
-  const handleForward = useCallback(() => {
-    webViewRef.current?.goForward();
-  }, []);
+  const handleBack = useCallback(() => webViewRefs.current.get(activeTabId)?.goBack(), [activeTabId]);
+  const handleForward = useCallback(() => webViewRefs.current.get(activeTabId)?.goForward(), [activeTabId]);
+  const handleRefresh = useCallback(() => webViewRefs.current.get(activeTabId)?.reload(), [activeTabId]);
 
-  const handleRefresh = useCallback(() => {
-    webViewRef.current?.reload();
-  }, []);
+  const displayedUrl = isEditingUrl ? urlInput : displayUrl(unwrap(activeTab.url));
 
-  // If currentUrl is pointing at our /proxy endpoint, show the original
-  // target URL in the address bar instead of the wrapped proxy URL.
-  const visibleUrl = useMemo(() => {
-    if (!serverBaseUrl) return currentUrl;
-    if (currentUrl.startsWith(`${serverBaseUrl}/proxy?`)) {
-      try {
-        const u = new URL(currentUrl);
-        const orig = u.searchParams.get('url');
-        if (orig) return orig;
-      } catch { /* noop */ }
-    }
-    return currentUrl;
-  }, [currentUrl, serverBaseUrl]);
-
-  const displayedUrl = isEditingUrl ? urlInput : displayUrl(visibleUrl);
+  // Tabs live in the workspace sidebar (SessionDrawer), like terminal
+  // sessions and AI chats — no in-panel tab strip.
+  const registerSessions = useSessionRegistry((s) => s.register);
+  const unregisterSessions = useSessionRegistry((s) => s.unregister);
+  useEffect(() => () => unregisterSessions('browser'), [unregisterSessions]);
+  useEffect(() => {
+    registerSessions('browser', {
+      sessions: tabs.map((t) => ({
+        id: t.id,
+        title: tabTitle(t),
+        subtitle: displayUrl(unwrap(t.url)),
+        isActive: t.id === activeTabId,
+      })),
+      activeSessionId: activeTabId,
+      onSelectSession: (id: string) => {
+        setActiveTabId(id);
+        setIsEditingUrl(false);
+      },
+      onCreateSession: handleNewTab,
+      onCloseSession: handleCloseTab,
+      createLabel: 'New Tab',
+    });
+  }, [tabs, activeTabId, registerSessions, handleNewTab, handleCloseTab, unwrap]);
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <View style={styles.container}>
       {isRelay && (
         <View style={styles.relayBanner}>
           <Text style={styles.relayBannerText}>
@@ -220,29 +261,27 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight, session }: Worksp
           </Text>
         </View>
       )}
+
       {/* URL Bar */}
       <View style={styles.toolbar}>
-        {/* Back */}
         <Pressable
-          style={[styles.navButton, !canGoBack && styles.navButtonDisabled]}
+          style={[styles.navButton, !activeTab.canGoBack && styles.navButtonDisabled]}
           onPress={handleBack}
-          disabled={!canGoBack}
+          disabled={!activeTab.canGoBack}
           hitSlop={8}
         >
-          <ArrowLeft size={18} color={canGoBack ? colors.fg.secondary : colors.fg.muted} />
+          <ArrowLeft size={18} color={activeTab.canGoBack ? colors.fg.secondary : colors.fg.muted} />
         </Pressable>
 
-        {/* Forward */}
         <Pressable
-          style={[styles.navButton, !canGoForward && styles.navButtonDisabled]}
+          style={[styles.navButton, !activeTab.canGoForward && styles.navButtonDisabled]}
           onPress={handleForward}
-          disabled={!canGoForward}
+          disabled={!activeTab.canGoForward}
           hitSlop={8}
         >
-          <ArrowRight size={18} color={canGoForward ? colors.fg.secondary : colors.fg.muted} />
+          <ArrowRight size={18} color={activeTab.canGoForward ? colors.fg.secondary : colors.fg.muted} />
         </Pressable>
 
-        {/* URL input */}
         <View style={styles.urlBar}>
           {!isEditingUrl && (
             <Globe size={12} color={colors.fg.muted} style={{ marginRight: 4 }} />
@@ -253,7 +292,7 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight, session }: Worksp
             value={displayedUrl}
             onChangeText={setUrlInput}
             onFocus={handleUrlFocus}
-            onBlur={handleUrlBlur}
+            onBlur={() => setIsEditingUrl(false)}
             onSubmitEditing={handleUrlSubmit}
             returnKeyType="go"
             autoCapitalize="none"
@@ -270,9 +309,8 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight, session }: Worksp
           )}
         </View>
 
-        {/* Refresh / Stop */}
         <Pressable style={styles.navButton} onPress={handleRefresh} hitSlop={8}>
-          {loading ? (
+          {activeTab.loading ? (
             <X size={18} color={colors.fg.secondary} />
           ) : (
             <RotateCw size={18} color={colors.fg.secondary} />
@@ -281,62 +319,59 @@ function BrowserPanel({ instanceId, isActive, bottomBarHeight, session }: Worksp
       </View>
 
       {/* Progress bar */}
-      {loading && (
+      {activeTab.loading && (
         <View style={styles.progressTrack}>
-          <View style={[styles.progressBar, { width: `${progress * 100}%` }]} />
+          <View style={[styles.progressBar, { width: `${activeTab.progress * 100}%` }]} />
         </View>
       )}
 
-      {/* WebView */}
-      {webViewError ? (
-        <ErrorView
-          icon={AlertTriangle}
-          title="Page failed to load"
-          message={webViewError}
-          onRetry={() => {
-            setWebViewError(null);
-            webViewRef.current?.reload();
-          }}
-        />
-      ) : (
-        <WebView
-          ref={webViewRef}
-          style={styles.webView}
-          source={{ uri: currentUrl }}
-          onNavigationStateChange={handleNavStateChange}
-          onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
-          onLoadProgress={({ nativeEvent }) => setProgress(nativeEvent.progress)}
-          onError={(syntheticEvent) => {
-            const { nativeEvent } = syntheticEvent;
-            console.warn('[Browser] WebView error:', nativeEvent);
-            setLoading(false);
-            setWebViewError(nativeEvent.description || 'An unknown error occurred');
-          }}
-          // Allow mixed content for local dev servers (http)
-          mixedContentMode="compatibility"
-          // Allow file access for local server previews
-          allowsInlineMediaPlayback
-          mediaPlaybackRequiresUserAction={false}
-          // User agent — keep default so sites render correctly
-          applicationNameForUserAgent="StaviBrowser/1.0"
-        />
-      )}
-    </KeyboardAvoidingView>
+      {/* WebViews — all tabs stay mounted (display-swapped) so each keeps its
+          own history and scroll position; only the active one is visible. */}
+      <View style={styles.webArea}>
+        {tabs.map((tab) => {
+          const isActive = tab.id === activeTabId;
+          return (
+            <View
+              key={tab.id}
+              style={[styles.webViewWrap, { opacity: isActive ? 1 : 0 }]}
+              pointerEvents={isActive ? 'auto' : 'none'}
+            >
+              {tab.error ? (
+                <ErrorView
+                  icon={AlertTriangle}
+                  title="Page failed to load"
+                  message={tab.error}
+                  onRetry={() => {
+                    updateTab(tab.id, { error: null });
+                    webViewRefs.current.get(tab.id)?.reload();
+                  }}
+                />
+              ) : (
+                <WebView
+                  ref={(r) => { webViewRefs.current.set(tab.id, r); }}
+                  style={styles.webView}
+                  source={{ uri: tab.url }}
+                  onNavigationStateChange={makeNavHandler(tab.id)}
+                  onLoadStart={() => updateTab(tab.id, { loading: true })}
+                  onLoadEnd={() => updateTab(tab.id, { loading: false })}
+                  onLoadProgress={({ nativeEvent }) => updateTab(tab.id, { progress: nativeEvent.progress })}
+                  onError={(syntheticEvent) => {
+                    const { nativeEvent } = syntheticEvent;
+                    console.warn('[Browser] WebView error:', nativeEvent);
+                    updateTab(tab.id, { loading: false, error: nativeEvent.description || 'An unknown error occurred' });
+                  }}
+                  mixedContentMode="compatibility"
+                  allowsInlineMediaPlayback
+                  mediaPlaybackRequiresUserAction={false}
+                  applicationNameForUserAgent="StaviBrowser/1.0"
+                />
+              )}
+            </View>
+          );
+        })}
+      </View>
+    </View>
   );
-}
-
-// ----------------------------------------------------------
-// Plugin API
-// ----------------------------------------------------------
-
-function browserApi(): BrowserPluginAPI {
-  return {
-    navigate: (_url: string) => {
-      // GPI: navigate the active browser panel
-      // Wire up via module-level state or event bus when needed
-    },
-  };
 }
 
 // ----------------------------------------------------------
@@ -346,7 +381,7 @@ function browserApi(): BrowserPluginAPI {
 export const browserPlugin: WorkspacePluginDefinition = {
   id: 'browser',
   name: 'Browser',
-  description: 'In-app WebView browser for previewing local dev servers',
+  description: 'In-app WebView browser with tabs for previewing local dev servers',
   scope: 'workspace',
   kind: 'core',
   icon: Globe,
@@ -354,7 +389,8 @@ export const browserPlugin: WorkspacePluginDefinition = {
   navOrder: 4,
   navLabel: 'Browser',
   allowMultipleInstances: false,
-  api: browserApi,
+  // Tabs are listed in the SessionDrawer (select / close / "New Tab").
+  supportsSessions: true,
 };
 
 // Styles computed dynamically via useMemo — see component body.

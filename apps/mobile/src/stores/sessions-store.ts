@@ -75,6 +75,15 @@ export const useSessionsStore = create<SessionsStoreState & SessionsStoreActions
         .map((s) => ({ ...s, serverId }))
         .sort((a, b) => b.lastActiveAt - a.lastActiveAt);
       set((state) => {
+        const cached = state.sessionsByServer[serverId] ?? [];
+        // Don't clobber a populated cache with an empty list. Right after a
+        // server restart session.list can briefly return [] before SQLite is
+        // fully read; replacing would blank the home. Genuine deletions arrive
+        // as individual 'deleted' subscription events, never an empty list — so
+        // keeping the cache here is safe.
+        if (normalized.length === 0 && cached.length > 0) {
+          return { isLoadingByServer: { ...state.isLoadingByServer, [serverId]: false } };
+        }
         const nextByServer = { ...state.sessionsByServer, [serverId]: normalized };
         const nextById = { ...state.sessionsById };
         for (const s of normalized) nextById[s.id] = s;

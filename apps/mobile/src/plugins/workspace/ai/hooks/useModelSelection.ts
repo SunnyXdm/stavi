@@ -5,7 +5,7 @@
 // Owns: configSelection, interactionMode, accessLevel, popover state,
 // syncSelectionToModel, and effects that sync from active thread.
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type { Thread } from '../useOrchestration';
 import type { ConfigSelection, ProviderInfo } from '../ConfigSheet';
 import type { InteractionMode, AccessLevel, ModelChipInfo } from '../Composer';
@@ -36,6 +36,19 @@ export function useModelSelection(
   });
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('default');
   const [accessLevel, setAccessLevel] = useState<AccessLevel>('supervised');
+
+  // Rehydrate the access chip from the active thread's persisted runtimeMode —
+  // a bare useState reset to 'supervised' on every remount, silently dropping
+  // the user's choice (and desyncing from what the server actually enforces).
+  const threadRuntimeMode = activeThread?.runtimeMode;
+  useEffect(() => {
+    if (!threadRuntimeMode) return;
+    const mapped: AccessLevel =
+      threadRuntimeMode === 'full-access' ? 'full-access'
+        : threadRuntimeMode === 'auto-accept-edits' ? 'auto-accept'
+          : 'supervised';
+    setAccessLevel(mapped);
+  }, [threadRuntimeMode]);
 
   const syncSelectionToModel = useCallback(
     (base: ConfigSelection, model: ProviderInfo['models'][number]): ConfigSelection => ({
@@ -81,35 +94,53 @@ export function useModelSelection(
   }), [configSelection]);
 
   // Sync local composer controls from the active thread's persisted selection.
+  //
+  // CRITICAL: this must run only when the THREAD (or its stored selection)
+  // changes — never in response to local configSelection edits. The old
+  // version had configSelection.modelId in its deps, so picking a new model
+  // re-ran the effect and instantly reverted the pick to the thread's stored
+  // model — "can't change models after choosing once". t3code's rule:
+  // the user's unsaved draft pick MUST win until the next send persists it.
+  const threadSel = activeThread?.modelSelection;
+  const threadSelKey = activeThread
+    ? [
+        activeThread.threadId,
+        threadSel?.provider ?? '',
+        threadSel?.modelId ?? '',
+        threadSel?.effort ?? '',
+        String(threadSel?.thinking ?? ''),
+        String(threadSel?.fastMode ?? ''),
+        threadSel?.contextWindow ?? '',
+      ].join(':')
+    : null;
+  const lastSyncedKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (activeThread?.modelSelection?.provider && activeThread.modelSelection.modelId) {
-      const provider = providers.find((item: any) => item.provider === activeThread.modelSelection?.provider);
-      const model = provider?.models?.find((item: any) => item.id === activeThread.modelSelection?.modelId);
-      if (model) {
-        setConfigSelection((prev) =>
-          syncSelectionToModel(
-            {
-              ...prev,
-              provider: activeThread.modelSelection!.provider,
-              modelId: activeThread.modelSelection!.modelId,
-              modelName: model.name,
-              thinking: activeThread.modelSelection?.thinking,
-              effort: activeThread.modelSelection?.effort,
-              fastMode: activeThread.modelSelection?.fastMode,
-              contextWindow: activeThread.modelSelection?.contextWindow,
-            },
-            model,
-          ),
-        );
-      }
-    } else if (!providerLocked && configSelection.provider) {
-      const provider = providers.find((item: any) => item.provider === configSelection.provider);
-      const model = provider?.models?.find((item: any) => item.id === configSelection.modelId);
-      if (model) {
-        setConfigSelection((prev) => syncSelectionToModel(prev, model));
-      }
+    if (!threadSelKey || lastSyncedKeyRef.current === threadSelKey) return;
+    if (threadSel?.provider && threadSel.modelId) {
+      const provider = providers.find((item: any) => item.provider === threadSel.provider);
+      const model = provider?.models?.find((item: any) => item.id === threadSel.modelId);
+      // Providers not loaded yet — leave unsynced so we retry when they land.
+      if (!model) return;
+      lastSyncedKeyRef.current = threadSelKey;
+      setConfigSelection((prev) =>
+        syncSelectionToModel(
+          {
+            ...prev,
+            provider: threadSel.provider,
+            modelId: threadSel.modelId,
+            modelName: model.name,
+            thinking: threadSel.thinking,
+            effort: threadSel.effort,
+            fastMode: threadSel.fastMode,
+            contextWindow: threadSel.contextWindow,
+          },
+          model,
+        ),
+      );
+    } else {
+      lastSyncedKeyRef.current = threadSelKey;
     }
-  }, [activeThread, configSelection.modelId, configSelection.provider, providerLocked, providers, syncSelectionToModel]);
+  }, [threadSelKey, threadSel, providers, syncSelectionToModel]);
 
   return {
     popoverSection,

@@ -377,9 +377,9 @@ function ProvidersContent({ providers, selection, onSelect, onShowModels, s, col
       ))}
       {COMING_SOON_PROVIDERS.map((p) => (
         <View key={p.key} style={s.row}>
-          <View style={{ width: 20, height: 20, borderRadius: 6, backgroundColor: p.color, opacity: 0.35, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: colors.fg.onAccent }}>{p.name[0]}</Text>
-            </View>
+          <View style={{ opacity: 0.5 }}>
+            <ProviderIcon provider={p.key} size={20} />
+          </View>
           <Text style={[s.rowLabel, s.rowLabelMuted, { flex: 1 }]}>{p.name}</Text>
           <Text style={s.comingSoon}>COMING SOON</Text>
         </View>
@@ -392,11 +392,12 @@ function ProvidersContent({ providers, selection, onSelect, onShowModels, s, col
 // Models list content
 // ----------------------------------------------------------
 
-function ModelsContent({ providers, selection, onSelect, onBack, providerLocked, s, colors }: {
+function ModelsContent({ providers, selection, onSelect, onBack, onClose, providerLocked, s, colors }: {
   providers: ProviderInfo[];
   selection: ConfigSelection;
   onSelect: (s: ConfigSelection) => void;
   onBack: () => void;
+  onClose: () => void;
   providerLocked?: boolean;
   s: PopoverStyles;
   colors: Colors;
@@ -423,7 +424,7 @@ function ModelsContent({ providers, selection, onSelect, onBack, providerLocked,
           key={model.id}
           label={model.name}
           selected={model.id === selection.modelId}
-          onPress={() => onSelect(normalizeSelectionForModel(selection, model))}
+          onPress={() => { onSelect(normalizeSelectionForModel(selection, model)); onClose(); }}
           s={s}
           colors={colors}
         />
@@ -512,6 +513,7 @@ export function ModelPopover({
                   onSelect={onSelect}
                   providerLocked={providerLocked}
                   onBack={() => setView('providers')}
+                  onClose={onClose}
                   s={s}
                   colors={colors}
                 />

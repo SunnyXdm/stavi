@@ -53,6 +53,9 @@ interface ConnectionStoreState {
   savedConnections: SavedConnection[];
   connectionsById: Record<string, PerServerConnection>;
   _wasConnectedById: Record<string, boolean>;
+  /** False until AsyncStorage rehydration finishes — gates the home empty state
+   *  so we don't flash "add a server" before saved servers load. */
+  hasHydrated: boolean;
 }
 
 interface ConnectionStoreActions {
@@ -102,6 +105,38 @@ const MAX_RELAY_RECONNECT_ATTEMPTS = 7;
 
 // Concurrency guard: prevents double-connect race when autoConnect + hydrateConnected fire simultaneously.
 const _connectingServers = new Map<string, Promise<void>>();
+
+/**
+ * Probe-race /health across the saved host + alternate LAN candidates from
+ * pairing; first stavi server to answer wins. Falls back to the saved host
+ * when nothing answers (so the real connect produces the actionable error).
+ */
+async function resolveReachableHost(conn: SavedConnection): Promise<string> {
+  const candidates = [...new Set([conn.host, ...(conn.lanHosts ?? [])])].filter(Boolean);
+  if (candidates.length <= 1) return conn.host;
+
+  const protocol = conn.tls ? 'https' : 'http';
+  const probe = async (host: string): Promise<string> => {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 1500);
+    try {
+      const res = await fetch(`${protocol}://${host}:${conn.port}/health`, { signal: abort.signal });
+      if (!res.ok) throw new Error(`health ${res.status}`);
+      const body = (await res.json()) as { app?: string };
+      // Positively identify a stavi server (older servers omit `app` — accept).
+      if (body.app && body.app !== 'stavi') throw new Error('not a stavi server');
+      return host;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  try {
+    return await Promise.any(candidates.map(probe));
+  } catch {
+    return conn.host;
+  }
+}
 
 function scheduleRelayReconnect(serverId: string, connectServer: (id: string) => Promise<void>): void {
   // Cancel any pending timer for this server.
@@ -232,30 +267,47 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
         savedConnections: [],
         connectionsById: {},
         _wasConnectedById: {},
+        hasHydrated: false,
 
         addServer: async (conn) => {
-          // Phase 5: Pre-flight to learn remote serverId + hostname for dedup.
-          const preflight = await prefetchServerInfo(
-            conn.host,
-            conn.port,
-            conn.bearerToken,
-            conn.tls,
-          );
+          // Pre-flight to learn remote serverId + hostname for dedup AND to
+          // verify the server is actually reachable. Relay pairings skip the
+          // LAN probe (their lanHost is usually unreachable off-LAN) — they're
+          // validated when the relay transport connects instead.
+          const preflight = conn.relayUrl
+            ? { reachable: true, serverId: null, hostname: null, error: undefined }
+            : await prefetchServerInfo(
+                conn.host,
+                conn.port,
+                conn.bearerToken,
+                conn.tls,
+              );
+
+          // Refuse to save a LAN server we couldn't reach — otherwise a typo or
+          // an offline server silently becomes a dead entry. Throw the raw
+          // error so the caller (Add Server form) can show WHY.
+          if (!conn.relayUrl && !preflight.reachable) {
+            throw preflight.error instanceof Error
+              ? preflight.error
+              : new Error('Network request failed');
+          }
+
           const remoteServerId = preflight.serverId;
           const remoteHostname = preflight.hostname;
 
           if (remoteServerId) {
-            // Check for existing saved connection with the same remote serverId.
+            // Check for existing saved connection with the same remote serverId
+            // AND the same port. serverId comes from ~/.stavi/credentials.json,
+            // which is shared by EVERY server instance on a machine — two
+            // daemons on different ports report the same serverId. Matching on
+            // serverId alone merged them, silently overwriting the older
+            // server's address ("my servers disappeared"). Same port + same
+            // serverId is the actual "same daemon, new hostname/IP" case.
             const existing = get().savedConnections.find(
-              (c) => c.serverId === remoteServerId,
+              (c) => c.serverId === remoteServerId && c.port === conn.port,
             );
 
             if (existing) {
-              // Dedup-merge: If the user is adding a different address for the same
-              // daemon, keep the newer entry and transfer lastConnectedAt.
-              // (Example: user adds 192.168.1.5:8022 then macbook.local:8022 — same daemon.)
-              // Update the existing entry with the new address (host/port) and reset
-              // the runtime client so next connect uses the new address.
               const isSameAddress =
                 existing.host === conn.host && existing.port === conn.port;
 
@@ -298,6 +350,9 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
 
           const saved: SavedConnection = {
             ...conn,
+            // Default the display name to the server's hostname (then host:port)
+            // when the user didn't type one — editable later via server actions.
+            name: conn.name?.trim() || remoteHostname || `${conn.host}:${conn.port}`,
             id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
             createdAt: Date.now(),
             serverId: remoteServerId ?? undefined,
@@ -351,14 +406,26 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
               await transport.connect();
               await runtime.client.connectViaTransport(transport);
             } else {
-              // Direct LAN mode: existing bearer→wsToken→WebSocket flow
+              // Direct LAN mode: existing bearer→wsToken→WebSocket flow.
+              // When pairing supplied alternate LAN addresses, probe-race
+              // /health first — the server's primary interface pick can be
+              // stale (DHCP renewal) or unroutable (VPN interface).
+              const host = await resolveReachableHost(savedConnection);
               const config: StaviConnectionConfig = {
-                host: savedConnection.host,
+                host,
                 port: savedConnection.port,
                 bearerToken: savedConnection.bearerToken,
                 tls: savedConnection.tls,
               };
               await runtime.client.connect(config);
+              // Persist a host switch so the next connect goes straight there.
+              if (host !== savedConnection.host) {
+                set((state) => ({
+                  savedConnections: state.savedConnections.map((c) =>
+                    c.id === serverId ? { ...c, host } : c,
+                  ),
+                }));
+              }
             }
 
             // Bind remote serverId + hostname after connect (best-effort).
@@ -518,10 +585,17 @@ export const useConnectionStore = create<ConnectionStoreState & ConnectionStoreA
         savedConnections: state.savedConnections,
       }),
       onRehydrateStorage: () => (state) => {
-        if (!state) return;
+        // Runs after persisted state is restored. Mark hydrated so the home
+        // screen can stop showing the loading/empty placeholder, and warm the
+        // runtime client for each saved server.
+        if (!state) {
+          useConnectionStore.setState({ hasHydrated: true });
+          return;
+        }
         for (const connection of state.savedConnections) {
           state.getClientForServer(connection.id);
         }
+        useConnectionStore.setState({ hasHydrated: true });
       },
     },
   ),

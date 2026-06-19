@@ -41,12 +41,24 @@ export interface ModelInfo {
   capabilities: ModelCapabilities;
 }
 
+/** A slash command the provider understands (e.g. `/compact`, `/clear`).
+ *  Sent to the agent as literal prompt text — the SDK interprets it. */
+export interface ProviderSlashCommand {
+  name: string;
+  description?: string;
+  /** e.g. "<file>" or "[instructions]" — shown as an input hint in the composer. */
+  argumentHint?: string;
+}
+
 export interface ProviderInfo {
   provider: ProviderKind;
   name: string;
   installed: boolean;
   authenticated: boolean;
   models: ModelInfo[];
+  /** Slash commands the provider supports. Discovered from the SDK init
+   *  message (Claude) and seeded with well-known defaults. */
+  slashCommands?: ProviderSlashCommand[];
   error?: string;
 }
 
@@ -89,6 +101,10 @@ export type ProviderEventType =
   | 'turn-start'
   | 'turn-complete'
   | 'turn-error'
+  // Context compaction (e.g. /compact or auto-compact)
+  | 'compact-boundary'
+  // Plan mode — the model proposed a plan via ExitPlanMode
+  | 'plan-proposed'
   // Session lifecycle
   | 'session-ready'
   | 'session-error';
@@ -142,6 +158,19 @@ export function turnComplete(threadId: string, turnId?: string, usage?: { inputT
 
 export function turnError(threadId: string, error: string, turnId?: string): ProviderEvent {
   return { type: 'turn-error', threadId, turnId, data: { error } };
+}
+
+export function compactBoundary(
+  threadId: string,
+  trigger: 'manual' | 'auto',
+  preTokens: number,
+  turnId?: string,
+): ProviderEvent {
+  return { type: 'compact-boundary', threadId, turnId, data: { trigger, preTokens } };
+}
+
+export function planProposed(threadId: string, plan: string, turnId?: string): ProviderEvent {
+  return { type: 'plan-proposed', threadId, turnId, data: { plan } };
 }
 
 export function approvalRequired(
@@ -244,6 +273,12 @@ export interface ProviderAdapter {
    * Get available models for this provider.
    */
   getModels(): ModelInfo[];
+
+  /**
+   * Slash commands this provider understands. Optional — adapters that don't
+   * implement it report no commands.
+   */
+  getSlashCommands?(): ProviderSlashCommand[];
 
   /**
    * Start a new session for a thread.

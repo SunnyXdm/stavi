@@ -12,7 +12,6 @@ import {
   View,
   Text,
   StyleSheet,
-  StatusBar,
   Pressable,
   BackHandler,
   ActivityIndicator,
@@ -23,7 +22,7 @@ import type { AppNavigation, AppRoute } from './types';
 import { AlertTriangle, ArrowLeft } from 'lucide-react-native';
 import { PluginRenderer } from '../components/PluginRenderer';
 import { PluginHeader } from '../components/PluginHeader';
-import { PluginBottomBar } from '../components/PluginBottomBar';
+import { PluginBottomBar, BAR_HEIGHT } from '../components/PluginBottomBar';
 import { SessionDrawer } from '../components/SessionDrawer';
 import { usePluginRegistry } from '../stores/plugin-registry';
 import { useSessionsStore } from '../stores/sessions-store';
@@ -36,7 +35,7 @@ export function WorkspaceScreen() {
   const navigation = useNavigation<AppNavigation>();
   const route = useRoute<AppRoute<'Workspace'>>();
   const insets = useSafeAreaInsets();
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
 
   const styles = useMemo(() => StyleSheet.create({
     root: {
@@ -98,6 +97,17 @@ export function WorkspaceScreen() {
   const isReady = usePluginRegistry((s) => s.isReady);
   const initialize = usePluginRegistry((s) => s.initialize);
 
+  // Session resolution from route param. MUST be declared before the
+  // hideHeader selector below: the selector body runs synchronously during
+  // the hook call, and referencing sessionId before this line silently
+  // evaluated to undefined under Hermes (no TDZ enforcement), which broke
+  // hideHeader for every plugin.
+  const sessionId = route.params?.sessionId as string | undefined;
+  const session = useSessionsStore((state) =>
+    sessionId ? state.sessionsById[sessionId] : undefined,
+  );
+  const serverId = session?.serverId;
+
   // Resolve the active plugin definition so we can check hideHeader
   const activePluginDef = usePluginRegistry((s) => {
     const activeTabId = s.getActiveTabId(sessionId);
@@ -108,14 +118,7 @@ export function WorkspaceScreen() {
   });
   const showHeader = !(activePluginDef?.hideHeader ?? false);
 
-  // Session resolution from route param
-  const sessionId = route.params?.sessionId as string | undefined;
-  const session = useSessionsStore((state) =>
-    sessionId ? state.sessionsById[sessionId] : undefined,
-  );
-  const serverId = session?.serverId;
-
-  const bottomBarHeight = 56 + insets.bottom;
+  const bottomBarHeight = BAR_HEIGHT + insets.bottom;
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -182,7 +185,6 @@ export function WorkspaceScreen() {
   if (!sessionId || (!session && sessionId)) {
     return (
       <View style={styles.errorContainer}>
-        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.bg.base} />
         <SafeAreaView style={styles.errorContent} edges={['top', 'bottom']}>
           <AlertTriangle size={48} color={colors.semantic.warning} />
           <Text style={styles.errorTitle}>Workspace not found</Text>
@@ -201,7 +203,6 @@ export function WorkspaceScreen() {
   if (session?.status === 'archived') {
     return (
       <View style={styles.errorContainer}>
-        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.bg.base} />
         <SafeAreaView style={styles.errorContent} edges={['top', 'bottom']}>
           <AlertTriangle size={48} color={colors.semantic.warning} />
           <Text style={styles.errorTitle}>Workspace archived</Text>
@@ -220,7 +221,6 @@ export function WorkspaceScreen() {
   if (!isReady) {
     return (
       <View style={styles.loading}>
-        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.bg.base} />
         <ActivityIndicator size="large" color={colors.accent.primary} />
       </View>
     );
@@ -232,7 +232,6 @@ export function WorkspaceScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.bg.base} />
       <SafeAreaView style={styles.content} edges={['top']}>
         {showHeader && (
           <PluginHeader
@@ -243,6 +242,7 @@ export function WorkspaceScreen() {
         <View style={styles.panelArea}>
           <PluginRenderer
             bottomBarHeight={bottomBarHeight}
+            onOpenDrawer={handleOpenDrawer}
             sessionId={sessionId}
             session={session}
           />

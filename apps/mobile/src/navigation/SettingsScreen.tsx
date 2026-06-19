@@ -14,7 +14,7 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
+  ScrollView,
   Pressable,
   Alert,
 } from 'react-native';
@@ -24,21 +24,17 @@ import type { AppNavigation } from './types';
 import {
   ArrowLeft,
   Server,
-  Wifi,
-  WifiOff,
-  Trash2,
   Info,
-  ChevronDown,
   ChevronRight,
   Sun,
   Moon,
   Monitor,
 } from 'lucide-react-native';
-import { useConnectionStore, type PerServerConnection } from '../stores/connection';
+import { useConnectionStore } from '../stores/connection';
 import { usePluginRegistry } from '../stores/plugin-registry';
 import { useThemeStore, type ThemeMode } from '../stores/theme-store';
 import { useAppPreferencesStore } from '../stores/app-preferences-store';
-import { SettingsRenderer } from '../components/SettingsRenderer';
+import { ServersSheet } from '../components/ServersSheet';
 import { useTheme } from '../theme';
 import { typography, spacing, radii } from '../theme';
 
@@ -253,77 +249,17 @@ function HapticsSection() {
   );
 }
 
-// ----------------------------------------------------------
-// ServerSection — one section per connected or saved server
-// ----------------------------------------------------------
-
-function ServerSection({ conn }: { conn: PerServerConnection }) {
-  const { colors } = useTheme();
-  const disconnectServer = useConnectionStore((s) => s.disconnectServer);
-  const forgetServer = useConnectionStore((s) => s.forgetServer);
-  const isConnected = conn.clientState === 'connected';
-
-  const handleDisconnect = useCallback(() => {
-    Alert.alert(
-      'Disconnect',
-      `Disconnect from "${conn.savedConnection.name}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Disconnect', style: 'destructive', onPress: () => disconnectServer(conn.serverId) },
-      ],
-    );
-  }, [conn.serverId, conn.savedConnection.name, disconnectServer]);
-
-  const handleForget = useCallback(() => {
-    Alert.alert(
-      'Remove Server',
-      `Remove "${conn.savedConnection.name}" from saved servers?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Remove', style: 'destructive', onPress: () => forgetServer(conn.serverId) },
-      ],
-    );
-  }, [conn.serverId, conn.savedConnection.name, forgetServer]);
-
-  return (
-    <Section title={conn.savedConnection.name}>
-      <Row
-        icon={<Server size={16} color={isConnected ? colors.accent.primary : colors.fg.muted} />}
-        label={`${conn.savedConnection.host}:${conn.savedConnection.port}`}
-        value={conn.clientState}
-        last={false}
-      />
-      <Row
-        icon={
-          isConnected
-            ? <Wifi size={16} color={colors.semantic.success} />
-            : <WifiOff size={16} color={colors.fg.muted} />
-        }
-        label={isConnected ? 'Connected' : conn.error ?? conn.clientState}
-        last={!isConnected}
-      />
-      {isConnected && (
-        <Row label="Disconnect" danger onPress={handleDisconnect} last={false} />
-      )}
-      <Row
-        label="Remove Server"
-        danger
-        onPress={handleForget}
-        rightElement={<Trash2 size={16} color={colors.semantic.error} />}
-        last
-      />
-    </Section>
-  );
-}
+// Server management now lives in the ServersSheet (opened from the Settings
+// "Servers" row) and via long-press on the home server cards — Settings no
+// longer renders a per-server section list.
 
 // ----------------------------------------------------------
 // PluginSettingsBlock — auto-generated plugin settings
 // ----------------------------------------------------------
 
-function PluginSettingsBlock() {
+function PluginSettingsBlock({ navigation }: { navigation: AppNavigation }) {
   const { colors } = useTheme();
   const definitions = usePluginRegistry((s) => s.definitions);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const rowBase = useMemo(() => StyleSheet.create({
     row: {
@@ -343,10 +279,6 @@ function PluginSettingsBlock() {
       fontSize: typography.fontSize.base,
       color: colors.fg.primary,
     },
-    rendererWrap: {
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.divider,
-    },
   }), [colors]);
 
   const pluginsWithSettings = Object.values(definitions).filter(
@@ -355,31 +287,23 @@ function PluginSettingsBlock() {
 
   if (pluginsWithSettings.length === 0) return null;
 
+  // Rows navigate to a dedicated per-plugin page (like Servers) — the old
+  // inline accordions made this screen unmanageably long.
   return (
     <Section title="Plugin Settings">
       {pluginsWithSettings.map((plugin, i) => {
-        const isExpanded = expanded[plugin.id] ?? false;
         const isLast = i === pluginsWithSettings.length - 1;
         return (
-          <View key={plugin.id}>
-            <Pressable
-              onPress={() => setExpanded((prev) => ({ ...prev, [plugin.id]: !prev[plugin.id] }))}
-              android_ripple={{ color: colors.bg.active }}
-            >
-              <View style={[rowBase.row, !isLast && !isExpanded && rowBase.withBorder]}>
-                <Text style={rowBase.label}>{plugin.name}</Text>
-                {isExpanded
-                  ? <ChevronDown size={16} color={colors.fg.muted} />
-                  : <ChevronRight size={16} color={colors.fg.muted} />
-                }
-              </View>
-            </Pressable>
-            {isExpanded && (
-              <View style={rowBase.rendererWrap}>
-                <SettingsRenderer pluginId={plugin.id} schema={plugin.settings!} />
-              </View>
-            )}
-          </View>
+          <Pressable
+            key={plugin.id}
+            onPress={() => navigation.navigate('PluginSettings', { pluginId: plugin.id })}
+            android_ripple={{ color: colors.bg.active }}
+          >
+            <View style={[rowBase.row, !isLast && rowBase.withBorder]}>
+              <Text style={rowBase.label}>{plugin.name}</Text>
+              <ChevronRight size={16} color={colors.fg.muted} />
+            </View>
+          </Pressable>
         );
       })}
     </Section>
@@ -395,6 +319,8 @@ export function SettingsScreen() {
   const navigation = useNavigation<AppNavigation>();
   const connectionsById = useConnectionStore((s) => s.connectionsById);
   const connections = Object.values(connectionsById);
+  const [showServers, setShowServers] = useState(false);
+  const connectedCount = connections.filter((c) => c.clientState === 'connected').length;
 
   const s = useMemo(() => StyleSheet.create({
     root: { flex: 1, backgroundColor: colors.bg.base },
@@ -425,21 +351,10 @@ export function SettingsScreen() {
 
   const handleBack = useCallback(() => navigation.goBack(), [navigation]);
 
-  const ListFooter = (
-    <>
-      <ThemePickerSection />
-      <HapticsSection />
-      <PluginSettingsBlock />
-      <Section title="About">
-        <Row
-          icon={<Info size={16} color={colors.fg.muted} />}
-          label="Stavi"
-          value="Mobile AI IDE"
-          last
-        />
-      </Section>
-    </>
-  );
+  const serverSummary =
+    connections.length === 0
+      ? 'None added'
+      : `${connections.length} added · ${connectedCount} connected`;
 
   return (
     <SafeAreaView style={s.root} edges={['top', 'bottom']}>
@@ -451,26 +366,38 @@ export function SettingsScreen() {
         <View style={s.backButton} />
       </View>
 
-      <FlatList
+      <ScrollView
         style={s.scroll}
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
-        data={connections}
-        keyExtractor={(item) => item.serverId}
-        renderItem={({ item }) => <ServerSection conn={item} />}
-        ListHeaderComponent={<View style={s.headerPad} />}
-        ListEmptyComponent={
-          <Section title="Servers">
-            <Row
-              icon={<WifiOff size={16} color={colors.fg.muted} />}
-              label="No servers added"
-              value="Go to Home to add a server"
-              last
-            />
-          </Section>
-        }
-        ListFooterComponent={ListFooter}
-      />
+      >
+        <View style={s.headerPad} />
+        {/* Servers — a single entry into the management sheet, not a flat list
+            that buries the rest of Settings. */}
+        <Section title="Servers">
+          <Row
+            icon={<Server size={16} color={colors.fg.muted} />}
+            label="Servers"
+            value={serverSummary}
+            rightElement={<ChevronRight size={16} color={colors.fg.muted} />}
+            onPress={() => setShowServers(true)}
+            last
+          />
+        </Section>
+        <ThemePickerSection />
+        <HapticsSection />
+        <PluginSettingsBlock navigation={navigation} />
+        <Section title="About">
+          <Row
+            icon={<Info size={16} color={colors.fg.muted} />}
+            label="Stavi"
+            value="Mobile AI IDE"
+            last
+          />
+        </Section>
+      </ScrollView>
+
+      <ServersSheet visible={showServers} onClose={() => setShowServers(false)} />
     </SafeAreaView>
   );
 }

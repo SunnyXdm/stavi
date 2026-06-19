@@ -20,6 +20,9 @@ export interface EventReducerContext {
   activeConnectionId: string;
   sessionId: string;
   activeThreadIdRef: React.MutableRefObject<string | null>;
+  /** This workspace's folder — live thread.created events from OTHER
+   *  workspaces are dropped, matching the snapshot-time scoping. */
+  preferredWorktreePath?: string | null;
 }
 
 export function processEventInner(
@@ -27,11 +30,21 @@ export function processEventInner(
   event: any,
   ctx: EventReducerContext,
 ): OrchestrationState {
-  const { instanceId, activeConnectionId, sessionId, activeThreadIdRef } = ctx;
+  const { instanceId, activeConnectionId, sessionId, activeThreadIdRef, preferredWorktreePath } = ctx;
   const next = { ...prev };
 
   switch (event.type) {
     case 'thread.created': {
+      // Enforce the same workspace scoping the snapshot applies — the domain
+      // event stream is a global broadcast, so a thread created in ANOTHER
+      // workspace (e.g. by a second device) must not appear in this drawer.
+      if (
+        preferredWorktreePath &&
+        event.payload.worktreePath &&
+        event.payload.worktreePath !== preferredWorktreePath
+      ) {
+        break;
+      }
       const thread: Thread = {
         threadId: event.payload.threadId,
         projectId: event.payload.projectId,
@@ -152,6 +165,60 @@ export function processEventInner(
         ]);
       }
       next.approvals = updated;
+      break;
+    }
+
+    // Approval resolved (this device, another device, interrupt, or turn end)
+    // — clear the card everywhere instead of leaving a ghost.
+    case 'thread.approval-resolved': {
+      const tid = event.payload.threadId;
+      const existing = prev.approvals.get(tid);
+      if (!existing?.length) break;
+      const updated = new Map(prev.approvals);
+      updated.set(
+        tid,
+        existing.map((a) =>
+          a.requestId === event.payload.requestId ? { ...a, pending: false } : a,
+        ),
+      );
+      next.approvals = updated;
+      break;
+    }
+
+    // ExitPlanMode — the model proposed a plan. Rendered as a PlanCard with
+    // Approve / Keep planning, replacing any previous proposal for the thread.
+    case 'thread.plan-proposed': {
+      const tid = event.payload.threadId;
+      const updated = new Map(prev.planProposals);
+      updated.set(tid, {
+        threadId: tid,
+        turnId: event.payload.turnId,
+        plan: String(event.payload.plan ?? ''),
+        pending: true,
+      });
+      next.planProposals = updated;
+      break;
+    }
+
+    // Context compaction (/compact or auto) — append an info marker part so
+    // the timeline shows "Context compacted" where it happened.
+    case 'thread.compaction': {
+      const tid = event.payload.threadId;
+      const turnId = event.payload.turnId;
+      const part = activityPayloadToAIPart({
+        threadId: tid,
+        type: 'info',
+        text:
+          event.payload.trigger === 'auto'
+            ? 'Context compacted automatically'
+            : 'Context compacted',
+      });
+      if (part) {
+        const existingAI = prev.aiMessages.get(tid) ?? [];
+        const updatedAI = new Map(prev.aiMessages);
+        updatedAI.set(tid, mergeActivityPart(existingAI, part, turnId));
+        next.aiMessages = updatedAI;
+      }
       break;
     }
 

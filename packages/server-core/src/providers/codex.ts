@@ -7,6 +7,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
+import { existsSync } from 'node:fs';
 import type {
   ProviderAdapter,
   ModelInfo,
@@ -46,7 +47,20 @@ const CODEX_DEFAULT_CAPABILITIES: ModelCapabilities = {
   promptInjectedEffortLevels: [],
 };
 
+// Offline fallback ONLY — `codex app-server` model/list is the source of
+// truth (t3code parity: trust the app-server, never filter against a static
+// catalog). Shown until discovery succeeds or when the probe fails.
 const DEFAULT_CODEX_MODELS: ModelInfo[] = [
+  {
+    id: 'gpt-5.5',
+    name: 'GPT-5.5',
+    provider: 'codex',
+    supportsThinking: false,
+    maxTokens: 16384,
+    contextWindow: 200000,
+    isDefault: true,
+    capabilities: CODEX_DEFAULT_CAPABILITIES,
+  },
   {
     id: 'gpt-5.4',
     name: 'GPT-5.4',
@@ -54,7 +68,6 @@ const DEFAULT_CODEX_MODELS: ModelInfo[] = [
     supportsThinking: false,
     maxTokens: 16384,
     contextWindow: 200000,
-    isDefault: true,
     capabilities: CODEX_DEFAULT_CAPABILITIES,
   },
   {
@@ -66,34 +79,69 @@ const DEFAULT_CODEX_MODELS: ModelInfo[] = [
     contextWindow: 200000,
     capabilities: CODEX_DEFAULT_CAPABILITIES,
   },
-  {
-    id: 'gpt-5.3-codex',
-    name: 'GPT-5.3 Codex',
-    provider: 'codex',
-    supportsThinking: false,
-    maxTokens: 16384,
-    contextWindow: 200000,
-    capabilities: CODEX_DEFAULT_CAPABILITIES,
-  },
-  {
-    id: 'gpt-5.2-codex',
-    name: 'GPT-5.2 Codex',
-    provider: 'codex',
-    supportsThinking: false,
-    maxTokens: 16384,
-    contextWindow: 200000,
-    capabilities: CODEX_DEFAULT_CAPABILITIES,
-  },
-  {
-    id: 'gpt-5.2',
-    name: 'GPT-5.2',
-    provider: 'codex',
-    supportsThinking: false,
-    maxTokens: 16384,
-    contextWindow: 200000,
-    capabilities: CODEX_DEFAULT_CAPABILITIES,
-  },
 ];
+
+// "gpt-5.5-codex" → "GPT-5.5 Codex" (t3code's toDisplayName behavior).
+function codexDisplayName(id: string): string {
+  return id
+    .replace(/^gpt/i, 'GPT')
+    .replace(/-([a-z])/g, (_, c: string) => ` ${c.toUpperCase()}`)
+    .replace(/-(\d)/g, '-$1');
+}
+
+const CODEX_EFFORT_LABELS: Record<string, string> = {
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+};
+
+// Map one `model/list` wire entry to stavi's ModelInfo. Returns null for
+// hidden/unusable entries.
+function mapCodexWireModel(m: any): ModelInfo | null {
+  const id: string | undefined = m?.id ?? m?.model;
+  if (!id || m?.hidden === true) return null;
+
+  const rawEfforts: any[] = Array.isArray(m?.supportedReasoningEfforts)
+    ? m.supportedReasoningEfforts
+    : [];
+  const effortValues = rawEfforts
+    .map((e) => (typeof e === 'string' ? e : e?.reasoningEffort ?? e?.effort ?? e?.value))
+    .filter((v): v is string => typeof v === 'string' && v.length > 0);
+  const defaultEffort: string | undefined =
+    typeof m?.defaultReasoningEffort === 'string' ? m.defaultReasoningEffort : undefined;
+
+  const reasoningEffortLevels = effortValues.map((value) => ({
+    value,
+    label: CODEX_EFFORT_LABELS[value] ?? value,
+    ...(value === defaultEffort ? { isDefault: true } : {}),
+  }));
+
+  const supportsFastMode =
+    (Array.isArray(m?.additionalSpeedTiers) && m.additionalSpeedTiers.length > 0) ||
+    (Array.isArray(m?.serviceTiers) && m.serviceTiers.length > 0);
+
+  return {
+    id,
+    name: typeof m?.displayName === 'string' && m.displayName ? m.displayName : codexDisplayName(id),
+    provider: 'codex',
+    supportsThinking: false,
+    maxTokens: 16384,
+    contextWindow: 200000,
+    ...(m?.isDefault === true ? { isDefault: true } : {}),
+    capabilities: {
+      reasoningEffortLevels:
+        reasoningEffortLevels.length > 0
+          ? reasoningEffortLevels
+          : CODEX_DEFAULT_CAPABILITIES.reasoningEffortLevels,
+      supportsFastMode,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  };
+}
 
 const REQUEST_TIMEOUT_MS = 20_000;
 
@@ -230,6 +278,8 @@ export class CodexAdapter implements ProviderAdapter {
     try {
       await execFileAsync(this.binaryPath!, ['--version']);
       this.ready = true;
+      // Discover the real model catalog in the background — don't block boot.
+      void this.probeModels();
       return true;
     } catch {
       this.ready = false;
@@ -245,9 +295,102 @@ export class CodexAdapter implements ProviderAdapter {
     return this.dynamicModels.length > 0 ? this.dynamicModels : DEFAULT_CODEX_MODELS;
   }
 
+  /** Map + adopt wire models from model/list. Ensures exactly one default. */
+  private adoptDiscoveredModels(wireModels: any[]): void {
+    const mapped = wireModels
+      .map((m) => mapCodexWireModel(m))
+      .filter((m): m is ModelInfo => m !== null);
+    if (mapped.length === 0) return;
+    if (!mapped.some((m) => m.isDefault)) mapped[0] = { ...mapped[0], isDefault: true };
+    this.dynamicModels = mapped;
+    console.log(`[Codex] Discovered ${mapped.length} models: ${mapped.map((m) => m.id).join(', ')}`);
+  }
+
+  /**
+   * Boot-time model discovery via a short-lived `codex app-server` handshake
+   * (initialize → initialized → paginated model/list → kill). t3code probes at
+   * provider startup so the picker is correct before any session exists;
+   * without this, models only refresh when the first session spawns.
+   */
+  private async probeModels(): Promise<void> {
+    if (!this.binaryPath) return;
+    const child = spawn(this.binaryPath, ['app-server'], {
+      env: { ...process.env, TERM: 'dumb' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const pending = new Map<
+      number,
+      { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
+    >();
+    let nextId = 1;
+
+    const settle = (id: number, fn: 'resolve' | 'reject', value: any) => {
+      const p = pending.get(id);
+      if (!p) return;
+      pending.delete(id);
+      clearTimeout(p.timer);
+      p[fn](value);
+    };
+
+    const rl = createInterface({ input: child.stdout! });
+    rl.on('line', (line) => {
+      try {
+        const msg = JSON.parse(line);
+        if (msg.id != null && pending.has(msg.id)) {
+          if (msg.error) settle(msg.id, 'reject', new Error(msg.error.message ?? 'request failed'));
+          else settle(msg.id, 'resolve', msg.result);
+        }
+      } catch { /* non-JSON noise */ }
+    });
+
+    const request = (method: string, params: Record<string, unknown>): Promise<any> =>
+      new Promise((resolve, reject) => {
+        const id = nextId++;
+        const timer = setTimeout(
+          () => settle(id, 'reject', new Error(`${method} timed out`)),
+          REQUEST_TIMEOUT_MS,
+        );
+        pending.set(id, { resolve, reject, timer });
+        child.stdin!.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`, (err) => {
+          if (err) settle(id, 'reject', err);
+        });
+      });
+
+    try {
+      await request('initialize', {
+        clientInfo: { name: 'stavi', version: '0.0.1' },
+        capabilities: { experimentalApi: true },
+      });
+      child.stdin!.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized' })}\n`);
+
+      const wireModels: any[] = [];
+      let cursor: string | null = null;
+      do {
+        const result: any = await request('model/list', cursor ? { cursor } : {});
+        const page: any[] = Array.isArray(result) ? result : result?.data ?? [];
+        wireModels.push(...page);
+        cursor = !Array.isArray(result) && typeof result?.nextCursor === 'string'
+          ? result.nextCursor
+          : null;
+      } while (cursor);
+
+      this.adoptDiscoveredModels(wireModels);
+    } catch (err) {
+      console.warn('[Codex] model probe failed:', err instanceof Error ? err.message : err);
+    } finally {
+      rl.close();
+      try { child.kill(); } catch { /* already dead */ }
+    }
+  }
+
   async startSession(threadId: string, cwd: string): Promise<void> {
     if (this.sessions.has(threadId)) return;
     if (!this.binaryPath) throw new Error('Codex binary not found');
+    // spawn() with a nonexistent cwd fails with a misleading ENOENT on the
+    // binary. Surface the real reason (cross-server sessions, shared SQLite).
+    if (cwd && cwd !== '.' && !existsSync(cwd)) {
+      throw new Error(`Session folder does not exist on this server: ${cwd}`);
+    }
 
     const session: CodexSession = {
       threadId,
@@ -312,25 +455,25 @@ export class CodexAdapter implements ProviderAdapter {
       // 2. Send initialized notification
       this.sendNotification(session, 'initialized');
 
-      // 3. List models
+      // 3. List models — the app-server's response is the source of truth
+      // (paginated; codex-cli ≥0.13x returns { data, nextCursor }).
       try {
-        const modelsResult = await this.sendRequest(session, 'model/list', {});
-        if (Array.isArray(modelsResult)) {
-          const discovered = (modelsResult as any[])
-            .map((m) => ({
-              id: m.id ?? m.model ?? 'unknown',
-              name: m.name ?? m.id ?? 'Unknown',
-            }))
-            .filter((model) => DEFAULT_CODEX_MODELS.some((candidate) => candidate.id === model.id));
-          if (discovered.length > 0) {
-            this.dynamicModels = DEFAULT_CODEX_MODELS
-              .filter((candidate) => discovered.some((model) => model.id === candidate.id))
-              .map((candidate, index) => ({
-                ...candidate,
-                isDefault: index === 0,
-              }));
-          }
-        }
+        const wireModels: any[] = [];
+        let cursor: string | null = null;
+        do {
+          const result: any = await this.sendRequest(
+            session,
+            'model/list',
+            cursor ? { cursor } : {},
+          );
+          const page: any[] = Array.isArray(result) ? result : result?.data ?? [];
+          wireModels.push(...page);
+          cursor = !Array.isArray(result) && typeof result?.nextCursor === 'string'
+            ? result.nextCursor
+            : null;
+        } while (cursor);
+
+        this.adoptDiscoveredModels(wireModels);
       } catch {
         // model/list is optional
       }
@@ -377,12 +520,23 @@ export class CodexAdapter implements ProviderAdapter {
         session.providerThreadId = (result as any)?.thread?.id ?? null;
       }
 
-      // Send the turn
+      // Send the turn. approvalPolicy/sandboxPolicy repeat on EVERY turn
+      // (t3code parity) — only sending them on thread/start silently ignored
+      // mid-thread access-level changes from the chip. turn/start's V2 params
+      // take a discriminated sandboxPolicy object, not the thread/start string.
+      const turnSandbox =
+        runtimeMode.sandbox === 'danger-full-access'
+          ? { type: 'dangerFullAccess' }
+          : runtimeMode.sandbox === 'workspace-write'
+            ? { type: 'workspaceWrite' }
+            : { type: 'readOnly' };
       const turnResult = await this.sendRequest(session, 'turn/start', {
         threadId: session.providerThreadId,
         input: [{ type: 'text', text: input.text }],
         model: modelId,
         effort,
+        approvalPolicy: runtimeMode.approvalPolicy,
+        sandboxPolicy: turnSandbox,
         ...(input.modelSelection?.fastMode ? { serviceTier: 'fast' } : {}),
       });
       session.activeTurnId = (turnResult as any)?.turn?.id ?? `turn-${Date.now()}`;
@@ -507,9 +661,10 @@ export class CodexAdapter implements ProviderAdapter {
   }
 
   async stopAll(): Promise<void> {
-    for (const session of this.sessions.values()) {
-      session.status = 'closed';
-      session.process?.kill('SIGTERM');
+    // Go through stopSession so pending approvals are declined and the drain
+    // loop wakes — a bare kill left approval Deferreds hanging.
+    for (const threadId of [...this.sessions.keys()]) {
+      await this.stopSession(threadId);
     }
     this.sessions.clear();
   }
@@ -597,11 +752,20 @@ export class CodexAdapter implements ProviderAdapter {
       method === 'item/fileChange/requestApproval'
     ) {
       const requestId = `approval-${Date.now()}-${msg.id}`;
-      const toolName = params.command?.command
+      // `params.command.command` may be an argv ARRAY (or object) depending on
+      // codex version — normalize to a display string so the mobile card never
+      // renders JSON garbage.
+      const rawCommand = params.command?.command;
+      const commandText = Array.isArray(rawCommand)
+        ? rawCommand.join(' ')
+        : typeof rawCommand === 'string'
+          ? rawCommand
+          : undefined;
+      const toolName = commandText
         ?? params.path
         ?? method.split('/')[1]
         ?? 'unknown';
-      const toolInput = params;
+      const toolInput = commandText ? { ...params, command: commandText } : params;
 
       session.pendingApprovals.set(requestId, {
         jsonRpcId: msg.id,

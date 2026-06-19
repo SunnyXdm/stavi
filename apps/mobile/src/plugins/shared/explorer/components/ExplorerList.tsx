@@ -35,6 +35,7 @@ import { useTheme } from '../../../../theme';
 import { typography, spacing, radii } from '../../../../theme';
 import type { Colors } from '../../../../theme';
 import { eventBus } from '../../../../services/event-bus';
+import { openFileInEditor } from '../../../workspace/editor/open-in-editor';
 
 // ----------------------------------------------------------
 // Types
@@ -42,6 +43,7 @@ import { eventBus } from '../../../../services/event-bus';
 
 interface ExplorerListProps {
   sessionId: string;
+  serverId: string;
   entries: FsEntry[];
   selection: Set<string>;
   isSelecting: boolean;
@@ -150,6 +152,7 @@ const EntryRow = memo(function EntryRow({
   selected,
   isSelecting,
   sessionId,
+  serverId,
   onNavigate,
   onLongPress,
   onToggleSelect,
@@ -158,6 +161,7 @@ const EntryRow = memo(function EntryRow({
   selected: boolean;
   isSelecting: boolean;
   sessionId: string;
+  serverId: string;
   onNavigate: (path: string) => void;
   onLongPress: (path: string) => void;
   onToggleSelect: (path: string) => void;
@@ -174,9 +178,12 @@ const EntryRow = memo(function EntryRow({
     if (isDir) {
       onNavigate(entry.path);
     } else {
+      // Load into the editor store + activate the editor tab. The eventBus
+      // emit stays for any mounted listeners (e.g. drawer auto-close).
+      openFileInEditor(sessionId, serverId, entry.path);
       eventBus.emit('editor.openFile', { sessionId, path: entry.path });
     }
-  }, [isSelecting, isDir, entry.path, sessionId, onNavigate, onToggleSelect]);
+  }, [isSelecting, isDir, entry.path, sessionId, serverId, onNavigate, onToggleSelect]);
 
   const handleLongPress = useCallback(() => {
     onLongPress(entry.path);
@@ -228,6 +235,7 @@ const LIST_CONTENT_STYLE = { paddingBottom: spacing[4] };
 
 export const ExplorerList = memo(function ExplorerList({
   sessionId,
+  serverId,
   entries,
   selection,
   isSelecting,
@@ -247,11 +255,12 @@ export const ExplorerList = memo(function ExplorerList({
       selected={selection.has(item.path)}
       isSelecting={isSelecting}
       sessionId={sessionId}
+      serverId={serverId}
       onNavigate={onNavigate}
       onLongPress={onLongPress}
       onToggleSelect={onToggleSelect}
     />
-  ), [selection, isSelecting, sessionId, onNavigate, onLongPress, onToggleSelect]);
+  ), [selection, isSelecting, sessionId, serverId, onNavigate, onLongPress, onToggleSelect]);
 
   const keyExtractor = useCallback((item: FsEntry) => item.path, []);
 

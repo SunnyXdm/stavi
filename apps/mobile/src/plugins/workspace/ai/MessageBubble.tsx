@@ -6,9 +6,10 @@
 // Text parts render through Markdown. Tool parts render inline.
 // Reasoning parts show as collapsible "Thinking" blocks.
 
-import React, { memo, useState, useCallback, useMemo } from 'react';
+import React, { memo, useState, useCallback, useMemo, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { Sparkles, Brain, ChevronDown, ChevronRight } from 'lucide-react-native';
+import Reanimated, { useSharedValue, useAnimatedStyle, withRepeat, withSequence, withTiming, cancelAnimation } from 'react-native-reanimated';
+import { Brain, ChevronDown, ChevronRight, Scissors } from 'lucide-react-native';
 import { useTheme, typography, spacing, radii } from '../../../theme';
 import type { Colors } from '../../../theme';
 import { Markdown } from './Markdown';
@@ -50,24 +51,15 @@ function createStyles(colors: Colors) {
       lineHeight: typography.fontSize.base * 1.45,
     },
 
-    // Assistant message — left aligned, full width
+    // Assistant message — full width, accent left-border as role indicator
     assistantRow: {
-      flexDirection: 'row',
       paddingHorizontal: spacing[4],
       paddingVertical: spacing[1],
-      gap: spacing[2],
-    },
-    assistantIcon: {
-      width: 24,
-      height: 24,
-      borderRadius: radii.full,
-      backgroundColor: colors.accent.subtle,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginTop: 2,
     },
     assistantContent: {
-      flex: 1,
+      borderLeftWidth: 2,
+      borderLeftColor: colors.accent.primary,
+      paddingLeft: spacing[3],
     },
 
     // Streaming cursor
@@ -209,6 +201,22 @@ function createStyles(colors: Colors) {
       color: colors.fg.secondary,
       fontFamily: typography.fontFamily.mono,
     },
+    // Inline info marker ("Context compacted")
+    infoChipRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      gap: spacing[1],
+      backgroundColor: colors.bg.overlay,
+      borderRadius: radii.full,
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[1],
+      marginVertical: spacing[1],
+    },
+    infoChipText: {
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.muted,
+    },
   });
 }
 
@@ -218,12 +226,44 @@ type BubbleStyles = ReturnType<typeof createStyles>;
 // Part renderers
 // ----------------------------------------------------------
 
-/** Render a text part — user gets plain text, assistant gets Markdown */
-function TextPartView({ part, isUser, styles }: { part: TextPart; isUser: boolean; styles: BubbleStyles }) {
+/** Render a text part — user gets plain text, assistant gets Markdown.
+ *  While streaming, split at the last paragraph boundary: the settled prefix
+ *  goes through one memo'd <Markdown> (its children only change when a new
+ *  paragraph completes — no re-parse per frame) and only the short tail
+ *  re-parses per flush. Cuts re-parse cost from O(message) to O(paragraph). */
+function TextPartView({ part, isUser, streaming, styles }: { part: TextPart; isUser: boolean; streaming?: boolean; styles: BubbleStyles }) {
   if (isUser) {
     return <Text style={styles.userText}>{part.text}</Text>;
   }
+  if (streaming) {
+    const breakIdx = safeStreamBreakIndex(part.text);
+    if (breakIdx > 0) {
+      const settled = part.text.slice(0, breakIdx);
+      const tail = part.text.slice(breakIdx + 2);
+      return (
+        <>
+          <Markdown>{settled}</Markdown>
+          {tail.length > 0 && <Markdown>{tail}</Markdown>}
+        </>
+      );
+    }
+  }
   return <Markdown>{part.text}</Markdown>;
+}
+
+/** Pick a split point for the streaming tail-split that never lands INSIDE a
+ *  fenced code block — blank lines are common inside fences, and splitting
+ *  there rendered half a fence as auto-closed code and the rest as prose
+ *  (# comments became headings). Returns -1 when no safe break exists. */
+function safeStreamBreakIndex(text: string): number {
+  if (text.length > 50_000) return -1; // perf guard — render whole, skip split
+  let idx = text.lastIndexOf('\n\n');
+  while (idx > 0) {
+    const fenceCount = (text.slice(0, idx).match(/^(```|~~~)/gm) ?? []).length;
+    if (fenceCount % 2 === 0) return idx; // even fences = break is outside a block
+    idx = text.lastIndexOf('\n\n', idx - 1);
+  }
+  return -1;
 }
 
 /** Collapsible reasoning/thinking block */
@@ -327,10 +367,17 @@ function StepView({ part, styles }: { part: AIPart; styles: BubbleStyles }) {
 }
 
 /** Dispatch a part to its renderer */
-function MessagePartView({ part, isUser, styles, colors }: { part: AIPart; isUser: boolean; styles: BubbleStyles; colors: Colors }) {
+function MessagePartView({ part, isUser, streaming, styles, colors }: { part: AIPart; isUser: boolean; streaming?: boolean; styles: BubbleStyles; colors: Colors }) {
   switch (part.type) {
     case 'text':
-      return <TextPartView part={part} isUser={isUser} styles={styles} />;
+      return <TextPartView part={part} isUser={isUser} streaming={streaming} styles={styles} />;
+    case 'info':
+      return (
+        <View style={styles.infoChipRow}>
+          <Scissors size={11} color={colors.fg.muted} />
+          <Text style={styles.infoChipText}>{(part as any).text}</Text>
+        </View>
+      );
     case 'reasoning':
       return <ReasoningPartView part={part} styles={styles} colors={colors} />;
     case 'tool-call':
@@ -367,6 +414,24 @@ function MessagePartView({ part, isUser, styles, colors }: { part: AIPart; isUse
   }
 }
 
+/** Blinking caret while the assistant streams. */
+const StreamingCursor = memo(function StreamingCursor({ styles }: { styles: BubbleStyles }) {
+  const opacity = useSharedValue(1);
+  useEffect(() => {
+    opacity.value = withRepeat(
+      withSequence(withTiming(0.15, { duration: 420 }), withTiming(1, { duration: 420 })),
+      -1,
+    );
+    return () => cancelAnimation(opacity);
+  }, [opacity]);
+  const animated = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return (
+    <View style={styles.streamingCursor}>
+      <Reanimated.View style={[styles.cursor, animated]} />
+    </View>
+  );
+});
+
 // ----------------------------------------------------------
 // Main component
 // ----------------------------------------------------------
@@ -398,21 +463,14 @@ export const MessageBubble = memo(function MessageBubble({ message }: MessageBub
     );
   }
 
-  // Assistant message — left-aligned, full width, render all parts
+  // Assistant message — full width, left-border marks the AI side
   return (
     <View style={styles.assistantRow}>
-      <View style={styles.assistantIcon}>
-        <Sparkles size={14} color={colors.accent.primary} />
-      </View>
       <View style={styles.assistantContent}>
         {parts.map((part, i) => (
-          <MessagePartView key={`${part.type}-${(part as any).id ?? i}`} part={part} isUser={false} styles={styles} colors={colors} />
+          <MessagePartView key={`${part.type}-${(part as any).id ?? i}`} part={part} isUser={false} streaming={message.streaming} styles={styles} colors={colors} />
         ))}
-        {message.streaming && (
-          <View style={styles.streamingCursor}>
-            <View style={styles.cursor} />
-          </View>
-        )}
+        {message.streaming && <StreamingCursor styles={styles} />}
       </View>
     </View>
   );

@@ -13,6 +13,19 @@ import type { Session } from './domain-types';
 
 export type PluginSettingFieldType = 'boolean' | 'string' | 'number' | 'select';
 
+/** Color palette used to render a syntax-highlighted snippet preview next to a
+ *  select option (e.g. editor theme swatches). All fields are CSS color
+ *  strings. Only `bg`/`fg` are required; token roles are optional. */
+export interface SettingOptionPreview {
+  bg: string;
+  fg: string;
+  comment?: string;
+  keyword?: string;
+  string?: string;
+  func?: string;
+  number?: string;
+}
+
 export type PluginSettingField =
   | { key: string; type: 'boolean'; label: string; description?: string; default: boolean }
   | { key: string; type: 'string'; label: string; description?: string; default: string; placeholder?: string }
@@ -23,7 +36,14 @@ export type PluginSettingField =
       label: string;
       description?: string;
       default: string;
-      options: Array<{ value: string; label: string; description?: string }>;
+      options: Array<{
+        value: string;
+        label: string;
+        description?: string;
+        /** When present, the picker renders a code-snippet preview using this
+         *  palette (used by the editor theme picker for a live preview). */
+        preview?: SettingOptionPreview;
+      }>;
     };
 
 export interface PluginSettingsSection {
@@ -53,6 +73,9 @@ export interface WorkspacePluginPanelProps {
   session: Session;
   bottomBarHeight: number;
   initialState?: Record<string, unknown>;
+  /** Open the workspace SessionDrawer. Needed by hideHeader plugins (the
+   *  hamburger normally lives in PluginHeader). */
+  onOpenDrawer?: () => void;
 }
 
 export type PluginPanelProps = WorkspacePluginPanelProps;
@@ -107,6 +130,20 @@ interface PluginDefinitionBase {
    * Use for full-bleed plugins that manage their own top chrome (e.g. terminal).
    */
   hideHeader?: boolean;
+  /**
+   * When true, this plugin has a multi-session list worth showing in the
+   * SessionDrawer (search + list + "New" — e.g. AI chats, terminal sessions,
+   * browser tabs). When false/omitted, the drawer shows just the plugin name
+   * (no empty "No sessions for this tool" placeholder).
+   */
+  supportsSessions?: boolean;
+  /**
+   * Custom drawer body for this plugin (replaces the session list). The editor
+   * uses this to show its file tree in the sidebar, explorer-style. Static on
+   * the definition (like `settings`) so component identity is stable —
+   * registrations re-created per render would churn it.
+   */
+  drawerContent?: ComponentType<{ session: Session; close: () => void }>;
 }
 
 // ----------------------------------------------------------
@@ -145,6 +182,8 @@ export interface SessionRegistration {
   onSelectSession: (sessionId: string) => void;
   onCreateSession?: () => void;
   createLabel?: string;
+  /** When present, drawer rows get a close (X) affordance — e.g. browser tabs. */
+  onCloseSession?: (sessionId: string) => void;
 }
 
 export interface SessionEntry {

@@ -12,6 +12,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useConnectionStore } from '../../../stores/connection';
+import { isImage } from './language-map';
 
 // ----------------------------------------------------------
 // Types
@@ -126,6 +127,23 @@ export const useEditorStore = create<EditorStoreState>()(
 
         // Fetch from server
         try {
+          // Raster images never go through fs.read — the utf-8 round-trip
+          // corrupts bytes. EditorSurface previews them via the /file HTTP
+          // endpoint instead; mark loaded with empty content immediately.
+          if (isImage(path)) {
+            set((s) => {
+              const files = s.openFilesBySession[sessionId] ?? [];
+              return {
+                openFilesBySession: {
+                  ...s.openFilesBySession,
+                  [sessionId]: files.map((f) =>
+                    f.path === path ? { ...f, content: '', loading: false } : f,
+                  ),
+                },
+              };
+            });
+            return;
+          }
           const client = useConnectionStore.getState().getClientForServer(serverId);
           if (!client) {
             throw new Error('Not connected to server');

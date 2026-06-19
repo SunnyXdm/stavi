@@ -19,6 +19,7 @@ import type {
   SendTurnInput,
   ApprovalDecision,
   ModelCapabilities,
+  ProviderSlashCommand,
 } from './types';
 import {
   textDelta,
@@ -31,11 +32,14 @@ import {
   turnError,
   approvalRequired,
   userInputRequired,
+  compactBoundary,
+  planProposed,
   type UserInputQuestion,
   type UserInputAnswer,
 } from './types';
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 
 // ----------------------------------------------------------
 // Constants
@@ -49,28 +53,83 @@ const CLAUDE_DEFAULT_CAPABILITIES: ModelCapabilities = {
   promptInjectedEffortLevels: [],
 };
 
+// Catalog mirrors t3code's ClaudeProvider BUILT_IN_MODELS (2026-06 sync).
+// The Claude CLI has no model-list RPC, so like t3code we ship a static
+// catalog and gate the newest models on the installed CLI version
+// (`claude --version`), filtered in getModels().
+
+const FULL_EFFORT_LEVELS = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High', isDefault: true },
+  { value: 'xhigh', label: 'Extra High' },
+  { value: 'max', label: 'Max' },
+  { value: 'ultracode', label: 'Ultracode' },
+  { value: 'ultrathink', label: 'Ultrathink' },
+];
+
+const WIDE_CONTEXT_OPTIONS = [
+  { value: '200k', label: '200k', isDefault: true },
+  { value: '1m', label: '1M' },
+];
+
+// Minimum `claude --version` required for the newest models (t3code parity).
+const CLAUDE_MODEL_MIN_CLI_VERSION: Record<string, string> = {
+  'claude-fable-5': '2.1.169',
+  'claude-opus-4-8': '2.1.154',
+  'claude-opus-4-7': '2.1.111',
+};
+
 const CLAUDE_MODELS: ModelInfo[] = [
   {
-    id: 'claude-sonnet-4-6',
-    name: 'Claude Sonnet 4.6',
+    id: 'claude-fable-5',
+    name: 'Claude Fable 5',
     provider: 'claude',
     supportsThinking: true,
     maxTokens: 16384,
     contextWindow: 200000,
-    isDefault: true,
+    capabilities: {
+      reasoningEffortLevels: FULL_EFFORT_LEVELS,
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: WIDE_CONTEXT_OPTIONS,
+      promptInjectedEffortLevels: ['ultrathink'],
+    },
+  },
+  {
+    id: 'claude-opus-4-8',
+    name: 'Claude Opus 4.8',
+    provider: 'claude',
+    supportsThinking: true,
+    maxTokens: 16384,
+    contextWindow: 200000,
+    capabilities: {
+      reasoningEffortLevels: FULL_EFFORT_LEVELS,
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: ['ultrathink'],
+    },
+  },
+  {
+    id: 'claude-opus-4-7',
+    name: 'Claude Opus 4.7',
+    provider: 'claude',
+    supportsThinking: true,
+    maxTokens: 16384,
+    contextWindow: 200000,
     capabilities: {
       reasoningEffortLevels: [
         { value: 'low', label: 'Low' },
         { value: 'medium', label: 'Medium' },
-        { value: 'high', label: 'High', isDefault: true },
+        { value: 'high', label: 'High' },
+        { value: 'xhigh', label: 'Extra High', isDefault: true },
+        { value: 'max', label: 'Max' },
         { value: 'ultrathink', label: 'Ultrathink' },
       ],
-      supportsFastMode: false,
+      supportsFastMode: true,
       supportsThinkingToggle: false,
-      contextWindowOptions: [
-        { value: '200k', label: '200k', isDefault: true },
-        { value: '1m', label: '1M' },
-      ],
+      contextWindowOptions: [],
       promptInjectedEffortLevels: ['ultrathink'],
     },
   },
@@ -91,10 +150,49 @@ const CLAUDE_MODELS: ModelInfo[] = [
       ],
       supportsFastMode: true,
       supportsThinkingToggle: false,
-      contextWindowOptions: [
-        { value: '200k', label: '200k', isDefault: true },
-        { value: '1m', label: '1M' },
+      contextWindowOptions: WIDE_CONTEXT_OPTIONS,
+      promptInjectedEffortLevels: ['ultrathink'],
+    },
+  },
+  {
+    id: 'claude-opus-4-5',
+    name: 'Claude Opus 4.5',
+    provider: 'claude',
+    supportsThinking: true,
+    maxTokens: 16384,
+    contextWindow: 200000,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High', isDefault: true },
+        { value: 'max', label: 'Max' },
       ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  },
+  {
+    id: 'claude-sonnet-4-6',
+    name: 'Claude Sonnet 4.6',
+    provider: 'claude',
+    supportsThinking: true,
+    maxTokens: 16384,
+    contextWindow: 200000,
+    isDefault: true,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High', isDefault: true },
+        { value: 'max', label: 'Max' },
+        { value: 'ultrathink', label: 'Ultrathink' },
+      ],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: WIDE_CONTEXT_OPTIONS,
       promptInjectedEffortLevels: ['ultrathink'],
     },
   },
@@ -115,6 +213,21 @@ const CLAUDE_MODELS: ModelInfo[] = [
   },
 ];
 
+/** Parse "2.1.173 (Claude Code)" → [2, 1, 173]. Returns null when unparsable. */
+function parseCliVersion(raw: string): number[] | null {
+  const m = raw.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+function cliVersionAtLeast(version: number[], minimum: string): boolean {
+  const min = parseCliVersion(minimum)!;
+  for (let i = 0; i < 3; i++) {
+    if (version[i] !== min[i]) return version[i] > min[i];
+  }
+  return true;
+}
+
 // ----------------------------------------------------------
 // Session state
 // ----------------------------------------------------------
@@ -130,9 +243,11 @@ interface ClaudeSession {
   closeFn: (() => void) | null;
   // Pending approval resolvers
   pendingApprovals: Map<string, {
-    resolve: (result: { behavior: string; updatedInput?: unknown; message?: string }) => void;
+    resolve: (result: { behavior: string; updatedInput?: unknown; message?: string; updatedPermissions?: unknown[] }) => void;
     toolName: string;
     toolInput: unknown;
+    /** SDK PermissionUpdate suggestions for "always allow" persistence. */
+    suggestions?: unknown[];
   }>;
   // Pending AskUserQuestion resolvers (keyed by requestId)
   pendingUserInputs: Map<string, {
@@ -148,22 +263,15 @@ function normalizeApprovalDecision(decision: ApprovalDecision): 'accept' | 'reje
 }
 
 function isAutoApprovedClaudeTool(
-  toolName: string,
+  _toolName: string,
   runtimeMode: SendTurnInput['runtimeMode'],
 ): boolean {
-  if (runtimeMode === 'full-access') return true;
-  if (runtimeMode !== 'auto-accept-edits') return false;
-
-  const normalized = toolName.toLowerCase();
-  return [
-    'edit',
-    'write',
-    'multiedit',
-    'replace',
-    'create',
-    'rename',
-    'delete',
-  ].some((token) => normalized.includes(token));
+  // full-access maps to bypassPermissions, but keep the belt-and-braces allow
+  // in case the SDK still consults canUseTool. auto-accept-edits relies on the
+  // SDK's own acceptEdits permissionMode — the old substring list here
+  // (edit/write/create/delete/...) silently auto-approved ANY tool whose name
+  // contained one of those tokens, including MCP tools like delete_record.
+  return runtimeMode === 'full-access';
 }
 
 function formatUserInputAnswersForModel(answers: UserInputAnswer[]): string {
@@ -186,7 +294,11 @@ function formatUserInputAnswersForModel(answers: UserInputAnswer[]): string {
 }
 
 function getClaudeModelInfo(modelId: string | undefined): ModelInfo {
-  return CLAUDE_MODELS.find((model) => model.id === modelId) ?? CLAUDE_MODELS[0];
+  return (
+    CLAUDE_MODELS.find((model) => model.id === modelId) ??
+    CLAUDE_MODELS.find((model) => model.isDefault) ??
+    CLAUDE_MODELS[0]
+  );
 }
 
 function resolveClaudeApiModelId(model: ModelInfo, contextWindow: string | undefined) {
@@ -194,6 +306,55 @@ function resolveClaudeApiModelId(model: ModelInfo, contextWindow: string | undef
     return `${model.id}[1m]`;
   }
   return model.id;
+}
+
+// SDK 0.2.104 only accepts low|medium|high|max. Port of t3code's
+// normalizeClaudeCliEffort: ultrathink is prompt-injected (no CLI effort),
+// ultracode/xhigh degrade to max, and sonnet-4-6 caps at high.
+function normalizeClaudeCliEffort(
+  effort: string | undefined,
+  modelId: string,
+): 'low' | 'medium' | 'high' | 'max' | undefined {
+  if (!effort || effort === 'ultrathink') return undefined;
+  let level = effort;
+  if (level === 'ultracode' || level === 'xhigh') level = 'max';
+  if (level === 'max' && modelId === 'claude-sonnet-4-6') level = 'high';
+  if (level === 'low' || level === 'medium' || level === 'high' || level === 'max') return level;
+  return undefined;
+}
+
+// Minimal seed of universal Claude slash commands, shown until the capability
+// probe returns the installation's real list (descriptions + argument hints +
+// custom/project/plugin commands). Only commands confirmed to work through
+// query() prompts belong here — /clear, /model etc. are interactive-CLI-only
+// and are NOT valid as prompt text.
+const CLAUDE_SLASH_COMMAND_SEED: ProviderSlashCommand[] = [
+  { name: 'compact', description: 'Clear conversation history but keep a summary in context', argumentHint: '<optional custom summarization instructions>' },
+  { name: 'context', description: 'Show current context usage' },
+  { name: 'cost', description: 'Show the total cost and duration of the current session' },
+];
+
+/** Trim/drop-empty + case-insensitive dedupe; later duplicates only backfill
+ *  missing description/argumentHint (t3code parity). */
+function dedupeSlashCommands(commands: ProviderSlashCommand[]): ProviderSlashCommand[] {
+  const byName = new Map<string, ProviderSlashCommand>();
+  for (const cmd of commands) {
+    const name = cmd.name?.trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    const existing = byName.get(key);
+    if (!existing) {
+      byName.set(key, {
+        name,
+        ...(cmd.description?.trim() ? { description: cmd.description.trim() } : {}),
+        ...(cmd.argumentHint?.trim() ? { argumentHint: cmd.argumentHint.trim() } : {}),
+      });
+    } else {
+      if (!existing.description && cmd.description?.trim()) existing.description = cmd.description.trim();
+      if (!existing.argumentHint && cmd.argumentHint?.trim()) existing.argumentHint = cmd.argumentHint.trim();
+    }
+  }
+  return [...byName.values()];
 }
 
 // ----------------------------------------------------------
@@ -206,6 +367,29 @@ export class ClaudeAdapter implements ProviderAdapter {
   private sessions = new Map<string, ClaudeSession>();
   private ready = false;
   private claudeBinaryPath: string | null = null;
+  /** Parsed `claude --version`; null = probe failed (show full catalog). */
+  private cliVersion: number[] | null = null;
+  /** Slash command names discovered from the SDK `init` message. Populated on
+   *  the first turn of any session; names only (no descriptions). */
+  private discoveredSlashCommands: string[] = [];
+  /** Rich command list from the capability probe (descriptions + argument
+   *  hints + custom/project/plugin commands). Highest-priority source. */
+  private richSlashCommands: ProviderSlashCommand[] | null = null;
+  /** Disk-cached command list seeded by the registry before the probe lands,
+   *  so the composer has the full list immediately after a server restart. */
+  private seededSlashCommands: ProviderSlashCommand[] | null = null;
+  /** Wired by the registry to persist probe results across restarts. */
+  private _onCapabilitiesUpdated: ((commands: ProviderSlashCommand[]) => void) | null = null;
+
+  /** Seed the command list from a persisted cache (called by the registry). */
+  seedSlashCommands(commands: ProviderSlashCommand[]): void {
+    if (commands.length) this.seededSlashCommands = dedupeSlashCommands(commands);
+  }
+
+  /** Register a listener for fresh probe results (called by the registry). */
+  onCapabilitiesUpdated(cb: (commands: ProviderSlashCommand[]) => void): void {
+    this._onCapabilitiesUpdated = cb;
+  }
 
   // Callbacks wired at boot (server.ts) to persist / fetch resume cursors.
   // Using callbacks (same pattern as onApprovalRequired) keeps the adapter
@@ -224,6 +408,24 @@ export class ClaudeAdapter implements ProviderAdapter {
 
   constructor(private _getApiKey: () => string | undefined) {}
 
+  /** Probe `claude --version` to gate newest models (t3code parity). */
+  private probeCliVersion(): void {
+    if (!this.claudeBinaryPath) return;
+    try {
+      const out = execSync(`"${this.claudeBinaryPath}" --version`, {
+        encoding: 'utf-8',
+        timeout: 4000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      this.cliVersion = parseCliVersion(out);
+      if (this.cliVersion) {
+        console.log(`[Claude] CLI version: ${this.cliVersion.join('.')}`);
+      }
+    } catch {
+      this.cliVersion = null;
+    }
+  }
+
   async initialize(): Promise<boolean> {
     // Check if `claude` binary is available
     try {
@@ -232,6 +434,8 @@ export class ClaudeAdapter implements ProviderAdapter {
         this.claudeBinaryPath = path;
         this.ready = true;
         console.log(`[Claude] Found binary at: ${path}`);
+        this.probeCliVersion();
+        void this.probeCapabilities();
         return true;
       }
     } catch {
@@ -247,6 +451,8 @@ export class ClaudeAdapter implements ProviderAdapter {
           this.claudeBinaryPath = p;
           this.ready = true;
           console.log(`[Claude] Found binary at: ${p}`);
+          this.probeCliVersion();
+          void this.probeCapabilities();
           return true;
         } catch {
           // continue
@@ -287,7 +493,76 @@ export class ClaudeAdapter implements ProviderAdapter {
   }
 
   getModels(): ModelInfo[] {
-    return CLAUDE_MODELS;
+    // Unknown CLI version (probe failed / API-key mode): show the full
+    // catalog rather than an empty/short picker — t3code does the same.
+    if (!this.cliVersion) return CLAUDE_MODELS;
+    return CLAUDE_MODELS.filter((model) => {
+      const min = CLAUDE_MODEL_MIN_CLI_VERSION[model.id];
+      return !min || cliVersionAtLeast(this.cliVersion!, min);
+    });
+  }
+
+  getSlashCommands(): ProviderSlashCommand[] {
+    // Priority: live probe result > disk-cached seed > minimal built-in seed.
+    // Per-session init messages contribute extra names (no descriptions) so
+    // commands appearing mid-uptime still surface before the next probe.
+    const base = this.richSlashCommands ?? this.seededSlashCommands ?? CLAUDE_SLASH_COMMAND_SEED;
+    const merged = dedupeSlashCommands([
+      ...base,
+      ...this.discoveredSlashCommands.map((name) => ({ name })),
+    ]);
+    return merged.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * Capability probe (t3code pattern): spawn an SDK query whose prompt never
+   * yields — the subprocess completes its local initialization IPC but never
+   * sends an API request — then read initializationResult() for the rich
+   * command list (descriptions, argument hints, user/project/plugin commands).
+   * Fire-and-forget from initialize(); failure degrades to the seed list.
+   */
+  private async probeCapabilities(): Promise<void> {
+    if (!this.claudeBinaryPath) return;
+    const abort = new AbortController();
+    const timeout = setTimeout(() => abort.abort(), 8000);
+    try {
+      const neverYield = (async function* (): AsyncGenerator<SDKUserMessage> {
+        await new Promise<void>((resolve) => {
+          abort.signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      })();
+      const q = query({
+        prompt: neverYield,
+        options: {
+          abortController: abort,
+          persistSession: false,
+          allowedTools: [],
+          // What makes user/project custom commands + plugin commands appear.
+          settingSources: ['user', 'project', 'local'],
+          pathToClaudeCodeExecutable: this.claudeBinaryPath,
+          env: process.env,
+        } as any,
+      });
+      const init = await (q as any).initializationResult();
+      const commands = Array.isArray(init?.commands) ? (init.commands as unknown[]) : [];
+      const parsed = dedupeSlashCommands(
+        commands.map((c: any) => ({
+          name: String(c?.name ?? ''),
+          description: typeof c?.description === 'string' ? c.description : undefined,
+          argumentHint: typeof c?.argumentHint === 'string' ? c.argumentHint : undefined,
+        })),
+      );
+      if (parsed.length) {
+        this.richSlashCommands = parsed;
+        this._onCapabilitiesUpdated?.(parsed);
+        console.log(`[Claude] Capability probe: ${parsed.length} slash commands`);
+      }
+    } catch (err) {
+      console.warn('[Claude] Capability probe failed:', err instanceof Error ? err.message : String(err));
+    } finally {
+      clearTimeout(timeout);
+      abort.abort();
+    }
   }
 
   async startSession(threadId: string, cwd: string): Promise<void> {
@@ -396,7 +671,7 @@ export class ClaudeAdapter implements ProviderAdapter {
         includePartialMessages: true,
         env: process.env,
         model: apiModelId,
-        effort: effort && effort !== 'ultrathink' && effort !== 'xhigh' ? effort as any : undefined,
+        effort: normalizeClaudeCliEffort(effort, modelInfo.id),
         permissionMode:
           input.interactionMode === 'plan'
             ? 'plan'
@@ -405,6 +680,11 @@ export class ClaudeAdapter implements ProviderAdapter {
               : input.runtimeMode === 'auto-accept-edits'
                 ? 'acceptEdits'
                 : undefined,
+        // Required for bypassPermissions on newer CLIs — without it some
+        // versions still prompt (t3code sets the same pair).
+        ...(input.interactionMode !== 'plan' && input.runtimeMode === 'full-access'
+          ? { allowDangerouslySkipPermissions: true }
+          : {}),
         canUseTool: async (toolName: string, toolInput: Record<string, unknown>, opts: any) => {
           // ----------------------------------------------------------
           // AskUserQuestion — intercept the SDK's built-in interactive
@@ -473,6 +753,22 @@ export class ClaudeAdapter implements ProviderAdapter {
             };
           }
 
+          // ----------------------------------------------------------
+          // ExitPlanMode — the model finished planning and proposes a plan.
+          // Surface it as a dedicated plan card (not a raw JSON approval).
+          // Deny-with-instruction (t3code pattern): the message becomes the
+          // tool_result, telling the model to stop and wait for the user.
+          // ----------------------------------------------------------
+          if (toolName === 'ExitPlanMode') {
+            const plan = typeof (toolInput as any)?.plan === 'string' ? (toolInput as any).plan : '';
+            this._planProposedEmitter?.(input.threadId, plan, turnId);
+            return {
+              behavior: 'deny',
+              message:
+                'The plan was shown to the user for review. Stop here and wait — the user will approve the plan or give feedback in their next message.',
+            };
+          }
+
           if (isAutoApprovedClaudeTool(toolName, input.runtimeMode)) {
             return {
               behavior: 'allow',
@@ -485,6 +781,11 @@ export class ClaudeAdapter implements ProviderAdapter {
             resolve: null as any,
             toolName,
             toolInput,
+            // SDK-provided PermissionUpdate suggestions — echoed back as
+            // updatedPermissions on "always allow" so the rule actually
+            // persists for the session (without this, always-allow was a
+            // one-shot accept).
+            suggestions: Array.isArray(opts?.suggestions) ? opts.suggestions : undefined,
           };
           const promise = new Promise<{ behavior: string; updatedInput?: unknown; message?: string }>((resolve) => {
             deferred.resolve = resolve;
@@ -514,6 +815,20 @@ export class ClaudeAdapter implements ProviderAdapter {
       }
 
       if (session.cwd && session.cwd !== '.') {
+        // A nonexistent cwd makes spawn fail ENOENT, which the SDK reports as
+        // "Claude Code native binary not found" — a wild goose chase. Fail
+        // with the real reason instead. (Seen with sessions whose folder
+        // exists on a different server — shared ~/.stavi SQLite.)
+        if (!existsSync(session.cwd)) {
+          // NB arg order is (threadId, error, turnId) — was swapped, showing
+          // the turn id as the error text.
+          yield turnError(
+            input.threadId,
+            `Session folder does not exist on this server: ${session.cwd}`,
+            turnId,
+          );
+          return;
+        }
         queryOptions.cwd = session.cwd;
       }
 
@@ -682,6 +997,28 @@ export class ClaudeAdapter implements ProviderAdapter {
           case 'system': {
             // System messages (notifications)
             const subtype = (message as any).subtype;
+            if (subtype === 'compact_boundary') {
+              // /compact (or auto-compact) finished — context was summarized.
+              const meta = (message as any).compact_metadata ?? {};
+              yield compactBoundary(
+                input.threadId,
+                meta.trigger === 'auto' ? 'auto' : 'manual',
+                Number(meta.pre_tokens ?? 0),
+                turnId,
+              );
+              break;
+            }
+            if (subtype === 'init') {
+              // The init message reports every slash command this installation
+              // exposes. Capture it so the composer can offer the full set.
+              const cmds = (message as any).slash_commands;
+              if (Array.isArray(cmds)) {
+                this.discoveredSlashCommands = cmds.filter(
+                  (c: unknown): c is string => typeof c === 'string' && c.length > 0,
+                );
+              }
+              break;
+            }
             if (subtype === 'error') {
               yield turnError(input.threadId, (message as any).message ?? 'Claude system error', turnId);
               return;
@@ -791,6 +1128,14 @@ export class ClaudeAdapter implements ProviderAdapter {
     this._pendingUserInputEmitter = emitter;
   }
 
+  // Plan-proposed emitter — set by the server to broadcast ExitPlanMode plans
+  private _planProposedEmitter: ((threadId: string, plan: string, turnId: string) => void) | null = null;
+
+  /** Set a callback to emit plan-proposed events (ExitPlanMode interception). */
+  onPlanProposed(emitter: (threadId: string, plan: string, turnId: string) => void) {
+    this._planProposedEmitter = emitter;
+  }
+
   /** Called from server.ts when the mobile client submits the AskUserQuestion form. */
   async respondToUserInput(
     threadId: string,
@@ -846,7 +1191,15 @@ export class ClaudeAdapter implements ProviderAdapter {
 
     const normalizedDecision = normalizeApprovalDecision(decision);
 
-    if (normalizedDecision === 'accept' || normalizedDecision === 'always-allow') {
+    if (normalizedDecision === 'always-allow') {
+      // Echo the SDK's suggested PermissionUpdates back so the rule persists
+      // for the session — without them this was identical to a one-shot accept.
+      pending.resolve({
+        behavior: 'allow',
+        updatedInput: pending.toolInput as Record<string, unknown>,
+        ...(pending.suggestions?.length ? { updatedPermissions: pending.suggestions } : {}),
+      });
+    } else if (normalizedDecision === 'accept') {
       pending.resolve({
         behavior: 'allow',
         updatedInput: pending.toolInput as Record<string, unknown>,
@@ -854,7 +1207,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     } else {
       pending.resolve({
         behavior: 'deny',
-        message: 'User declined tool execution.',
+        message: 'The user declined this tool use. Continue without it; ask the user if you are unsure how to proceed.',
       });
     }
   }

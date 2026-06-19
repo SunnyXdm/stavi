@@ -1,16 +1,40 @@
 // ============================================================
 // Markdown — Themed markdown renderer for AI messages
 // ============================================================
-// Wraps react-native-markdown-display with Stavi's dark theme.
-// Supports code blocks with copy button, inline code, headings,
-// blockquotes, lists, tables, and links.
 
 import React, { memo, useState, useCallback, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import RNMarkdown from 'react-native-markdown-display';
+import Clipboard from '@react-native-clipboard/clipboard';
 import { Copy, Check } from 'lucide-react-native';
 import { useTheme, typography, spacing, radii } from '../../../theme';
 import type { Colors } from '../../../theme';
+import { highlightSpans, scopeColor } from './utils/highlight';
+
+// ----------------------------------------------------------
+// GitHub callout preprocessing
+// ----------------------------------------------------------
+
+const CALLOUT_TYPES: Record<string, { label: string; icon: string }> = {
+  NOTE:      { label: 'Note',      icon: '📌' },
+  TIP:       { label: 'Tip',       icon: '💡' },
+  IMPORTANT: { label: 'Important', icon: '🔔' },
+  WARNING:   { label: 'Warning',   icon: '⚠️' },
+  CAUTION:   { label: 'Caution',   icon: '🔴' },
+};
+
+// Converts > [!NOTE] / > [!WARNING] etc. to styled blockquotes so they
+// render nicely without needing a custom AST rule.
+function preprocessCallouts(md: string): string {
+  return md.replace(
+    /^> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\n/gim,
+    (_, type: string) => {
+      const t = type.toUpperCase();
+      const { label, icon } = CALLOUT_TYPES[t] ?? { label: t, icon: '›' };
+      return `> ${icon} **${label}**\n> \n`;
+    },
+  );
+}
 
 // ----------------------------------------------------------
 // Constants
@@ -43,13 +67,16 @@ const CodeBlock = memo(function CodeBlock({ content, language, compact, colors }
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
-    // TODO: install @react-native-clipboard/clipboard for actual copy
+    Clipboard.setString(content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, []);
+  }, [content]);
 
   const CopyIcon = copied ? Check : Copy;
   const copyColor = copied ? colors.semantic.success : colors.fg.muted;
+
+  // Syntax highlighting: tokenize once per content change; null → plain text.
+  const spans = useMemo(() => highlightSpans(content, language), [content, language]);
 
   return (
     <View style={codeStyles.codeBlock}>
@@ -73,7 +100,17 @@ const CodeBlock = memo(function CodeBlock({ content, language, compact, colors }
           ]}
           selectable
         >
-          {content}
+          {spans
+            ? spans.map((span, i) =>
+                span.scope ? (
+                  <Text key={i} style={{ color: scopeColor(span.scope, colors) ?? colors.fg.secondary }}>
+                    {span.text}
+                  </Text>
+                ) : (
+                  span.text
+                ),
+              )
+            : content}
         </Text>
       </ScrollView>
     </View>
@@ -86,25 +123,21 @@ const CodeBlock = memo(function CodeBlock({ content, language, compact, colors }
 
 function buildRules(compact: boolean, colors: Colors) {
   return {
-    fence: (
-      node: any,
-      _children: any,
-      _parent: any,
-      _styles: any,
-    ) => {
+    fence: (node: any) => {
       const content = node.content?.trim() ?? '';
       const lang = node.info?.trim() ?? undefined;
       return <CodeBlock key={node.key} content={content} language={lang} compact={compact} colors={colors} />;
     },
-    code_block: (
-      node: any,
-      _children: any,
-      _parent: any,
-      _styles: any,
-    ) => {
+    code_block: (node: any) => {
       const content = node.content?.trim() ?? '';
       return <CodeBlock key={node.key} content={content} compact={compact} colors={colors} />;
     },
+    // Wrap tables in a horizontal ScrollView so wide tables don't clip.
+    table: (node: any, children: React.ReactNode) => (
+      <ScrollView key={node.key} horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: spacing[2] }}>
+        <View>{children}</View>
+      </ScrollView>
+    ),
   };
 }
 
@@ -117,9 +150,10 @@ function buildMarkdownStyles(compact: boolean, colors: Colors) {
   const headingScale = compact ? 0.9 : 1;
 
   return StyleSheet.create({
-    // Body text
+    // Body text — use fg.primary for crisp readability (fg.secondary is 72%
+    // opacity in light mode, making long AI responses look washed-out).
     body: {
-      color: colors.fg.secondary,
+      color: colors.fg.primary,
       fontSize,
       lineHeight: fontSize * AI_READING_LINE_HEIGHT,
       letterSpacing: AI_READING_LETTER_SPACING,
@@ -127,7 +161,7 @@ function buildMarkdownStyles(compact: boolean, colors: Colors) {
     },
     paragraph: {
       marginBottom: spacing[2],
-      color: colors.fg.secondary,
+      color: colors.fg.primary,
       fontSize,
       lineHeight: fontSize * AI_READING_LINE_HEIGHT,
       letterSpacing: AI_READING_LETTER_SPACING,
@@ -246,13 +280,13 @@ function buildMarkdownStyles(compact: boolean, colors: Colors) {
     },
     bullet_list_content: {
       flex: 1,
-      color: colors.fg.secondary,
+      color: colors.fg.primary,
       fontSize,
       lineHeight: fontSize * AI_READING_LINE_HEIGHT,
     },
     ordered_list_content: {
       flex: 1,
-      color: colors.fg.secondary,
+      color: colors.fg.primary,
       fontSize,
       lineHeight: fontSize * AI_READING_LINE_HEIGHT,
     },
@@ -312,10 +346,11 @@ export const Markdown = memo(function Markdown({ children, compact = false }: Ma
   const { colors } = useTheme();
   const mdStyles = useMemo(() => buildMarkdownStyles(compact, colors), [compact, colors]);
   const rules = useMemo(() => buildRules(compact, colors), [compact, colors]);
+  const content = useMemo(() => preprocessCallouts(children || ''), [children]);
 
   return (
     <RNMarkdown style={mdStyles} rules={rules}>
-      {children || ''}
+      {content}
     </RNMarkdown>
   );
 });

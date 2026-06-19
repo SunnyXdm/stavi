@@ -114,8 +114,77 @@ export async function handleTurnStart(
   activeTurnAdapters.set(threadId, providerKind ?? adapter.provider);
 
   (async () => {
+    // ----------------------------------------------------------
+    // Streaming throttles. The Claude SDK emits 10-50 deltas/sec; broadcasting
+    // the full accumulated text per delta is O(n²) bytes on the wire, and a
+    // SQLite write per delta is hundreds of writes per turn. Coalesce:
+    //   - WS broadcast: at most every STREAM_FLUSH_MS (trailing timer so the
+    //     tail is never dropped)
+    //   - DB write: at most every DB_FLUSH_MS (final write on completion)
+    // The client merges accumulated snapshots, so skipping intermediates is
+    // lossless (streaming.ts mergeStreamingText handles both shapes).
+    // ----------------------------------------------------------
+    const STREAM_FLUSH_MS = 60;
+    const DB_FLUSH_MS = 300;
+    let fullText = '';
+    let lastBroadcast = 0;
+    let lastDbWrite = 0;
+    let textTimer: ReturnType<typeof setTimeout> | null = null;
+    let thinkingBuffer = '';
+    let thinkingTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flushText = () => {
+      const streamingMsg: OrchestrationMessage = { ...assistantStart, text: fullText, streaming: true };
+      messages.set(threadId, (messages.get(threadId) ?? []).map((m) =>
+        m.messageId === assistantMessageId ? streamingMsg : m,
+      ));
+      broadcastOrchestrationEvent({
+        type: 'thread.message-sent',
+        occurredAt: nowIso(),
+        payload: streamingMsg,
+      });
+      const now = Date.now();
+      if (now - lastDbWrite >= DB_FLUSH_MS) {
+        lastDbWrite = now;
+        ctx.messageRepo.replaceMessage(assistantMessageId, streamingMsg);
+      }
+    };
+
+    const flushThinking = () => {
+      if (!thinkingBuffer) return;
+      const text = thinkingBuffer;
+      thinkingBuffer = '';
+      broadcastOrchestrationEvent({
+        type: 'thread.activity-appended',
+        occurredAt: nowIso(),
+        payload: { threadId, turnId, type: 'reasoning', text },
+      });
+    };
+
+    const stopStreamTimers = () => {
+      if (textTimer) { clearTimeout(textTimer); textTimer = null; }
+      if (thinkingTimer) { clearTimeout(thinkingTimer); thinkingTimer = null; }
+      flushThinking();
+    };
+
+    // Resolve any approvals left pending when the turn ends (interrupt, error,
+    // completion with an unanswered card) — broadcast so every client clears
+    // its card instead of showing a ghost forever.
+    const clearPendingApprovals = () => {
+      const pend = ctx.pendingApprovals.get(threadId);
+      if (pend?.length) {
+        for (const p of pend) {
+          broadcastOrchestrationEvent({
+            type: 'thread.approval-resolved',
+            occurredAt: nowIso(),
+            payload: { threadId, requestId: p.requestId, decision: 'cancelled' },
+          });
+        }
+      }
+      ctx.pendingApprovals.delete(threadId);
+    };
+
     try {
-      let fullText = '';
       const stream = adapter.sendTurn({
         threadId,
         text: userMessage.text,
@@ -129,25 +198,29 @@ export async function handleTurnStart(
         switch (event.type) {
           case 'text-delta': {
             fullText += String(event.data.text ?? '');
-            const streamingMsg: OrchestrationMessage = { ...assistantStart, text: fullText, streaming: true };
-            messages.set(threadId, (messages.get(threadId) ?? []).map((m) =>
-              m.messageId === assistantMessageId ? streamingMsg : m,
-            ));
-            ctx.messageRepo.replaceMessage(assistantMessageId, streamingMsg);
-            broadcastOrchestrationEvent({
-              type: 'thread.message-sent',
-              occurredAt: nowIso(),
-              payload: streamingMsg,
-            });
+            const now = Date.now();
+            if (now - lastBroadcast >= STREAM_FLUSH_MS) {
+              lastBroadcast = now;
+              if (textTimer) { clearTimeout(textTimer); textTimer = null; }
+              flushText();
+            } else if (!textTimer) {
+              textTimer = setTimeout(() => {
+                textTimer = null;
+                lastBroadcast = Date.now();
+                flushText();
+              }, STREAM_FLUSH_MS);
+            }
             break;
           }
 
           case 'thinking-delta': {
-            broadcastOrchestrationEvent({
-              type: 'thread.activity-appended',
-              occurredAt: nowIso(),
-              payload: { threadId, turnId, type: 'reasoning', text: String(event.data.text ?? '') },
-            });
+            thinkingBuffer += String(event.data.text ?? '');
+            if (!thinkingTimer) {
+              thinkingTimer = setTimeout(() => {
+                thinkingTimer = null;
+                flushThinking();
+              }, STREAM_FLUSH_MS);
+            }
             break;
           }
 
@@ -195,12 +268,27 @@ export async function handleTurnStart(
           }
 
           case 'approval-required': {
+            // Track in ctx so snapshots rehydrate pending cards after reload
+            // (codex path — claude approvals are tracked by the server.ts
+            // emitter wiring; this stream never carries claude approvals).
+            const requestId = String(event.data.requestId ?? '');
+            const list = ctx.pendingApprovals.get(threadId) ?? [];
+            list.push({
+              requestId,
+              threadId,
+              turnId,
+              toolName: String(event.data.toolName ?? ''),
+              toolInput: event.data.toolInput,
+              provider: providerKind ?? adapter.provider,
+              requestedAt: nowIso(),
+            });
+            ctx.pendingApprovals.set(threadId, list);
             broadcastOrchestrationEvent({
               type: 'thread.approval-response-requested',
               occurredAt: nowIso(),
               payload: {
                 threadId, turnId,
-                requestId: String(event.data.requestId ?? ''),
+                requestId,
                 toolName: String(event.data.toolName ?? ''),
                 toolInput: event.data.toolInput,
               },
@@ -208,8 +296,26 @@ export async function handleTurnStart(
             break;
           }
 
+          case 'compact-boundary': {
+            // /compact (or auto-compact) summarized the conversation — render
+            // an info marker in the timeline and let the client reset its
+            // context-usage display.
+            broadcastOrchestrationEvent({
+              type: 'thread.compaction',
+              occurredAt: nowIso(),
+              payload: {
+                threadId, turnId,
+                trigger: event.data.trigger,
+                preTokens: event.data.preTokens,
+              },
+            });
+            break;
+          }
+
           case 'turn-complete': {
             activeTurnAdapters.delete(threadId);
+            stopStreamTimers();
+            clearPendingApprovals();
             const finalMessage: OrchestrationMessage = { ...assistantStart, text: fullText, streaming: false };
             messages.set(threadId, (messages.get(threadId) ?? []).map((m) =>
               m.messageId === assistantMessageId ? finalMessage : m,
@@ -235,6 +341,8 @@ export async function handleTurnStart(
 
           case 'turn-error': {
             activeTurnAdapters.delete(threadId);
+            stopStreamTimers();
+            clearPendingApprovals();
             const errorText = fullText
               ? `${fullText}\n\n---\n\n_Error: ${event.data.error}_`
               : `_Error: ${event.data.error}_`;
@@ -257,6 +365,8 @@ export async function handleTurnStart(
       }
     } catch (err) {
       activeTurnAdapters.delete(threadId);
+      stopStreamTimers();
+      clearPendingApprovals();
       const errMsg = err instanceof Error ? err.message : 'Unknown provider error';
       const errorMessage: OrchestrationMessage = {
         ...assistantStart,

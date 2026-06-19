@@ -5,10 +5,11 @@
 import React, { useState, useCallback, memo, useMemo } from 'react';
 import {
   View, Text, StyleSheet, Pressable, ScrollView,
-  Modal, TextInput, ActivityIndicator, Alert,
+  Modal, TextInput, ActivityIndicator,
 } from 'react-native';
 import { GitCommit, X, Check } from 'lucide-react-native';
 import { useTheme, typography, spacing, radii } from '../../../../theme';
+import { showAlert } from '../../../../components/sheets/AppSheets';
 import type { Colors } from '../../../../theme';
 import type { GitFile } from '../hooks/useGit';
 
@@ -69,7 +70,7 @@ export const CommitSheet = memo(function CommitSheet({
       setMessage('');
       onClose();
     } catch (err) {
-      Alert.alert('Commit failed', err instanceof Error ? err.message : 'Unknown error');
+      void showAlert({ title: 'Commit failed', message: err instanceof Error ? err.message : 'Unknown error' });
     } finally {
       setCommitting(false);
     }

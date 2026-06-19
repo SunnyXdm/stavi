@@ -29,12 +29,20 @@ import { providerBrands } from '../../../theme/provider-brands';
 // Types
 // ----------------------------------------------------------
 
+export interface ProviderSlashCommand {
+  name: string;
+  description?: string;
+  /** e.g. "<file>" — shown as an inline input hint in the composer menu. */
+  argumentHint?: string;
+}
+
 export interface ProviderInfo {
   provider: string;
   name: string;
   installed: boolean;
   authenticated: boolean;
   models: ModelInfo[];
+  slashCommands?: ProviderSlashCommand[];
   error?: string;
 }
 

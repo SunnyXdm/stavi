@@ -48,7 +48,11 @@ export const EditorTabs = React.memo(function EditorTabs({ sessionId }: EditorTa
     tab: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing[3], height: 36, maxWidth: 180, gap: spacing[1], borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.divider },
     tabActive: { backgroundColor: colors.bg.base, borderBottomWidth: 2, borderBottomColor: colors.accent.primary },
     tabIcon: { flexShrink: 0 },
-    tabText: { flex: 1, fontSize: typography.fontSize.xs, color: colors.fg.muted, fontFamily: typography.fontFamily.mono },
+    // flexShrink (NOT flex: 1): inside a horizontal ScrollView the tab's width is
+    // intrinsic, so flex: 1 (flexBasis 0) collapses the label to 0 width — the
+    // "tabs show only a close icon" bug. flexShrink lets long names ellipsize
+    // against the tab's maxWidth while short names size naturally.
+    tabText: { flexShrink: 1, fontSize: typography.fontSize.xs, color: colors.fg.muted, fontFamily: typography.fontFamily.mono },
     tabTextActive: { color: colors.fg.primary },
     dirtyDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.semantic.warning, flexShrink: 0 },
     dirtyDotActive: { backgroundColor: colors.accent.primary },

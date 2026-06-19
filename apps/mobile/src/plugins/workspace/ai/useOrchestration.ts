@@ -20,6 +20,7 @@ import { processEventInner } from './utils/event-reducer';
 import { rawMessageToAIMessage } from './utils/event-helpers';
 import { useOrchestrationActions } from './hooks/useOrchestrationActions';
 import { useThreadManager } from './hooks/useThreadManager';
+import { notifyAgentEvent, primeNotifications } from '../../../services/notifications';
 
 // ----------------------------------------------------------
 // Types
@@ -104,6 +105,14 @@ export interface UserInputRequest {
   pending: boolean;
 }
 
+// ExitPlanMode proposal — rendered as a PlanCard with Approve / Keep planning.
+export interface PlanProposal {
+  threadId: string;
+  turnId?: string;
+  plan: string;
+  pending: boolean;
+}
+
 export interface ThreadActivity {
   threadId: string;
   type: string;
@@ -118,6 +127,7 @@ export interface OrchestrationState {
   activities: Map<string, ThreadActivity[]>;
   approvals: Map<string, ApprovalRequest[]>;
   userInputs: Map<string, UserInputRequest[]>;
+  planProposals: Map<string, PlanProposal>;
   activeThreadId: string | null;
   loading: boolean;
   snapshotSequence: number;
@@ -144,7 +154,9 @@ export function useOrchestration(input?: {
   const activeConnectionId = input?.serverId ?? 'local';
   // Phase 8e fix: reactive selector (was non-reactive .getState() call).
   const connectionState = useConnectionStore((s) => s.getServerStatus(activeConnectionId));
-  const client = useConnectionStore.getState().getClientForServer(activeConnectionId);
+  // Reactive selector (was non-reactive .getState() call): picks up the client
+  // once the runtime connection exists, without mutating the store during render.
+  const client = useConnectionStore((s) => s.connectionsById[activeConnectionId]?.client);
 
   const projectsRef = useRef<any[]>([]);
   const serverConfigRef = useRef<any>(null);
@@ -157,6 +169,7 @@ export function useOrchestration(input?: {
     activities: new Map(),
     approvals: new Map(),
     userInputs: new Map(),
+    planProposals: new Map(),
     activeThreadId: null,
     loading: true,
     snapshotSequence: 0,
@@ -165,6 +178,10 @@ export function useOrchestration(input?: {
   });
 
   useEffect(() => { activeThreadIdRef.current = state.activeThreadId; }, [state.activeThreadId]);
+
+  // Ask for notification permission while foreground — agent events fire when
+  // backgrounded, where the Android 13+ dialog can't appear.
+  useEffect(() => { primeNotifications(); }, []);
 
   const unsubRef = useRef<(() => void) | null>(null);
   const coalescerRef = useRef<ReturnType<typeof createCoalescingUpdater> | null>(null);
@@ -200,11 +217,22 @@ export function useOrchestration(input?: {
   // ----------------------------------------------------------
 
   // Stable ref for event reducer context — primitives are constant for the hook's lifetime.
-  const reducerCtxRef = useRef({ instanceId, activeConnectionId, sessionId, activeThreadIdRef });
+  const reducerCtxRef = useRef({ instanceId, activeConnectionId, sessionId, activeThreadIdRef, preferredWorktreePath });
 
   const processEvent = useCallback((event: any) => {
     const eventType = event.type;
     console.log('[Orchestration] Event:', eventType, event.payload?.threadId ?? '', event.payload?.role ?? '', event.payload?.streaming ?? '');
+
+    // Background notifications (no-ops while the app is foregrounded).
+    const p = event.payload ?? {};
+    if (eventType === 'thread.approval-response-requested') {
+      notifyAgentEvent('approval', p.toolName ? `Allow ${p.toolName}?` : 'A tool call needs your approval', p.threadId);
+    } else if (eventType === 'thread.user-input-requested') {
+      const q = Array.isArray(p.questions) ? p.questions[0]?.question ?? p.questions[0]?.text : undefined;
+      notifyAgentEvent('user-input', typeof q === 'string' ? q : 'The agent is asking for input', p.threadId);
+    } else if (eventType === 'thread.message-sent' && p.role === 'assistant' && !p.streaming) {
+      notifyAgentEvent('turn-done', typeof p.text === 'string' && p.text ? p.text : 'Reply ready', p.threadId);
+    }
 
     if (eventType === 'thread.message-sent' && event.payload?.streaming) {
       coalescer.enqueue((prev) => processEventInner(prev, event, reducerCtxRef.current));
@@ -253,7 +281,16 @@ export function useOrchestration(input?: {
         console.log('[Orchestration] Projects:', (snapshot.projects || []).length, 'Threads:', (snapshot.threads || []).length);
         console.log('[Orchestration] Server CWD:', serverCwd);
 
-        const threads: Thread[] = (snapshot.threads || []).map((t: any) => ({
+        // Scope threads to THIS workspace. The server returns every thread it
+        // knows (all workspaces); without this filter the AI tab showed other
+        // workspaces' chats. thread.create stamps worktreePath = the workspace
+        // folder, so matching on it isolates correctly. (If this workspace has
+        // no folder, fall back to showing all.)
+        const scopedThreads = preferredWorktreePath
+          ? (snapshot.threads || []).filter((t: any) => t.worktreePath === preferredWorktreePath)
+          : (snapshot.threads || []);
+
+        const threads: Thread[] = scopedThreads.map((t: any) => ({
           threadId: t.threadId || t.id,
           projectId: t.projectId,
           title: t.title,
@@ -274,7 +311,7 @@ export function useOrchestration(input?: {
         const approvals = new Map<string, ApprovalRequest[]>();
         const userInputs = new Map<string, UserInputRequest[]>();
 
-        for (const t of snapshot.threads || []) {
+        for (const t of scopedThreads) {
           const tid = t.threadId || t.id;
           if (t.messages) {
             messages.set(tid, t.messages.map((m: any) => ({
@@ -296,20 +333,43 @@ export function useOrchestration(input?: {
               createdAt: a.createdAt,
             })));
           }
+          // Rehydrate pending approval cards — without this, an app reload
+          // while an approval was open deadlocked the turn (server keeps the
+          // Deferred pending, client has nothing to answer with).
+          const snapshotApprovals = t.session?.pendingApprovals;
+          if (Array.isArray(snapshotApprovals) && snapshotApprovals.length) {
+            approvals.set(tid, snapshotApprovals.map((p: any) => ({
+              threadId: tid,
+              requestId: String(p.requestId ?? ''),
+              toolName: p.toolName,
+              toolInput: p.toolInput,
+              pending: true,
+            })));
+          }
         }
 
         const validThreadIds = new Set(threads.map((t) => t.threadId));
         useAiBindingsStore.getState().reconcile(activeConnectionId, sessionId, validThreadIds);
 
-        const boundThreadId = instanceId
-          ? useAiBindingsStore.getState().getBoundThreadId({ serverId: activeConnectionId, sessionId, instanceId }) ?? null
+        // Restore the active thread: the tab's binding → this workspace's
+        // last-active thread (persisted) → the most recently updated thread →
+        // none. So reopening the AI tab lands on your last chat, not a blank.
+        const exists = (id: string | null | undefined) => !!id && threads.some((t) => t.threadId === id);
+        const bound = instanceId
+          ? useAiBindingsStore.getState().getBoundThreadId({ serverId: activeConnectionId, sessionId, instanceId })
+          : undefined;
+        const lastActive = useAiBindingsStore.getState().getLastActive(activeConnectionId, sessionId);
+        const ts = (v: unknown) => (v ? new Date(v as string | number).getTime() || 0 : 0);
+        const mostRecent = [...threads].sort((a, b) => ts(b.updatedAt) - ts(a.updatedAt))[0]?.threadId;
+        const activeThreadId = exists(bound) ? bound!
+          : exists(lastActive) ? lastActive!
+          : exists(mostRecent) ? mostRecent!
           : null;
-        const activeThreadId =
-          boundThreadId && threads.some((t) => t.threadId === boundThreadId) ? boundThreadId : null;
         activeThreadIdRef.current = activeThreadId;
 
         setState({
           threads, messages, aiMessages: aiMsgs, activities, approvals, userInputs,
+          planProposals: new Map(),
           activeThreadId, loading: false,
           snapshotSequence: snapshot.snapshotSequence || 0,
           providers, serverCwd,

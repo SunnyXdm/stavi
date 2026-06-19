@@ -13,6 +13,7 @@
 
 import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Platform, Text, View, StyleSheet } from 'react-native';
+import Reanimated from 'react-native-reanimated';
 import { SquareTerminal, AlertTriangle } from 'lucide-react-native';
 import type {
   WorkspacePluginDefinition,
@@ -22,12 +23,13 @@ import type { TerminalPluginAPI } from '@stavi/shared';
 import { useTheme, spacing, typography } from '../../../theme';
 import { EmptyView, ErrorView, LoadingView } from '../../../components/StateViews';
 import NativeTerminal, { type NativeTerminalRef } from '../../../components/NativeTerminal';
-import { TerminalToolbar } from '../../../components/TerminalToolbar';
+import { TerminalToolbar, applyCtrl } from '../../../components/TerminalToolbar';
 import { useConnectionStore } from '../../../stores/connection';
 import { useSessionRegistry } from '../../../stores/session-registry';
 import { usePluginSetting } from '../../../stores/plugin-settings-store';
 import { eventBus } from '../../../services/event-bus';
 import { logEvent } from '../../../services/telemetry';
+import { useKeyboardPanelStyle } from '../../../hooks/useKeyboardPanelStyle';
 import { SkiaTerminalView } from './components/SkiaTerminalView';
 
 // ----------------------------------------------------------
@@ -36,18 +38,22 @@ import { SkiaTerminalView } from './components/SkiaTerminalView';
 //
 // 'webview' → xterm.js in a WebView (battle-tested, cross-platform)
 // 'skia'    → GPU-rendered via @shopify/react-native-skia (iOS-only this release)
-// 'native'  → Termux/SwiftTerm (not yet wired — falls through to 'webview')
+// 'native'  → Termux TerminalView (Android — this IS the Android renderer)
 //
-// Android + 'skia' is not supported yet; we fall back to 'webview' and show a
-// dismissible-style notice banner above the terminal.
+// Ground truth: on Android, <NativeTerminal> always renders the Termux
+// native Fabric view — there is no xterm.js WebView on Android at all
+// (the WebView implementation exists only on iOS). The old labels claimed
+// the opposite, which made the settings screen lie about what's running.
 
 type TerminalBackend = 'webview' | 'skia' | 'native';
 
-function resolveEffectiveBackend(choice: TerminalBackend): 'webview' | 'skia' {
-  // 'native' is declared in the schema but not implemented — fall through.
+function resolveEffectiveBackend(choice: TerminalBackend): 'webview' | 'skia' | 'native' {
+  if (Platform.OS === 'android') {
+    // Android has exactly one implementation: the Termux native view.
+    return 'native';
+  }
+  // iOS: 'native' (SwiftTerm) isn't wired — fall back to the xterm WebView.
   if (choice === 'native') return 'webview';
-  // Skia is iOS-only in this release.
-  if (choice === 'skia' && Platform.OS !== 'ios') return 'webview';
   return choice;
 }
 
@@ -77,12 +83,14 @@ let serverCwd = '.';
 // Panel Component
 // ----------------------------------------------------------
 
-function TerminalPanel({ session }: WorkspacePluginPanelProps) {
+function TerminalPanel({ session, bottomBarHeight, isActive }: WorkspacePluginPanelProps) {
   const { colors } = useTheme();
+  // Keeps the Ctrl key bar riding exactly on the keyboard top (see hook docs).
+  const keyboardPad = useKeyboardPanelStyle(bottomBarHeight ?? 0);
   const backendChoice = usePluginSetting<TerminalBackend>('terminal', 'backend');
   const effectiveBackend = resolveEffectiveBackend(backendChoice ?? 'webview');
-  // Show a small notice when the user picked 'skia' on Android — we fell
-  // back to WebView because Skia is iOS-only in this release.
+  // Show a small notice when the user picked 'skia' on Android — Android
+  // always renders the native Termux terminal.
   const showAndroidSkiaNotice =
     backendChoice === 'skia' && Platform.OS !== 'ios';
   const styles = useMemo(() => StyleSheet.create({
@@ -107,6 +115,8 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
   const defaultCwd = session.folder;
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  // Sticky Ctrl modifier (see TerminalToolbar): armed → next char sent as ctrl.
+  const [ctrlArmed, setCtrlArmed] = useState(false);
   const connectionState = useConnectionStore((s) => s.getStatusForServer(serverId));
   const registerSessions = useSessionRegistry((s) => s.register);
 
@@ -279,16 +289,22 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
     [activeSessionId, getClient],
   );
 
-  // Handle terminal input (user typed something)
+  // Handle terminal input (user typed something). If the sticky Ctrl modifier
+  // is armed, transform the next single character to a control byte and disarm.
   const handleInput = useCallback(
     (threadId: string, data: string) => {
       const client = getClient();
       if (!client || client.getState() !== 'connected') return;
-      client.request('terminal.write', { threadId, data }).catch((err) => {
+      let out = data;
+      if (ctrlArmed) {
+        out = applyCtrl(data);
+        setCtrlArmed(false);
+      }
+      client.request('terminal.write', { threadId, data: out }).catch((err) => {
         console.error('[Terminal] Write error:', err);
       });
     },
-    [getClient],
+    [getClient, ctrlArmed],
   );
 
   // Handle terminal resize
@@ -325,6 +341,21 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
     }
   }, [connectionState, createSession, defaultCwd, sessions.length]);
 
+  // Focus the newly-active terminal so typing works immediately — without
+  // this, the previous (hidden) tab keeps IME focus and keystrokes go to the
+  // wrong PTY until the user taps inside the new one.
+  // MUST be gated on isActive: panels stay mounted (opacity-swapped) when the
+  // user is on another tab, and an invisible terminal grabbing IME focus
+  // would silently route their typing into a hidden shell (e.g. after a WS
+  // reconnect auto-creates a session, or Explorer's "Open in Terminal").
+  useEffect(() => {
+    if (!isActive || !activeSessionId) return;
+    const t = setTimeout(() => {
+      terminalRefs.get(activeSessionId)?.current?.focus();
+    }, 80);
+    return () => clearTimeout(t);
+  }, [activeSessionId, isActive]);
+
   // Subscribe to terminal.openHere cross-plugin event (Phase 4a)
   useEffect(() => {
     const unsub = eventBus.on('terminal.openHere', (payload) => {
@@ -335,7 +366,11 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
     return unsub;
   }, [session.id, connectionState, createSession]);
 
-  // Register sessions with SessionRegistry for PluginHeader / WorkspaceSidebarChats
+  // Register sessions with SessionRegistry for the drawer.
+  // Unregister on unmount so the drawer never shows a previous workspace's
+  // terminals with stale callbacks.
+  const unregisterSessions = useSessionRegistry((s) => s.unregister);
+  useEffect(() => () => unregisterSessions('terminal'), [unregisterSessions]);
   useEffect(() => {
     registerSessions('terminal', {
       sessions: sessions.map((s) => ({
@@ -374,11 +409,11 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
   }
 
   return (
-    <View style={styles.container}>
+    <Reanimated.View style={[styles.container, keyboardPad]}>
       {showAndroidSkiaNotice && (
         <View style={styles.notice}>
           <Text style={styles.noticeText}>
-            Skia backend is iOS-only in this release. Using WebView on Android.
+            Skia backend is iOS-only in this release. Using the native terminal on Android.
           </Text>
         </View>
       )}
@@ -404,42 +439,19 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
                   title="Terminal failed to start"
                   message="Could not open a terminal session on the server."
                   onRetry={() => {
-                    // Replace the errored session: close and reopen
+                    // Discard the errored session and recreate through
+                    // createSession: the old inline re-open never re-ran
+                    // subscribeTerminalEvents, so a "recovered" terminal
+                    // rendered but received no output.
+                    const deadKey = `${session.threadId}:${session.terminalId}`;
+                    sessionUnsubscribes.get(deadKey)?.();
+                    sessionUnsubscribes.delete(deadKey);
+                    terminalRefs.delete(deadKey);
+                    pendingHistory.delete(deadKey);
                     setSessions((prev) =>
-                      prev.map((s) =>
-                        s.threadId === session.threadId
-                          ? { ...s, status: 'connecting' }
-                          : s,
-                      ),
+                      prev.filter((s) => s.threadId !== session.threadId),
                     );
-                    const client = getClient();
-                    if (!client || client.getState() !== 'connected') return;
-                    client
-                      .request('terminal.open', {
-                        threadId: session.threadId,
-                        terminalId: session.terminalId,
-                        cwd: defaultCwd,
-                        cols: 80,
-                        rows: 24,
-                      })
-                      .then(() => {
-                        setSessions((prev) =>
-                          prev.map((s) =>
-                            s.threadId === session.threadId
-                              ? { ...s, status: 'running' }
-                              : s,
-                          ),
-                        );
-                      })
-                      .catch(() => {
-                        setSessions((prev) =>
-                          prev.map((s) =>
-                            s.threadId === session.threadId
-                              ? { ...s, status: 'error' }
-                              : s,
-                          ),
-                        );
-                      });
+                    void createSession(defaultCwd);
                   }}
                 />
               </View>
@@ -492,6 +504,8 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
       {/* Keyboard toolbar — common terminal keys above the keyboard */}
       {activeSessionId && (
         <TerminalToolbar
+          ctrlArmed={ctrlArmed}
+          onToggleCtrl={() => setCtrlArmed((v) => !v)}
           onKey={(data) => {
             const session = sessions.find(
               (s) => `${s.threadId}:${s.terminalId}` === activeSessionId,
@@ -500,7 +514,7 @@ function TerminalPanel({ session }: WorkspacePluginPanelProps) {
           }}
         />
       )}
-    </View>
+    </Reanimated.View>
   );
 }
 
@@ -566,6 +580,7 @@ export const terminalPlugin: WorkspacePluginDefinition = {
   component: TerminalPanel,
   navOrder: 2,
   navLabel: 'Term',
+  supportsSessions: true,
   api: terminalApi,
   settings: {
     sections: [
@@ -577,16 +592,16 @@ export const terminalPlugin: WorkspacePluginDefinition = {
             type: 'select',
             label: 'Rendering backend',
             description: 'Which renderer to use for terminal output',
-            // Platform-aware default: Skia on iOS (GPU, 60fps), WebView on
-            // Android (Skia backend is iOS-only in this release).
-            default: Platform.OS === 'ios' ? 'skia' : 'webview',
+            // Platform-aware default: Skia on iOS (GPU, 60fps); Android always
+            // uses the native Termux view regardless of this setting.
+            default: Platform.OS === 'ios' ? 'skia' : 'native',
             options: [
-              { value: 'webview', label: 'WebView (xterm.js)', description: 'Battle-tested, default on Android' },
+              { value: 'native', label: 'Native (Termux)', description: 'Android default — the only Android renderer. Pinch to zoom text.' },
+              { value: 'webview', label: 'WebView (xterm.js)', description: 'iOS only — Android always uses Native' },
               { value: 'skia', label: 'Skia GPU (Beta)', description: 'iOS only, 60fps native rendering' },
-              { value: 'native', label: 'Native (beta, not yet available)', description: 'SwiftTerm / Termux — falls back to WebView' },
             ],
           },
-          { key: 'fontSize', type: 'number', label: 'Font Size', default: 13, min: 8, max: 24, step: 1 },
+          { key: 'fontSize', type: 'number', label: 'Font Size', description: 'iOS Skia backend only — the Android terminal uses pinch-to-zoom', default: 13, min: 8, max: 24, step: 1 },
         ],
       },
     ],

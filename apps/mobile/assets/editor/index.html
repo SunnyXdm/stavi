@@ -3,9 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:;" />
   <title>Stavi Editor</title>
   <style>
+    /* Fira Code for CodeMirror — theme.ts font stacks list "Fira Code" first. */
+    @font-face {
+      font-family: 'Fira Code';
+      src: url('FiraCode-Regular.ttf') format('truetype');
+      font-weight: 400;
+      font-display: swap;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; overflow: hidden; background: #161616; }
     #editor {

@@ -28,6 +28,7 @@ import { useTheme, typography, spacing, radii } from '../../../theme';
 import type { Colors } from '../../../theme';
 import { ProviderIcon } from './ProviderIcon';
 import { AnimatedPressable } from '../../../components/AnimatedPressable';
+import type { ProviderSlashCommand } from './ConfigSheet';
 
 // ----------------------------------------------------------
 // Types
@@ -65,6 +66,10 @@ interface ComposerProps {
   fastMode?: boolean;
   showFastModeToggle?: boolean;
   contextWindowLabel?: string | null;
+  /** Slash commands for the active provider (e.g. /compact). */
+  slashCommands?: ProviderSlashCommand[];
+  /** Set the interaction mode directly (used by /plan and /default). */
+  onSetMode?: (mode: InteractionMode) => void;
 }
 
 // ----------------------------------------------------------
@@ -154,6 +159,35 @@ function getEffortIcon(effort: EffortLevel, colors: Colors) {
 }
 
 // ----------------------------------------------------------
+// Slash-command menu model + ranking (t3code parity, simplified)
+// ----------------------------------------------------------
+
+type SlashItem =
+  | { kind: 'builtin'; name: string; description: string; action: 'model' | 'plan' | 'default' }
+  | { kind: 'provider'; name: string; description: string; argumentHint?: string };
+
+/** Tiered match score — lower is better; null = no match.
+ *  Name: exact 0, prefix 2, boundary 4 (after - _ /), includes 6, fuzzy 100.
+ *  Description: prefix 22, includes 26. */
+function scoreSlashItem(item: SlashItem, query: string): number | null {
+  const n = item.name.toLowerCase();
+  if (!query) return 0;
+  if (n === query) return 0;
+  if (n.startsWith(query)) return 2;
+  if (n.split(/[-_/]/).some((seg) => seg.startsWith(query))) return 4;
+  if (n.includes(query)) return 6;
+  const d = item.description.toLowerCase();
+  if (d.startsWith(query)) return 22;
+  if (d.includes(query)) return 26;
+  let i = 0;
+  for (const ch of n) {
+    if (ch === query[i]) i += 1;
+    if (i === query.length) return 100;
+  }
+  return null;
+}
+
+// ----------------------------------------------------------
 // Main component
 // ----------------------------------------------------------
 
@@ -179,6 +213,8 @@ export const Composer = memo(function Composer({
   fastMode = false,
   showFastModeToggle = false,
   contextWindowLabel,
+  slashCommands,
+  onSetMode,
 }: ComposerProps) {
   const { colors } = useTheme();
   const styles = useMemo(() => StyleSheet.create({
@@ -255,6 +291,52 @@ export const Composer = memo(function Composer({
     toolbarSpacer: {
       flex: 1,
     },
+    slashMenu: {
+      backgroundColor: colors.bg.overlay,
+      borderRadius: radii.lg,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.divider,
+      marginBottom: spacing[2],
+      overflow: 'hidden',
+    },
+    slashRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing[2],
+      paddingHorizontal: spacing[3],
+      paddingVertical: spacing[2],
+    },
+    slashRowPressed: {
+      backgroundColor: colors.bg.active,
+    },
+    slashName: {
+      fontSize: typography.fontSize.sm,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.primary,
+      fontFamily: typography.fontFamily.mono,
+    },
+    slashDesc: {
+      flex: 1,
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.muted,
+    },
+    slashScroll: { maxHeight: 264 },
+    slashSection: {
+      fontSize: 10,
+      fontWeight: typography.fontWeight.semibold,
+      color: colors.fg.muted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+      paddingHorizontal: spacing[3],
+      paddingTop: spacing[2],
+      paddingBottom: 2,
+    },
+    slashHint: {
+      fontSize: typography.fontSize.xs,
+      color: colors.fg.muted,
+      fontFamily: typography.fontFamily.mono,
+      fontWeight: typography.fontWeight.regular,
+    },
   }), [colors]);
   const chipStyles = useMemo(() => createChipStyles(colors), [colors]);
   const [text, setText] = useState('');
@@ -263,19 +345,124 @@ export const Composer = memo(function Composer({
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed) return;
+    // /plan and /default sent standalone are pure mode switches (t3code
+    // parity) — never dispatched to the agent.
+    const modeMatch = /^\/(plan|default)\s*$/i.exec(trimmed);
+    if (modeMatch && onSetMode) {
+      onSetMode(modeMatch[1].toLowerCase() === 'plan' ? 'plan' : 'default');
+      setText('');
+      return;
+    }
     onSend(trimmed);
     setText('');
-  }, [text, onSend]);
+  }, [text, onSend, onSetMode]);
 
   const handleInterrupt = useCallback(() => {
     onInterrupt?.();
   }, [onInterrupt]);
+
+  // ----------------------------------------------------------
+  // Slash-command menu (t3code parity).
+  // Trigger: the current LINE's prefix up to the cursor matches /^\/(\S*)$/ —
+  // works mid-prompt on any line, closes on whitespace. Items: built-ins
+  // (/model /plan /default) + the provider's commands, ranked by a tiered
+  // name/description match, built-ins first.
+  // ----------------------------------------------------------
+  const [cursor, setCursor] = useState(0);
+  const handleSelectionChange = useCallback((e: { nativeEvent: { selection: { start: number } } }) => {
+    setCursor(e.nativeEvent.selection.start);
+  }, []);
+
+  const lineStart = text.lastIndexOf('\n', Math.max(0, cursor - 1)) + 1;
+  const linePrefix = text.slice(lineStart, cursor);
+  const slashMatch = /^\/(\S*)$/.exec(linePrefix);
+  const slashQuery = slashMatch ? slashMatch[1].toLowerCase() : null;
+
+  const slashItems = useMemo((): SlashItem[] => {
+    if (slashQuery === null) return [];
+    const builtins: SlashItem[] = [
+      { kind: 'builtin', name: 'model', description: 'Switch response model for this thread', action: 'model' },
+      { kind: 'builtin', name: 'plan', description: 'Switch this thread into plan mode', action: 'plan' },
+      { kind: 'builtin', name: 'default', description: 'Switch this thread back to normal build mode', action: 'default' },
+    ];
+    const provider: SlashItem[] = (slashCommands ?? []).map((c) => ({
+      kind: 'provider' as const,
+      name: c.name,
+      description: c.description ?? c.argumentHint ?? 'Run provider command',
+      argumentHint: c.argumentHint,
+    }));
+    const all = [...builtins, ...provider];
+    if (!slashQuery) return all;
+    const ranked = all
+      .map((item) => ({ item, score: scoreSlashItem(item, slashQuery) }))
+      .filter((entry): entry is { item: SlashItem; score: number } => entry.score !== null)
+      .sort((a, b) =>
+        a.score !== b.score
+          ? a.score - b.score
+          // built-ins win ties (t3code tiebreaker)
+          : (a.item.kind === 'builtin' ? 0 : 1) - (b.item.kind === 'builtin' ? 0 : 1));
+    return ranked.map((entry) => entry.item);
+  }, [slashQuery, slashCommands]);
+
+  const selectSlashItem = useCallback((item: SlashItem) => {
+    // Remove the /trigger text from [lineStart, cursor)
+    const before = text.slice(0, lineStart);
+    const after = text.slice(cursor);
+    if (item.kind === 'builtin') {
+      setText(before + after);
+      if (item.action === 'model') onModelPress?.();
+      else onSetMode?.(item.action === 'plan' ? 'plan' : 'default');
+    } else {
+      // Insert `/name ` and keep typing args (trailing-space deduped)
+      const insertion = `/${item.name}` + (after.startsWith(' ') ? '' : ' ');
+      const nextText = before + insertion + after;
+      setText(nextText);
+      const nextCursor = before.length + insertion.length;
+      setCursor(nextCursor);
+      inputRef.current?.focus();
+    }
+  }, [text, lineStart, cursor, onModelPress, onSetMode]);
+
+  const showSlashSections = slashQuery === '';
 
   const hasText = text.trim().length > 0;
   const modelLabel = selectedModel?.modelName || 'Choose model';
 
   return (
     <View style={styles.container}>
+      {/* Slash-command menu — floats above the input while typing /cmd */}
+      {slashItems.length > 0 && (
+        <View style={styles.slashMenu}>
+          <ScrollView style={styles.slashScroll} keyboardShouldPersistTaps="always" nestedScrollEnabled>
+            {slashItems.map((item, idx) => {
+              const showHeader =
+                showSlashSections && (idx === 0 || slashItems[idx - 1].kind !== item.kind);
+              return (
+                <React.Fragment key={`${item.kind}:${item.name}`}>
+                  {showHeader && (
+                    <Text style={styles.slashSection}>
+                      {item.kind === 'builtin' ? 'Built-in' : 'Provider'}
+                    </Text>
+                  )}
+                  <Pressable
+                    style={({ pressed }) => [styles.slashRow, pressed && styles.slashRowPressed]}
+                    onPress={() => selectSlashItem(item)}
+                  >
+                    <Text style={styles.slashName}>
+                      /{item.name}
+                      {item.kind === 'provider' && item.argumentHint ? (
+                        <Text style={styles.slashHint}> {item.argumentHint}</Text>
+                      ) : null}
+                    </Text>
+                    <Text style={styles.slashDesc} numberOfLines={1}>{item.description}</Text>
+                  </Pressable>
+                </React.Fragment>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
       {/* Input row */}
       <View style={styles.inputRow}>
         <TextInput
@@ -283,6 +470,7 @@ export const Composer = memo(function Composer({
           style={styles.input}
           value={text}
           onChangeText={setText}
+          onSelectionChange={handleSelectionChange}
           placeholder={placeholder}
           placeholderTextColor={colors.fg.muted}
           multiline

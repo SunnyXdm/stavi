@@ -3,8 +3,8 @@
 // ============================================================
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Alert } from 'react-native';
 import { useConnectionStore } from '../../../../stores/connection';
+import { showAlert, showConfirm } from '../../../../components/sheets/AppSheets';
 
 // ----------------------------------------------------------
 // Types
@@ -45,12 +45,14 @@ export type TabId = 'changes' | 'history' | 'branches';
 // ----------------------------------------------------------
 
 export function useGit(activeTab: TabId, serverId?: string) {
-  const connectionState = serverId
-    ? useConnectionStore.getState().getServerStatus(serverId)
-    : 'disconnected';
-  const client = serverId
-    ? useConnectionStore.getState().getClientForServer(serverId)
-    : undefined;
+  // Reactive selectors (were non-reactive .getState() reads): status changes
+  // must re-render so the git subscription is re-established after reconnect.
+  const connectionState = useConnectionStore((s) =>
+    serverId ? s.getServerStatus(serverId) : 'disconnected',
+  );
+  const client = useConnectionStore((s) =>
+    serverId ? s.connectionsById[serverId]?.client : undefined,
+  );
   const [status, setStatus] = useState<GitStatus>({
     branch: '', ahead: 0, behind: 0, files: [], loading: true,
   });
@@ -95,7 +97,7 @@ export function useGit(activeTab: TabId, serverId?: string) {
     );
 
     return () => { unsubRef.current?.(); unsubRef.current = null; };
-  }, [connectionState]);
+  }, [connectionState, client]);
 
   // Load history/branches when tab changes
   useEffect(() => {
@@ -110,7 +112,7 @@ export function useGit(activeTab: TabId, serverId?: string) {
         .then((r: { branches: Branch[] }) => setBranches(r.branches || []))
         .catch(() => {});
     }
-  }, [activeTab, connectionState]);
+  }, [activeTab, connectionState, client]);
 
   // -- Actions --
 
@@ -141,19 +143,18 @@ export function useGit(activeTab: TabId, serverId?: string) {
 
   const discard = useCallback(async (paths: string[]) => {
     if (!client) return;
-    Alert.alert('Discard Changes', `Discard changes to ${paths.length} file(s)?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Discard', style: 'destructive',
-        onPress: async () => {
-          setActionLoading(paths[0]);
-          try { await client.request('git.discard', { paths }); } catch (err) {
-            console.error('[Git] Discard error:', err);
-          }
-          setActionLoading(null);
-        },
-      },
-    ]);
+    const confirmed = await showConfirm({
+      title: 'Discard Changes',
+      message: `Discard changes to ${paths.length} file(s)?`,
+      confirmLabel: 'Discard',
+      destructive: true,
+    });
+    if (!confirmed) return;
+    setActionLoading(paths[0]);
+    try { await client.request('git.discard', { paths }); } catch (err) {
+      console.error('[Git] Discard error:', err);
+    }
+    setActionLoading(null);
   }, [client]);
 
   const commit = useCallback(async (message: string) => {
@@ -168,7 +169,7 @@ export function useGit(activeTab: TabId, serverId?: string) {
       const r = await client.request<{ branches: Branch[] }>('git.branches', {});
       setBranches(r.branches || []);
     } catch (err) {
-      Alert.alert('Checkout failed', err instanceof Error ? err.message : 'Unknown error');
+      void showAlert({ title: 'Checkout failed', message: err instanceof Error ? err.message : 'Unknown error' });
     }
   }, [client]);
 
@@ -178,7 +179,7 @@ export function useGit(activeTab: TabId, serverId?: string) {
     try {
       await client.request('git.push', {});
     } catch (err) {
-      Alert.alert('Push failed', err instanceof Error ? err.message : 'Unknown error');
+      void showAlert({ title: 'Push failed', message: err instanceof Error ? err.message : 'Unknown error' });
     }
     setActionLoading(null);
   }, [client]);
@@ -189,7 +190,7 @@ export function useGit(activeTab: TabId, serverId?: string) {
     try {
       await client.request('git.pull', { rebase: true });
     } catch (err) {
-      Alert.alert('Pull failed', err instanceof Error ? err.message : 'Unknown error');
+      void showAlert({ title: 'Pull failed', message: err instanceof Error ? err.message : 'Unknown error' });
     }
     setActionLoading(null);
   }, [client]);

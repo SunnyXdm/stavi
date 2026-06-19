@@ -50,33 +50,32 @@ analysis that prevents re-investigating known bugs.
 | `session-registry.ts` | ❌ | Per-plugin session registration for drawer |
 | `stavi-client.ts` | ❌ | Class-based, not Zustand |
 
-### Known Bugs (Verified)
-- **Security**: `fs.read`(L87)/`write`(L96)/`list`(L209)/`search`(L262) use `resolveWorkspacePath` (no traversal guard) — `fs.create/rename/delete` already use `guardedPath`(L74) correctly
-- **Security**: `/health` endpoint leaks `workspaceRoot` unauthenticated (server.ts:195)
-- **Security**: No `maxPayload` on WebSocket server (server.ts:222, default 100MB → OOM)
-- **Security**: Unconsumed `wsTokens` never pruned (consumed ones are deleted on use)
-- **AI CRITICAL**: Unexpected stream end emits `turnComplete` instead of `turnError` (claude.ts:568-574) — partial responses look complete
-- **AI CRITICAL**: `hasStarted=true` set on error/unexpected end → corrupts resume for future turns (claude.ts:539,574)
-- **AI**: Codex `turn/completed` with `status='error'` emits `turnComplete` not `turnError`
-- **AI**: `textDone` emitted twice (message_stop + result handler) — claude.ts lines 489 and 530
-- **AI**: `stopSession()` exists (claude.ts:669) but is never called on client disconnect or workspace exit — sessions accumulate
-- **AI**: No resume cursor persistence — server restart loses AI session state (messages survive in SQLite, but can't resume conversation)
-- **AI**: Stale client reference in `useOrchestration` (non-reactive `getState()`)
-- **AI**: 8x `(message as any)` type casts — limited type safety on SDK messages
-- **UI**: No ErrorBoundary — one plugin crash takes down the app
-- **UI**: No AppState listener — polling continues when backgrounded
-- **Git plugin**: Non-reactive connection state reads → never re-subscribes after reconnect
-- **Explorer**: Client captured at render → batch ops fail after reconnect
-- **Navigation**: All screens use `NativeStackNavigationProp<any>` — no RootStackParamList type
+### Known Bugs (re-audited 2026-06-11)
+The April bug list is obsolete — a June 2026 code audit confirmed all of these are FIXED in current code:
+path-traversal guards on all fs ops (`guardedPath`, fs.ts), `/health` leak, WS `maxPayload` (5MB, server.ts:395),
+wsToken pruning (60s sweep), claude.ts stream-end → `turnError` without corrupting `hasStarted`,
+codex `status='error'` → `turnError`, `textDone` dedup, `stopAll()` wired to disconnect + shutdown,
+resume-cursor persistence (thread-repo.ts + claude.ts `query({resume})`), root ErrorBoundary (App.tsx),
+AppState listener, and the stale-client reconnect bugs in `useOrchestration`/`useGit`/Explorer
+(fixed 2026-06-11 via reactive `useConnectionStore` selectors).
+
+Still open:
+- **Navigation**: All screens use `NativeStackNavigationProp<any>` — no RootStackParamList type (plans A2)
+- **AI**: 24x `as any` casts in claude.ts — limited type safety on SDK messages
+- **Testing**: No test infrastructure in server-core or mobile. Typecheck: `npm run typecheck` works in both `packages/server-core` and `apps/mobile`.
+- See `plans/14-sibling-recon-2026-06.md` for patterns worth porting from t3code/litter/muxy/lunel.
 
 ### Plugin Registration
-All plugins MUST follow the explicit pattern in `load.ts`: export a plugin object, then `register(plugin, plugin.component)`. Do NOT self-register via `usePluginRegistry.getState().register()` at module scope (the `tools` plugin does this — it should be migrated).
+All plugins MUST follow the explicit pattern in `load.ts`: export a plugin object, then `register(plugin, plugin.component)`. Do NOT self-register via `usePluginRegistry.getState().register()` at module scope. (Historical note: `tools` used to do this; it was migrated — all plugins now register via load.ts.)
 
 ### Theme System
-- Current: dark-mode only. Tokens in `apps/mobile/src/theme/tokens.ts`
-- `lightColors` exists but is inert (not wired to any provider)
-- DESIGN.md specifies a Cursor-inspired warm cream light theme — not yet implemented
-- Target: light/dark/system switching via ThemeProvider context (see `plans/10-stabilization.md`)
+- Light/dark/**system** switching is live via ThemeProvider (`apps/mobile/src/theme/ThemeContext.tsx`); default mode is `system` (`stores/theme-store.ts`, `userSet` flag preserves explicit choices across migrations)
+- Tokens in `apps/mobile/src/theme/tokens.ts` — the light palette is the DESIGN.md Cursor-inspired warm cream
+- Android cold-start `windowBackground` matches `bg.base` per mode (`values/colors.xml` + `values-night/`); `SystemBars` is rendered once in `App.tsx`, not per-screen
+- Known stuck-dark: `NativeTerminal` terminal palette (intentional) and the editor's default `stavi-dark` CodeMirror theme (user-selectable)
+
+### Keyboard Handling
+- Edge-to-edge disables Android `adjustResize` — NEVER use RN `KeyboardAvoidingView` in workspace panels. Use `hooks/useKeyboardPanelStyle(bottomBarHeight)` (react-native-keyboard-controller + reanimated; pad = keyboardHeight − bottomBarHeight). `KeyboardProvider` wraps the app in `App.tsx`. Plain KAV is acceptable only inside Modals (screen-rooted windows).
 
 ### Terminal
 - Current: xterm.js in WebView on both platforms
@@ -107,14 +106,3 @@ All plugins MUST follow the explicit pattern in `load.ts`: export a plugin objec
 | Replit | Both | WebView | AI-first | Pivoted to agents, no terminal power |
 
 **Stavi's gap**: No app combines quality native terminal + AI agent orchestration + SSH to real machines on mobile. Replit went AI-only. Blink went terminal-only. Code App went editor-only.
-
----
-
-## graphify
-
-This project has a graphify knowledge graph at graphify-out/.
-
-Rules:
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` to keep the graph current

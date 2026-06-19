@@ -14,14 +14,14 @@ import {
   TextInput,
   Pressable,
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
+import Reanimated from 'react-native-reanimated';
 import { Search, X } from 'lucide-react-native';
 import type { WorkspacePluginDefinition, WorkspacePluginPanelProps } from '@stavi/shared';
 import { useConnectionStore } from '../../../stores/connection';
 import { useTheme } from '../../../theme';
 import { typography, spacing, radii } from '../../../theme';
+import { useKeyboardPanelStyle } from '../../../hooks/useKeyboardPanelStyle';
 import { SearchResults } from './components/SearchResults';
 import type { SearchMatch } from './components/SearchResults';
 
@@ -29,7 +29,9 @@ import type { SearchMatch } from './components/SearchResults';
 // Panel
 // ----------------------------------------------------------
 
-function SystemSearchPanel({ session }: WorkspacePluginPanelProps) {
+function SystemSearchPanel({ session, bottomBarHeight }: WorkspacePluginPanelProps) {
+  // Keep the results list fully reachable above the keyboard (see hook docs).
+  const keyboardPad = useKeyboardPanelStyle(bottomBarHeight ?? 0);
   const { colors } = useTheme();
   const styles = useMemo(() => StyleSheet.create({
     container: {
@@ -221,10 +223,7 @@ function SystemSearchPanel({ session }: WorkspacePluginPanelProps) {
   }, []);
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <Reanimated.View style={[styles.container, keyboardPad]}>
       {/* Search input */}
       <View style={styles.inputRow}>
         <View style={styles.inputWrap}>
@@ -299,7 +298,7 @@ function SystemSearchPanel({ session }: WorkspacePluginPanelProps) {
           searchRoot=""
         />
       )}
-    </KeyboardAvoidingView>
+    </Reanimated.View>
   );
 }
 

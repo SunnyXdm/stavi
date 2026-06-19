@@ -99,8 +99,14 @@ interface NativeCommands {
    * Hard-reset the terminal emulator (clear scrollback, reapply colors).
    */
   reset: (viewRef: React.ElementRef<NativeTerminalViewType>) => void;
+
+  /**
+   * Grab IME focus for this terminal (new-tab / tab-switch) so typing reaches
+   * it without requiring a tap.
+   */
+  focus: (viewRef: React.ElementRef<NativeTerminalViewType>) => void;
 }
 
 export const Commands = codegenNativeCommands<NativeCommands>({
-  supportedCommands: ['write', 'resize', 'reset'],
+  supportedCommands: ['write', 'resize', 'reset', 'focus'],
 });
