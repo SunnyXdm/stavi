@@ -68,6 +68,18 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+// --- Release signing -------------------------------------------------------
+// Load signing credentials from android/keystore.properties if present.
+// That file is gitignored; contributors/CI without it fall back to debug
+// signing so debug builds keep working. See android/keystore.properties.template.
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+def hasReleaseSigning = false
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+    hasReleaseSigning = keystoreProperties.getProperty("storeFile") != null
+}
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -88,15 +100,24 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        if (hasReleaseSigning) {
+            release {
+                storeFile rootProject.file(keystoreProperties["storeFile"])
+                storePassword keystoreProperties["storePassword"]
+                keyAlias keystoreProperties["keyAlias"]
+                keyPassword keystoreProperties["keyPassword"]
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // Uses the real upload keystore when android/keystore.properties
+            // exists; otherwise falls back to debug signing so the build still
+            // completes (e.g. CI without secrets). See keystore.properties.template.
+            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
@@ -110,6 +131,14 @@ android {
         main {
             assets.srcDirs += ['../../assets']
         }
+    }
+
+    androidResources {
+        // assets/editor is the bundle WORKSPACE — only the built WebView
+        // payload (index.html + bundle.js) belongs in the APK. Without this,
+        // its node_modules (incl. two 9MB macOS esbuild binaries), sources,
+        // and lockfile ship inside the app (~28MB of dead weight).
+        ignoreAssetsPattern '!node_modules:!src:!package.json:!package-lock.json:!build.mjs:!README.md:!*.map'
     }
 }
 
