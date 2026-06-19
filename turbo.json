@@ -19,6 +19,11 @@
       "inputs": ["src/**", "tsconfig.json"],
       "outputs": []
     },
+    "test": {
+      "inputs": ["src/**", "test/**", "tsconfig.json", "package.json"],
+      "outputs": [],
+      "cache": false
+    },
     "lint": {
       "inputs": ["src/**"],
       "outputs": []

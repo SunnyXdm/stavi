@@ -16,7 +16,8 @@
   },
   "scripts": {
     "build": "echo 'no build step - consumed as raw TS'",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.104",
@@ -25,6 +26,7 @@
     "@types/unzipper": "^0.10.11",
     "@xterm/headless": "^6.0.0",
     "archiver": "^7.0.1",
+    "ignore": "^5.3.2",
     "unzipper": "^0.12.3",
     "ws": "^8.18.3"
   },
