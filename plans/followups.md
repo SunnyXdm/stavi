@@ -99,3 +99,31 @@
 - **`tools` plugin self-registers**: `extra/tools/index.tsx` calls `usePluginRegistry.getState().register()` at module scope (side-effect import). All other plugins use explicit `register()` in `load.ts`. Migrate tools to match in Phase 10 Step 7b.
 - **`plugins/core/` is empty**: Dead directory from Phase 8 restructure. Delete in Phase 10 Step 7b.
 
+
+## Production-hardening batch (2026-06-18) — deferred native verification
+
+### T2 iOS editor — native registration NOT yet done (needs an iOS build env)
+The JS side is complete: `getEditorUri()` (EditorSurface.tsx) now reads
+`NativeModules.StaviBundle.mainBundlePath` on iOS and the source prop uses it.
+Native source files exist (`ios/Stavi/StaviBundle.swift` + `.m`). Still TODO,
+each requiring an actual iOS build + simulator (could not be done from the
+Android dev session):
+1. Add `StaviBundle.swift` + `StaviBundle.m` to the Xcode **Sources** build
+   phase in `ios/Stavi.xcodeproj/project.pbxproj` (hand-editing pbxproj is
+   error-prone — do it in Xcode: drag the files in, "Add to target: Stavi").
+2. Add `cp "$SRC/FiraCode-Regular.ttf" "$DST/FiraCode-Regular.ttf"` (+ input/
+   output paths) to the "Copy Editor WebView Assets" build phase, else the iOS
+   editor renders in a fallback mono font.
+3. `/rebuild-native` (iOS), launch the simulator, confirm
+   `NativeModules.StaviBundle` is defined (Fabric/bridgeless registration is
+   NOT guaranteed by typecheck) and the editor renders CodeMirror.
+Until (1)+(3) land, the iOS editor degrades to a blank WebView (no crash) — the
+JS fallback returns a relative URI. Android is unchanged (same asset literal).
+
+### Tier-B (untrusted-network / public launch) — NOT in this batch
+- TLS / stop forcing `usesCleartextTraffic` / stop sending token in cleartext
+  headers+query — intentional LAN design today; relay (Noise NK) is the E2E path.
+- git-history scrub of the (already-rotated, stale) dev-config token —
+  manual + user-approved: `git filter-repo --path apps/mobile/src/generated/dev-config.ts --invert-paths` (or BFG), then rotate.
+- Rotate the GitHub PAT embedded in the local `git remote -v` URL.
+- Mobile test backfill (0 tests across ~123 TS/TSX files).
